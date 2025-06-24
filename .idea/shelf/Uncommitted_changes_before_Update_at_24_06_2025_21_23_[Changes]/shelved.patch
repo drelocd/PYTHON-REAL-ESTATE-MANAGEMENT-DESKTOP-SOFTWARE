@@ -1,0 +1,58 @@
+Index: .idea/workspace.xml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+><?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<project version=\"4\">\r\n  <component name=\"AutoImportSettings\">\r\n    <option name=\"autoReloadType\" value=\"SELECTIVE\" />\r\n  </component>\r\n  <component name=\"ChangeListManager\">\r\n    <list default=\"true\" id=\"ab879b42-ea8e-4a65-bde8-c956ccf687ec\" name=\"Changes\" comment=\"commit 1\">\r\n      <change beforePath=\"$PROJECT_DIR$/.idea/workspace.xml\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/.idea/workspace.xml\" afterDir=\"false\" />\r\n      <change beforePath=\"$PROJECT_DIR$/forms/survey_forms.py\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/forms/survey_forms.py\" afterDir=\"false\" />\r\n      <change beforePath=\"$PROJECT_DIR$/main.py\" beforeDir=\"false\" afterPath=\"$PROJECT_DIR$/main.py\" afterDir=\"false\" />\r\n    </list>\r\n    <option name=\"SHOW_DIALOG\" value=\"false\" />\r\n    <option name=\"HIGHLIGHT_CONFLICTS\" value=\"true\" />\r\n    <option name=\"HIGHLIGHT_NON_ACTIVE_CHANGELIST\" value=\"false\" />\r\n    <option name=\"LAST_RESOLUTION\" value=\"IGNORE\" />\r\n  </component>\r\n  <component name=\"Git.Settings\">\r\n    <option name=\"RECENT_GIT_ROOT_PATH\" value=\"$PROJECT_DIR$\" />\r\n  </component>\r\n  <component name=\"GitHubPullRequestSearchHistory\"><![CDATA[{\r\n  \"lastFilter\": {\r\n    \"state\": \"OPEN\",\r\n    \"assignee\": \"osundwacyril\"\r\n  }\r\n}]]></component>\r\n  <component name=\"GithubPullRequestsUISettings\"><![CDATA[{\r\n  \"selectedUrlAndAccountId\": {\r\n    \"url\": \"https://github.com/drelocd/PYTHON-REAL-ESTATE-MANAGEMENT-DESKTOP-SOFTWARE.git\",\r\n    \"accountId\": \"7f6f4885-84ed-42c1-ab6a-aa974f2fe395\"\r\n  }\r\n}]]></component>\r\n  <component name=\"ProjectColorInfo\">{\r\n  &quot;customColor&quot;: &quot;&quot;,\r\n  &quot;associatedIndex&quot;: 2\r\n}</component>\r\n  <component name=\"ProjectId\" id=\"2ytHAGI5EKDkTfkwDLjQpC8dzAc\" />\r\n  <component name=\"ProjectViewState\">\r\n    <option name=\"hideEmptyMiddlePackages\" value=\"true\" />\r\n    <option name=\"showLibraryContents\" value=\"true\" />\r\n  </component>\r\n  <component name=\"PropertiesComponent\"><![CDATA[{\r\n  \"keyToString\": {\r\n    \"Python.main.executor\": \"Run\",\r\n    \"Python.property_forms.executor\": \"Run\",\r\n    \"Python.survey_forms.executor\": \"Run\",\r\n    \"RunOnceActivity.ShowReadmeOnStart\": \"true\",\r\n    \"RunOnceActivity.git.unshallow\": \"true\",\r\n    \"git-widget-placeholder\": \"main\"\r\n  }\r\n}]]></component>\r\n  <component name=\"SharedIndexes\">\r\n    <attachedChunks>\r\n      <set>\r\n        <option value=\"bundled-python-sdk-14705d77f0bb-aa17d162503b-com.jetbrains.pycharm.community.sharedIndexes.bundled-PC-243.25659.43\" />\r\n      </set>\r\n    </attachedChunks>\r\n  </component>\r\n  <component name=\"SpellCheckerSettings\" RuntimeDictionaries=\"0\" Folders=\"0\" CustomDictionaries=\"0\" DefaultDictionary=\"application-level\" UseSingleDictionary=\"true\" transferred=\"true\" />\r\n  <component name=\"TaskManager\">\r\n    <task active=\"true\" id=\"Default\" summary=\"Default task\">\r\n      <changelist id=\"ab879b42-ea8e-4a65-bde8-c956ccf687ec\" name=\"Changes\" comment=\"\" />\r\n      <created>1750646804329</created>\r\n      <option name=\"number\" value=\"Default\" />\r\n      <option name=\"presentableId\" value=\"Default\" />\r\n      <updated>1750646804329</updated>\r\n    </task>\r\n    <task id=\"LOCAL-00001\" summary=\"Survey commit\">\r\n      <option name=\"closed\" value=\"true\" />\r\n      <created>1750761979844</created>\r\n      <option name=\"number\" value=\"00001\" />\r\n      <option name=\"presentableId\" value=\"LOCAL-00001\" />\r\n      <option name=\"project\" value=\"LOCAL\" />\r\n      <updated>1750761979844</updated>\r\n    </task>\r\n    <task id=\"LOCAL-00002\" summary=\"commit 1\">\r\n      <option name=\"closed\" value=\"true\" />\r\n      <created>1750762229479</created>\r\n      <option name=\"number\" value=\"00002\" />\r\n      <option name=\"presentableId\" value=\"LOCAL-00002\" />\r\n      <option name=\"project\" value=\"LOCAL\" />\r\n      <updated>1750762229479</updated>\r\n    </task>\r\n    <option name=\"localTasksCounter\" value=\"3\" />\r\n    <servers />\r\n  </component>\r\n  <component name=\"Vcs.Log.Tabs.Properties\">\r\n    <option name=\"TAB_STATES\">\r\n      <map>\r\n        <entry key=\"MAIN\">\r\n          <value>\r\n            <State />\r\n          </value>\r\n        </entry>\r\n      </map>\r\n    </option>\r\n  </component>\r\n  <component name=\"VcsManagerConfiguration\">\r\n    <MESSAGE value=\"Survey commit\" />\r\n    <MESSAGE value=\"commit 1\" />\r\n    <option name=\"LAST_COMMIT_MESSAGE\" value=\"commit 1\" />\r\n  </component>\r\n</project>
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/.idea/workspace.xml b/.idea/workspace.xml
+--- a/.idea/workspace.xml	(revision 10b03870e810ca0288ccd93a6edd701449d975b0)
++++ b/.idea/workspace.xml	(date 1750789391488)
+@@ -4,11 +4,7 @@
+     <option name="autoReloadType" value="SELECTIVE" />
+   </component>
+   <component name="ChangeListManager">
+-    <list default="true" id="ab879b42-ea8e-4a65-bde8-c956ccf687ec" name="Changes" comment="commit 1">
+-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/forms/survey_forms.py" beforeDir="false" afterPath="$PROJECT_DIR$/forms/survey_forms.py" afterDir="false" />
+-      <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
+-    </list>
++    <list default="true" id="ab879b42-ea8e-4a65-bde8-c956ccf687ec" name="Changes" comment="commit 2" />
+     <option name="SHOW_DIALOG" value="false" />
+     <option name="HIGHLIGHT_CONFLICTS" value="true" />
+     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+@@ -80,7 +76,23 @@
+       <option name="project" value="LOCAL" />
+       <updated>1750762229479</updated>
+     </task>
+-    <option name="localTasksCounter" value="3" />
++    <task id="LOCAL-00003" summary="commit 2">
++      <option name="closed" value="true" />
++      <created>1750789273530</created>
++      <option name="number" value="00003" />
++      <option name="presentableId" value="LOCAL-00003" />
++      <option name="project" value="LOCAL" />
++      <updated>1750789273530</updated>
++    </task>
++    <task id="LOCAL-00004" summary="commit 2">
++      <option name="closed" value="true" />
++      <created>1750789347171</created>
++      <option name="number" value="00004" />
++      <option name="presentableId" value="LOCAL-00004" />
++      <option name="project" value="LOCAL" />
++      <updated>1750789347171</updated>
++    </task>
++    <option name="localTasksCounter" value="5" />
+     <servers />
+   </component>
+   <component name="Vcs.Log.Tabs.Properties">
+@@ -97,6 +109,7 @@
+   <component name="VcsManagerConfiguration">
+     <MESSAGE value="Survey commit" />
+     <MESSAGE value="commit 1" />
+-    <option name="LAST_COMMIT_MESSAGE" value="commit 1" />
++    <MESSAGE value="commit 2" />
++    <option name="LAST_COMMIT_MESSAGE" value="commit 2" />
+   </component>
+ </project>
+\ No newline at end of file

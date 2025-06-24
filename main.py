@@ -323,16 +323,28 @@ class SurveySectionView(ttk.Frame):
                          parent_icon_loader=self.load_icon_callback, window_icon_name="add_survey.png")
 
     def _open_track_survey_jobs_view(self):
-        messagebox.showinfo("Action", "Opening Track Survey Jobs View... (Coming Soon)")
+        TrackSurveyJobsForm(self.master, self.db_manager, self.populate_survey_overview,
+                         parent_icon_loader=self.load_icon_callback, window_icon_name="track_jobs.png")
 
     def _open_manage_survey_payments_view(self):
-        messagebox.showinfo("Action", "Opening Manage Survey Payments View... (Coming Soon)")
+        ManagePaymentForm(self.master, self.db_manager, self.populate_survey_overview,
+                         parent_icon_loader=self.load_icon_callback, window_icon_name="manage_payments.png")
 
     def _open_survey_reports_view(self):
-        messagebox.showinfo("Action", "Opening Survey Reports View... (Coming Soon)")
+        SurveyReportsForm(self.master, self.db_manager, self.populate_survey_overview,
+                         parent_icon_loader=self.load_icon_callback, window_icon_name="survey_reports.png")
+
+    def _open_receipts_folder(self):
+        """Opens the receipts directory in the file explorer."""
+        if os.path.exists(RECEIPTS_DIR):
+            os.startfile(RECEIPTS_DIR)
+        else:
+            messagebox.showerror("Error", "Receipts folder not found.")
 
     def generate_report_type(self, report_name):
         messagebox.showinfo("Report", f"Generating {report_name} Report from Survey Section... (Feature coming soon!)")
+
+
 
 
 class RealEstateApp(tk.Tk):
