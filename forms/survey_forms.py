@@ -6,6 +6,20 @@ import shutil
 from PIL import Image, ImageTk
 from tkcalendar import DateEntry # Import DateEntry for the date picker
 
+from forms.property_forms import REPORTS_DIR
+
+try:
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas
+    from reportlab.lib import colors
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import inch
+    _REPORTLAB_AVAILABLE = True
+except ImportError:
+    _REPORTLAB_AVAILABLE = False
+    print("Warning: ReportLab not installed. PDF generation will not work. Install with: pip install reportlab")
+
 # Define paths relative to the project root for icon loading
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASSETS_DIR = os.path.join(BASE_DIR, 'assets')
@@ -19,6 +33,47 @@ RECEIPTS_DIR = os.path.join(DATA_DIR, 'receipts')
 if not os.path.exists(RECEIPTS_DIR):
     os.makedirs(RECEIPTS_DIR)
     print(f"Created receipts directory: {RECEIPTS_DIR}")
+
+# NEW: Ensure REPORTS_DIR exists
+if not os.path.exists(REPORTS_DIR):
+    os.makedirs(REPORTS_DIR)
+    print(f"Created reports directory: {REPORTS_DIR}")
+
+
+class SuccessMessage(tk.Toplevel):
+    def __init__(self, master, success, message, pdf_path="", parent_icon_loader=None):
+        super().__init__(master)
+        self.title("Notification")
+        self.transient(master)
+        self.grab_set()
+        self.resizable(False, False)
+
+        self._icon_photo_ref = None  # Keep strong reference to PhotoImage
+
+        if parent_icon_loader:
+            icon_name = "success.png" if success else "error.png"
+            try:
+                icon_image = parent_icon_loader(icon_name, size=(32, 32))
+                self.iconphoto(False, icon_image)
+                self._icon_photo_ref = icon_image  # Store strong reference
+            except Exception as e:
+                print(f"Failed to set icon for SuccessMessage: {e}")
+
+        lbl = ttk.Label(self, text=message, font=('Helvetica', 10), wraplength=300, justify=tk.CENTER)
+        lbl.pack(padx=20, pady=10)
+
+        if success and pdf_path and _REPORTLAB_AVAILABLE:  # Only show Open button if PDF was actually generated
+            open_btn = ttk.Button(self, text="Open Report Folder", command=lambda: os.startfile(
+                os.path.dirname(pdf_path)))  # Open parent directory of PDF
+            open_btn.pack(pady=5)
+
+        ok_btn = ttk.Button(self, text="OK", command=self.destroy)
+        ok_btn.pack(pady=10)
+
+        self.update_idletasks()
+        x = master.winfo_x() + master.winfo_width() // 2 - self.winfo_width() // 2
+        y = master.winfo_y() + master.winfo_height() // 2 - self.winfo_height() // 2
+        self.geometry(f"+{x}+{y}")
 
 class AddSurveyJobForm(tk.Toplevel):
     def __init__(self, master, db_manager, refresh_callback, parent_icon_loader=None, window_icon_name="add_survey.png"):
@@ -286,6 +341,16 @@ class ManagePaymentForm(tk.Toplevel):
         self.lbl_receipt_path.grid(row=row+1, column=1, sticky="w", padx=5, pady=0)
         row += 2
 
+        #added
+        ttk.Button(button_frame, text="Add Payment", image=self._save_icon_ref, compound=tk.LEFT,
+                   command=self._add_payment).pack(side="left", padx=10)
+        self.btn_generate_receipt = ttk.Button(button_frame, text="Generate Receipt",
+                                               image=self._generate_receipt_icon_ref, compound=tk.LEFT,
+                                               command=self._generate_receipt, state=tk.DISABLED)
+        self.btn_generate_receipt.pack(side="left", padx=10)
+        ttk.Button(button_frame, text="Cancel", image=self._cancel_icon_ref, compound=tk.LEFT,
+                   command=self._on_closing).pack(side="left", padx=10)
+
         # Action Buttons
         button_frame = ttk.Frame(main_frame)
         button_frame.grid(row=row, column=0, columnspan=2, pady=10)
@@ -299,6 +364,84 @@ class ManagePaymentForm(tk.Toplevel):
                                 compound=tk.LEFT, command=self.destroy)
         cancel_btn.pack(side="left", padx=5)
         cancel_btn.image = self._cancel_payment_icon # Keep reference
+
+        #added
+
+    def _populate_job_dropdown(self):
+        jobs = self.db_manager.get_all_survey_jobs()
+        job_ids = [job['job_id'] for job in jobs]
+        self.job_id_combobox['values'] = job_ids
+        if job_ids:
+            self.job_id_combobox.set(job_ids[0])
+            self._on_job_selected(None)  # Manually trigger selection for the first item
+
+    def _on_job_selected(self, event):
+        selected_job_id = self.job_id_combobox.get()
+        if selected_job_id:
+            job_info = self.db_manager.get_survey_job_by_id(selected_job_id)
+            if job_info:
+                client_info = self.db_manager.get_client_by_id(job_info['client_id'])
+                self.entry_client_info.config(state="normal")
+                self.entry_client_info.delete(0, tk.END)
+                self.entry_client_info.insert(0, client_info['name'] if client_info else "N/A")
+                self.entry_client_info.config(state="readonly")
+
+                self.entry_total_price.config(state="normal")
+                self.entry_total_price.delete(0, tk.END)
+                self.entry_total_price.insert(0, f"{job_info['agreed_price']:.2f}")
+                self.entry_total_price.config(state="readonly")
+
+                self._update_receipt_button_state()
+            else:
+                self._clear_fields()
+        else:
+            self._clear_fields()
+
+    def _clear_fields(self):
+        self.entry_client_info.config(state="normal")
+        self.entry_client_info.delete(0, tk.END)
+        self.entry_client_info.config(state="readonly")
+
+        self.entry_total_price.config(state="normal")
+        self.entry_total_price.delete(0, tk.END)
+        self.entry_total_price.config(state="readonly")
+
+        self.entry_amount_paid.delete(0, tk.END)
+        self.entry_payment_date.set_date(datetime.now().date())
+        self.payment_method_combobox.set("Cash")
+        self.btn_generate_receipt.config(state=tk.DISABLED)
+
+    def _add_payment(self):
+        job_id = self.job_id_combobox.get()
+        amount_str = self.entry_amount_paid.get().strip()
+        payment_date_str = self.entry_payment_date.get_date().strftime("%Y-%m-%d")
+        payment_method = self.payment_method_combobox.get()
+
+        if not all([job_id, amount_str, payment_date_str, payment_method]):
+            messagebox.showerror("Input Error", "All payment fields are required.")
+            return
+
+        try:
+            amount = float(amount_str)
+            if amount <= 0:
+                messagebox.showerror("Input Error", "Amount paid must be a positive number.")
+                return
+        except ValueError:
+            messagebox.showerror("Input Error", "Invalid value for Amount Paid. Please enter a number.")
+            return
+
+        try:
+            if self.db_manager.add_survey_payment(job_id, amount, payment_date_str, payment_method):
+                messagebox.showinfo("Success", "Payment added successfully!")
+                self.refresh_callback()  # Refresh the parent view
+                self._update_receipt_button_state()  # Update button state after payment
+                # Clear amount field for next entry
+                self.entry_amount_paid.delete(0, tk.END)
+            else:
+                messagebox.showerror("Database Error", "Failed to add payment.")
+        except Exception as e:
+            messagebox.showerror("Error", f"An error occurred: {e}")
+            print(f"Error adding survey payment: {e}")
 
     def _select_receipt_image(self):
         """Handles selection of a receipt image file."""
@@ -388,6 +531,131 @@ class ManagePaymentForm(tk.Toplevel):
         except Exception as e:
             messagebox.showerror("Error", f"An error occurred while recording payment: {e}")
             print(f"Error recording payment: {e}")
+
+    def _update_receipt_button_state(self):
+        """Enables the 'Generate Receipt' button if a job is selected."""
+        if self.job_id_combobox.get():
+            self.btn_generate_receipt.config(state=tk.NORMAL)
+        else:
+            self.btn_generate_receipt.config(state=tk.DISABLED)
+
+    def _generate_receipt(self):
+        if not _REPORTLAB_AVAILABLE:
+            messagebox.showwarning("Feature Unavailable",
+                                   "ReportLab library is not installed. Cannot generate PDF receipts. Please install it using: pip install reportlab")
+            return
+
+        job_id = self.job_id_combobox.get()
+        if not job_id:
+            messagebox.showerror("Selection Error", "Please select a Survey Job to generate a receipt.")
+            return
+
+        try:
+            job_info = self.db_manager.get_survey_job_by_id(job_id)
+            if not job_info:
+                messagebox.showerror("Error", "Could not retrieve job information.")
+                return
+
+            client_info = self.db_manager.get_client_by_id(job_info['client_id'])
+            if not client_info:
+                messagebox.showerror("Error", "Could not retrieve client information.")
+                return
+
+            payments = self.db_manager.get_payments_for_survey_job(job_id)
+            if not payments:
+                messagebox.showwarning("No Payments",
+                                       "No payments recorded for this survey job. Cannot generate a receipt.")
+                return
+
+            total_paid = sum(p['amount'] for p in payments)
+            balance = job_info['agreed_price'] - total_paid
+
+            # Generate PDF
+            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+            receipt_filename = f"Survey_Receipt_Job_{job_id}_{timestamp}.pdf"
+            pdf_path = os.path.join(RECEIPTS_DIR, receipt_filename)
+
+            doc = SimpleDocTemplate(pdf_path, pagesize=letter)
+            styles = getSampleStyleSheet()
+
+            # Custom style for bold text
+            styles.add(ParagraphStyle(name='BoldCentered', alignment=1, fontName='Helvetica-Bold', fontSize=12))
+
+            story = []
+
+            # Company Header
+            story.append(Paragraph("<b>Mathenge's Real Estate Management System</b>", styles['h2']))
+            story.append(Paragraph("Survey Services Payment Receipt", styles['h3']))
+            story.append(Spacer(1, 0.2 * inch))
+
+            # Receipt Details
+            story.append(
+                Paragraph(f"<b>Receipt Date:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
+            story.append(Paragraph(f"<b>Job ID:</b> {job_id}", styles['Normal']))
+            story.append(Spacer(1, 0.1 * inch))
+
+            # Client Details
+            story.append(Paragraph("<b>Client Details:</b>", styles['Normal']))
+            story.append(Paragraph(f"Name: {client_info['name']}", styles['Normal']))
+            story.append(Paragraph(f"Contact: {client_info['contact_info']}", styles['Normal']))
+            story.append(Spacer(1, 0.2 * inch))
+
+            # Job Details
+            story.append(Paragraph("<b>Survey Job Details:</b>", styles['Normal']))
+            story.append(Paragraph(f"Location: {job_info['location']}", styles['Normal']))
+            story.append(Paragraph(f"Description: {job_info['description']}", styles['Normal']))
+            story.append(Paragraph(f"Agreed Price: KES {job_info['agreed_price']:.2f}", styles['Normal']))
+            story.append(Spacer(1, 0.2 * inch))
+
+            # Payment History Table
+            story.append(Paragraph("<b>Payment History:</b>", styles['Normal']))
+            table_data = [['Payment ID', 'Amount', 'Date', 'Method']]
+            for p in payments:
+                table_data.append(
+                    [str(p['payment_id']), f"KES {p['amount']:.2f}", p['payment_date'], p['payment_method']])
+
+            # Table style
+            table_style = TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('BOX', (0, 0), (-1, -1), 1, colors.black)
+            ])
+
+            # Calculate column widths to fit content, allowing description to take more space
+            col_widths = [1.5 * inch, 1.5 * inch, 1.5 * inch, 1.5 * inch]
+
+            payment_table = Table(table_data, colWidths=col_widths)
+            payment_table.setStyle(table_style)
+            story.append(payment_table)
+            story.append(Spacer(1, 0.2 * inch))
+
+            story.append(Paragraph(f"<b>Total Paid:</b> KES {total_paid:.2f}", styles['Normal']))
+            story.append(Paragraph(f"<b>Balance Due:</b> KES {balance:.2f}", styles['Normal']))
+            story.append(Spacer(1, 0.4 * inch))
+
+            story.append(Paragraph("Thank you for your business!", styles['BoldCentered']))
+
+            doc.build(story)
+
+            SuccessMessage(
+                self,
+                success=True,
+                message="Receipt PDF generated successfully!",
+                pdf_path=pdf_path,
+                parent_icon_loader=self.parent_icon_loader
+            )
+        except Exception as e:
+            messagebox.showerror("Receipt Generation Error", f"An error occurred while generating the receipt: {e}")
+
+    def _on_closing(self):
+        self.grab_release()
+        self.destroy()
+
 
 class TrackSurveyJobsForm(tk.Toplevel):
     def __init__(self, master, db_manager, refresh_callback=None, parent_icon_loader=None, window_icon_name="track_jobs.png"):
@@ -480,7 +748,7 @@ class TrackSurveyJobsView(ttk.Frame):
         self.tree.heading("Client Name", text="Client Name")
         self.tree.heading("Contact", text="Contact")
         self.tree.heading("Location", text="Location")
-        self.tree.heading("Agreed Price", text="Agreed Price")
+        self.tree.heading("Agreed Price", text="Agreed Price(KES)")
         self.tree.heading("Deadline", text="Deadline")
         self.tree.heading("Status", text="Status")
 
@@ -544,6 +812,53 @@ class TrackSurveyJobsView(ttk.Frame):
             ))
         if self.refresh_callback:
             self.refresh_callback() # Trigger a refresh in the main app if necessary
+
+    def _apply_filters(self, event=None):
+        search_term = self.search_entry.get().lower().strip()
+        status_filter = self.status_filter_combobox.get()
+
+        # Get dates from DateEntry widgets
+        start_date_obj = self.date_from_entry.get_date() if self.date_from_entry.get() else None
+        end_date_obj = self.date_to_entry.get_date() if self.date_to_entry.get() else None
+
+        # Convert date objects to string for comparison (assuming YYYY-MM-DD format in DB)
+        start_date_str = start_date_obj.strftime("%Y-%m-%d") if start_date_obj else ""
+        end_date_str = end_date_obj.strftime("%Y-%m-%d") if end_date_obj else ""
+
+        for item_id in self.jobs_tree.get_children():
+            values = self.jobs_tree.item(item_id, 'values')
+
+            job_id, client_name, client_contact, location, description, price, paid, balance, deadline_date, status = values
+
+            match_search = True
+            if search_term:
+                if search_term not in client_name.lower() and \
+                        search_term not in location.lower() and \
+                        search_term not in description.lower() and \
+                        search_term not in client_contact.lower():
+                    match_search = False
+
+            match_status = (status_filter == "All" or status == status_filter)
+
+            match_date_range = True
+            if deadline_date:  # Ensure deadline_date is not empty
+                # Convert deadline_date string from treeview to datetime object for proper comparison
+                try:
+                    job_deadline = datetime.strptime(deadline_date, "%Y-%m-%d").date()
+                    if start_date_obj and job_deadline < start_date_obj:
+                        match_date_range = False
+                    if end_date_obj and job_deadline > end_date_obj:
+                        match_date_range = False
+                except ValueError:
+                    # Handle cases where deadline_date might be in an unexpected format or empty
+                    match_date_range = False
+
+            if match_search and match_status and match_date_range:
+                self.jobs_tree.item(item_id, open=True, tags=(''))  # Show
+            else:
+                self.jobs_tree.item(item_id, open=False, tags=('hidden'))  # Hide
+
+        self.jobs_tree.tag_configure('hidden', A=0)  # Make hidden items invisible
 
     def _reset_filters(self):
         """Resets search filters and reloads all jobs."""
@@ -623,3 +938,323 @@ class TrackSurveyJobsView(ttk.Frame):
                 else:
                     messagebox.showerror("Error", f"Failed to delete Job ID {job_id}.")
 
+    #ADDED
+    def _on_closing(self):
+        """Handles window closing by releasing grab and destroying the window."""
+        self.grab_release()
+        self.destroy()
+
+
+class SurveyReportsForm(tk.Toplevel):
+    def __init__(self, master, db_manager, parent_icon_loader=None, window_icon_name="reports.png"):
+        super().__init__(master)
+        self.title("Survey Reports")
+        self.resizable(False, False)
+        self.grab_set()
+        self.transient(master)
+
+        self.db_manager = db_manager
+        self.parent_icon_loader_ref = parent_icon_loader
+        self._window_icon_ref = None
+
+        # Icon references for buttons
+        self._generate_report_icon = None
+
+        self._set_window_properties(700, 600, window_icon_name, parent_icon_loader)
+        self._create_widgets(parent_icon_loader)
+
+        self.protocol("WM_DELETE_WINDOW", self._on_closing)
+
+    def _set_window_properties(self, width, height, icon_name, parent_icon_loader):
+        self.geometry(f"{width}x{height}")
+        self.update_idletasks()
+        screen_width = self.winfo_screenwidth()
+        x = (screen_width - width) // 2
+        y = 100
+        self.geometry(f"+{x}+{y}")
+        if parent_icon_loader and icon_name:
+            try:
+                icon_image = parent_icon_loader(icon_name, size=(32, 32))
+                self.iconphoto(False, icon_image)
+                self._window_icon_ref = icon_image
+            except Exception as e:
+                print(f"Failed to set icon for {self.title()}: {e}")
+
+    def _create_widgets(self, parent_icon_loader):
+        main_frame = ttk.Frame(self, padding="20")
+        main_frame.pack(fill="both", expand=True)
+        main_frame.columnconfigure(0, weight=1)
+        main_frame.columnconfigure(1, weight=1)
+
+        # Report Type Selection
+        ttk.Label(main_frame, text="Select Report Type:").grid(row=0, column=0, sticky="w", pady=5, padx=5)
+        self.report_type_combobox = ttk.Combobox(main_frame, values=[
+            "All Survey Jobs",
+            "Completed Survey Jobs",
+            "Pending Survey Jobs",
+            "Cancelled Survey Jobs",
+            "Survey Payments Report"
+        ], state="readonly")
+        self.report_type_combobox.set("All Survey Jobs")
+        self.report_type_combobox.grid(row=0, column=1, sticky="ew", pady=5, padx=5)
+        self.report_type_combobox.bind("<<ComboboxSelected>>", self._on_report_type_selected)
+
+        # Date Range Selection
+        ttk.Label(main_frame, text="Start Date:").grid(row=1, column=0, sticky="w", pady=5, padx=5)
+        self.start_date_entry = DateEntry(main_frame, width=12, background='darkblue', foreground='white',
+                                          borderwidth=2, date_pattern='yyyy-mm-dd')
+        self.start_date_entry.grid(row=1, column=1, sticky="ew", pady=5, padx=5)
+        self.start_date_entry.set_date(datetime.now().replace(day=1).date())  # Default to start of current month
+
+        ttk.Label(main_frame, text="End Date:").grid(row=2, column=0, sticky="w", pady=5, padx=5)
+        self.end_date_entry = DateEntry(main_frame, width=12, background='darkblue', foreground='white', borderwidth=2,
+                                        date_pattern='yyyy-mm-dd')
+        self.end_date_entry.grid(row=2, column=1, sticky="ew", pady=5, padx=5)
+        self.end_date_entry.set_date(datetime.now().date())  # Default to today's date
+
+        # Report Text Widget (for preview/status)
+        ttk.Label(main_frame, text="Report Preview/Status:").grid(row=3, column=0, columnspan=2, sticky="w", pady=10,
+                                                                  padx=5)
+        self.report_text_widget = tk.Text(main_frame, wrap=tk.WORD, height=15, width=70, state="disabled")
+        self.report_text_widget.grid(row=4, column=0, columnspan=2, sticky="nsew", padx=5, pady=5)
+
+        # Scrollbar for text widget
+        text_scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=self.report_text_widget.yview)
+        text_scrollbar.grid(row=4, column=2, sticky="ns", pady=5)
+        self.report_text_widget.config(yscrollcommand=text_scrollbar.set)
+
+        main_frame.rowconfigure(4, weight=1)  # Make text widget expand vertically
+
+        # Buttons
+        button_frame = ttk.Frame(main_frame)
+        button_frame.grid(row=5, column=0, columnspan=2, pady=20)
+
+        if parent_icon_loader:
+            self._generate_report_icon = parent_icon_loader("report_generate.png", size=(20, 20))
+
+        ttk.Button(button_frame, text="Generate Report", image=self._generate_report_icon, compound=tk.LEFT,
+                   command=self._load_report).pack(side="left", padx=10)
+        ttk.Button(button_frame, text="Close", command=self._on_closing).pack(side="left", padx=10)
+
+        self._on_report_type_selected(None)  # Initialize date entry states based on default report type
+
+    def _on_report_type_selected(self, event):
+        selected_type = self.report_type_combobox.get()
+        if "Payments" in selected_type:
+            # Enable date range for payments reports
+            self.start_date_entry.config(state="normal")
+            self.end_date_entry.config(state="normal")
+        else:
+            # For job status reports, date range might be less critical, but still useful
+            # We'll keep them enabled for flexibility for now, but could disable if logic changes.
+            self.start_date_entry.config(state="normal")
+            self.end_date_entry.config(state="normal")
+
+        self.report_text_widget.config(state="normal")
+        self.report_text_widget.delete("1.0", tk.END)
+        self.report_text_widget.insert("1.0", f"Select dates and click 'Generate Report' for {selected_type}.")
+        self.report_text_widget.config(state="disabled")
+
+    def _load_report(self):
+        report_type = self.report_type_combobox.get()
+        start_date_str = self.start_date_entry.get_date().strftime("%Y-%m-%d")
+        end_date_str = self.end_date_entry.get_date().strftime("%Y-%m-%d")
+
+        self.report_text_widget.config(state="normal")
+        self.report_text_widget.delete("1.0", tk.END)
+        self.report_text_widget.insert("1.0", "Generating report...")
+        self.report_text_widget.config(state="disabled")
+
+        if not _REPORTLAB_AVAILABLE:
+            messagebox.showwarning("Feature Unavailable",
+                                   "ReportLab library is not installed. Cannot generate PDF reports. Please install it using: pip install reportlab")
+            self.report_text_widget.config(state="normal")
+            self.report_text_widget.insert("1.0", "Error: ReportLab not installed. PDF generation impossible.")
+            self.report_text_widget.config(state="disabled")
+            return
+
+        try:
+            start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
+            end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
+            if start_date > end_date:
+                messagebox.showerror("Date Error", "Start Date cannot be after End Date.")
+                self.report_text_widget.config(state="normal")
+                self.report_text_widget.delete("1.0", tk.END)
+                return
+
+            report_data = []
+            report_title = ""
+
+            if report_type == "All Survey Jobs":
+                report_data = self.db_manager.get_all_survey_jobs_with_client_info_for_date_range(start_date_str,
+                                                                                                  end_date_str)
+                report_title = "All Survey Jobs Report"
+            elif report_type == "Completed Survey Jobs":
+                report_data = self.db_manager.get_survey_jobs_by_status_for_date_range("Completed", start_date_str,
+                                                                                       end_date_str)
+                report_title = "Completed Survey Jobs Report"
+            elif report_type == "Pending Survey Jobs":
+                report_data = self.db_manager.get_survey_jobs_by_status_for_date_range("Pending", start_date_str,
+                                                                                       end_date_str)
+                report_title = "Pending Survey Jobs Report"
+            elif report_type == "Cancelled Survey Jobs":
+                report_data = self.db_manager.get_survey_jobs_by_status_for_date_range("Cancelled", start_date_str,
+                                                                                       end_date_str)
+                report_title = "Cancelled Survey Jobs Report"
+            elif report_type == "Survey Payments Report":
+                report_data = self.db_manager.get_survey_payments_for_date_range(start_date_str, end_date_str)
+                report_title = "Survey Payments Report"
+
+            if not report_data:
+                self.report_text_widget.config(state="normal")
+                self.report_text_widget.insert("1.0", "No data found for the selected criteria.")
+                self.report_text_widget.config(state="disabled")
+                messagebox.showinfo("No Data", "No data found for the selected criteria and date range.")
+                return
+
+            pdf_path = self._generate_pdf_report(
+                report_title,
+                {'data': report_data, 'report_type': report_type},  # Pass report_type for internal logic
+                report_type,
+                start_date_str,
+                end_date_str
+            )
+
+            if pdf_path:
+                SuccessMessage(
+                    self,
+                    success=True,
+                    message=f"{report_type} PDF generated successfully!",
+                    pdf_path=pdf_path,
+                    parent_icon_loader=self.parent_icon_loader_ref
+                )
+                self._show_pdf_preview(pdf_path, self.report_text_widget)
+            else:
+                SuccessMessage(
+                    self,
+                    success=False,
+                    message=f"{report_type} PDF generation failed!",
+                    parent_icon_loader=self.parent_icon_loader_ref
+                )
+                self._show_pdf_preview(None, self.report_text_widget)
+        except Exception as e:
+            messagebox.showerror("Report Generation Error", f"An error occurred while generating {report_type}: {e}")
+            self.report_text_widget.config(state="normal")
+            self.report_text_widget.delete("1.0", tk.END)
+            self.report_text_widget.insert("1.0", f"Error: {e}")
+            self.report_text_widget.config(state="disabled")
+
+    def _generate_pdf_report(self, report_title, data, report_type_key, start_date, end_date):
+        if not _REPORTLAB_AVAILABLE:
+            print("ReportLab not available. Cannot generate PDF.")
+            return None
+
+        file_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        pdf_filename = f"Survey_{report_type_key.replace(' ', '_')}_{file_timestamp}.pdf"
+        pdf_path = os.path.join(REPORTS_DIR, pdf_filename)
+
+        doc = SimpleDocTemplate(pdf_path, pagesize=letter)
+        styles = getSampleStyleSheet()
+        story = []
+
+        # Title
+        story.append(Paragraph(f"<b>Mathenge's Real Estate Management System</b>", styles['h1']))
+        story.append(Paragraph(f"<u>{report_title}</u>", styles['h2']))
+        story.append(Paragraph(f"Report Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
+        story.append(Paragraph(f"Period: {start_date} to {end_date}", styles['Normal']))
+        story.append(Spacer(1, 0.2 * inch))
+
+        report_data = data['data']
+
+        if report_type_key in ["All Survey Jobs", "Completed Survey Jobs", "Pending Survey Jobs",
+                               "Cancelled Survey Jobs"]:
+            headers = ["Job ID", "Client Name", "Location", "Description", "Price", "Deadline", "Status"]
+            table_data = [headers]
+            for job in report_data:
+                table_data.append([
+                    str(job.get('job_id', '')),
+                    job.get('client_name', 'N/A'),
+                    job.get('location', ''),
+                    job.get('description', ''),
+                    f"KES {job.get('agreed_price', 0.0):.2f}",
+                    job.get('deadline_date', ''),
+                    job.get('status', '')
+                ])
+
+            # Define column widths: ID, Client, Location, Description (wider), Price, Deadline, Status
+            col_widths = [0.7 * inch, 1.3 * inch, 1.2 * inch, 2.0 * inch, 1.0 * inch, 1.0 * inch, 1.0 * inch]
+
+            table_style = TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#003366')),  # Dark blue header
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('BOX', (0, 0), (-1, -1), 1, colors.black),
+                ('ALIGN', (4, 1), (4, -1), 'RIGHT'),  # Align price column to right
+            ])
+
+            table = Table(table_data, colWidths=col_widths)
+            table.setStyle(table_style)
+            story.append(table)
+
+        elif report_type_key == "Survey Payments Report":
+            headers = ["Payment ID", "Job ID", "Client Name", "Amount", "Date", "Method"]
+            table_data = [headers]
+            total_payments = 0.0
+            for payment in report_data:
+                client_info = self.db_manager.get_client_by_id(payment['client_id']) if 'client_id' in payment else {
+                    'name': 'N/A'}
+                table_data.append([
+                    str(payment.get('payment_id', '')),
+                    str(payment.get('job_id', '')),
+                    client_info.get('name', 'N/A'),
+                    f"KES {payment.get('amount', 0.0):.2f}",
+                    payment.get('payment_date', ''),
+                    payment.get('payment_method', '')
+                ])
+                total_payments += payment.get('amount', 0.0)
+
+            # Define column widths
+            col_widths = [1.0 * inch, 1.0 * inch, 1.5 * inch, 1.0 * inch, 1.0 * inch, 1.5 * inch]
+
+            table_style = TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#003366')),  # Dark blue header
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('BOX', (0, 0), (-1, -1), 1, colors.black),
+                ('ALIGN', (3, 1), (3, -1), 'RIGHT'),  # Align amount column to right
+            ])
+
+            table = Table(table_data, colWidths=col_widths)
+            table.setStyle(table_style)
+            story.append(table)
+            story.append(Spacer(1, 0.2 * inch))
+            story.append(Paragraph(f"<b>Total Payments in Period:</b> KES {total_payments:.2f}", styles['h3']))
+
+        try:
+            doc.build(story)
+            return pdf_path
+        except Exception as e:
+            print(f"Error building PDF: {e}")
+            return None
+
+    def _show_pdf_preview(self, pdf_path, report_text_widget):
+        report_text_widget.config(state="normal")
+        report_text_widget.delete("1.0", tk.END)
+        if pdf_path:
+            report_text_widget.insert("1.0",
+                                      f"Report generated successfully at:\n{pdf_path}\n\nYou can open the folder using the 'Open Report Folder' button in the notification.")
+        else:
+            report_text_widget.insert("1.0", "Report generation failed. Please check for errors.")
+        report_text_widget.config(state="disabled")
+
+    def _on_closing(self):
+        self.grab_release()
+        self.destroy()
