@@ -1445,8 +1445,9 @@ class SellPropertyForm(tk.Toplevel):
                 self.lbl_balance.config(text=f"{total_price:,.2f}")
                 return
 
-            net_price = total_price - discount
-            balance = net_price - amount_paid
+
+            balance = total_price - discount - amount_paid
+
 
             self.lbl_balance.config(text=f"{balance:,.2f}")
             self._update_receipt_button_state()

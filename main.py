@@ -14,7 +14,7 @@ from database import DatabaseManager
 # Assuming property_forms.py now contains AddPropertyForm, SellPropertyForm,
 # TrackPaymentsForm, SoldPropertiesView, ViewAllPropertiesForm, and EditPropertyForm
 from forms.property_forms import AddPropertyForm, SellPropertyForm, TrackPaymentsForm, SoldPropertiesView, ViewAllPropertiesForm, EditPropertyForm, SalesReportsForm
-from forms.survey_forms import AddSurveyJobForm
+from forms.survey_forms import AddSurveyJobForm, ManagePaymentForm, TrackSurveyJobsForm
 
 # --- Global Constants ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -322,10 +322,17 @@ class SurveySectionView(ttk.Frame):
                          parent_icon_loader=self.load_icon_callback, window_icon_name="add_survey.png")
 
     def _open_track_survey_jobs_view(self):
-        messagebox.showinfo("Action", "Opening Track Survey Jobs View... (Coming Soon)")
+        TrackSurveyJobsForm(
+            self.master,
+            self.db_manager,
+            self.populate_survey_overview,
+            parent_icon_loader=self.load_icon_callback,
+            window_icon_name="track_jobs.png"
+        )
 
     def _open_manage_survey_payments_view(self):
-        messagebox.showinfo("Action", "Opening Manage Survey Payments View... (Coming Soon)")
+        ManagePaymentForm(self.master, self.db_manager, self.populate_survey_overview,
+                          parent_icon_loader=self.load_icon_callback, window_icon_name="payment.png")
 
     def _open_survey_reports_view(self):
         messagebox.showinfo("Action", "Opening Survey Reports View... (Coming Soon)")

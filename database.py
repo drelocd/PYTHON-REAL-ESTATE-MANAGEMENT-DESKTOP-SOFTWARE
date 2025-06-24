@@ -717,20 +717,49 @@ class DatabaseManager:
         query = "SELECT * FROM survey_jobs WHERE job_id = ?"
         return self._execute_query(query, (job_id,), fetch_one=True)
 
-    def get_all_survey_jobs(self, status=None):
+    def get_all_survey_jobs(self, search_term=None, status=None):
         """
-        Retrieves all survey jobs, optionally filtered by status.
+        Retrieves all survey jobs, optionally filtered by status and search term.
         Args:
+            search_term (str, optional): A string to search in client name or job description.
             status (str, optional): Filter by job status ('Pending', 'Ongoing', 'Completed', 'Cancelled'). Defaults to None (all jobs).
         Returns:
-            list: A list of sqlite3.Row objects representing survey jobs.
+            list: A list of dictionaries representing survey jobs with client names.
         """
-        query = "SELECT * FROM survey_jobs"
-        params = ()
+        query = """
+            SELECT
+                sj.job_id,
+                sj.client_id,
+                c.name AS client_name,
+                c.contact_info AS client_contact_info,
+                sj.property_location,
+                sj.job_description,
+                sj.fee,
+                sj.amount_paid,
+                sj.balance,
+                sj.deadline,
+                sj.status,
+                sj.attachments_path
+            FROM
+                survey_jobs sj
+            JOIN
+                clients c ON sj.client_id = c.client_id
+            WHERE 1=1
+        """
+        params = []
+
+        if search_term:
+            query += " AND (c.name LIKE ? OR sj.job_description LIKE ? OR sj.property_location LIKE ?)"
+            params.extend([f"%{search_term}%", f"%{search_term}%", f"%{search_term}%"])
+
         if status:
-            query += " WHERE status = ?"
-            params = (status,)
-        return self._execute_query(query, params, fetch_all=True)
+            query += " AND sj.status = ?"
+            params.append(status)
+
+        query += " ORDER BY sj.deadline ASC"  # Or whatever default order you prefer
+
+        results = self._execute_query(query, params, fetch_all=True)
+        return [dict(row) for row in results] if results else []
     
     def update_survey_job(self, job_id, **kwargs):
         """
@@ -940,3 +969,15 @@ class DatabaseManager:
         except sqlite3.Error as e:
             print(f"Database error in get_pending_instalments_for_date_range: {e}")
             return []
+
+    def update_survey_job_status(self, job_id, new_status):
+        """Updates the status of a specific survey job."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("UPDATE survey_jobs SET status = ? WHERE job_id = ?", (new_status, job_id))
+                conn.commit()
+                return True
+        except Exception as e:  # Use a more general Exception to catch all potential issues during DB operations
+            print(f"Database error in update_survey_job_status: {e}")
+            return False
