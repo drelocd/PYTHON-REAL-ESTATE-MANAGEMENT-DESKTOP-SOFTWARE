@@ -35,11 +35,9 @@ for d in [PROPERTY_IMAGES_DIR, TITLE_DEEDS_DIR, RECEIPTS_DIR, SURVEY_ATTACHMENTS
 # --- Section View Classes ---
 
 class SalesSectionView(ttk.Frame):
-    def __init__(self, master, db_manager, load_icon_callback, parent_icon_loader=None, **kwargs):
-        super().__init__(master, padding="10 10 10 10", **kwargs)
+    def __init__(self, master, db_manager, load_icon_callback):
+        super().__init__(master, padding="10 10 10 10")
         self.db_manager = db_manager
-        # Store the icon loader reference
-        self.parent_icon_loader_ref = parent_icon_loader
         self.load_icon_callback = load_icon_callback # Callback to main app's _load_icon
 
         # Initialize a list to hold references to PhotoImage objects for SalesSection buttons
@@ -244,7 +242,7 @@ class SurveySectionView(ttk.Frame):
     def _create_widgets(self):
         button_grid_container = ttk.Frame(self, padding="20")
         button_grid_container.pack(pady=20, padx=20, fill="x", anchor="n")
-
+        
         # Configure columns for uniform spacing
         for i in range(2): # Assuming 2 columns of buttons as per original layout
             button_grid_container.grid_columnconfigure(i, weight=1, uniform="survey_button_cols")
@@ -282,19 +280,6 @@ class SurveySectionView(ttk.Frame):
                 col = 0
                 row += 1
 
-
-                #ADDED
-        # Buttons Frame
-        buttons_frame = ttk.LabelFrame(self, text="Actions", padding="10")
-        buttons_frame.pack(fill="x", padx=10, pady=10)
-
-        btn_view_receipts = ttk.Button(buttons_frame, text="View All Receipts", command=self._open_receipts_folder)
-        btn_view_receipts.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
-
-        # Configure column weights for even distribution
-        buttons_frame.grid_columnconfigure(0, weight=1)
-        buttons_frame.grid_columnconfigure(1, weight=1)
-
         self.survey_overview_frame = ttk.LabelFrame(self, text="Survey Overview", padding="10")
         self.survey_overview_frame.pack(pady=10, padx=20, fill="both", expand=True)
 
@@ -309,8 +294,6 @@ class SurveySectionView(ttk.Frame):
 
         self.lbl_pending_survey_payments = ttk.Label(self.survey_overview_frame, text="Pending Survey Payments: N/A", font=("Arial", 12, "bold"))
         self.lbl_pending_survey_payments.pack(side="left", padx=10)
-
-
 
     def populate_survey_overview(self):
         """
@@ -340,41 +323,16 @@ class SurveySectionView(ttk.Frame):
                          parent_icon_loader=self.load_icon_callback, window_icon_name="add_survey.png")
 
     def _open_track_survey_jobs_view(self):
-        TrackSurveyJobsForm(
-            self.master,
-            self.db_manager,
-            self.populate_survey_overview,
-            parent_icon_loader=self.load_icon_callback,
-            window_icon_name="track_jobs.png"
-        )
-
-    #ADDED
-    def refresh_summary(self):
-        total_jobs = self.db_manager.get_total_survey_jobs_count()
-        pending_jobs = self.db_manager.get_pending_survey_jobs_count()
-        completed_jobs = self.db_manager.get_completed_survey_jobs_count()
-
-        self.total_survey_jobs_label.config(text=f"Total Survey Jobs: {total_jobs}")
-        self.pending_jobs_label.config(text=f"Pending Jobs: {pending_jobs}")
-        self.completed_jobs_label.config(text=f"Completed Jobs: {completed_jobs}")
+        messagebox.showinfo("Action", "Opening Track Survey Jobs View... (Coming Soon)")
 
     def _open_manage_survey_payments_view(self):
-        ManagePaymentForm(self.master, self.db_manager, self.populate_survey_overview,
-                          parent_icon_loader=self.load_icon_callback, window_icon_name="payment.png")
+        messagebox.showinfo("Action", "Opening Manage Survey Payments View... (Coming Soon)")
 
     def _open_survey_reports_view(self):
-        SurveyReportsForm(self.master, self.db_manager,
-                          parent_icon_loader=self.load_icon_callback, window_icon_name="survey_reports.png")
+        messagebox.showinfo("Action", "Opening Survey Reports View... (Coming Soon)")
 
     def generate_report_type(self, report_name):
         messagebox.showinfo("Report", f"Generating {report_name} Report from Survey Section... (Feature coming soon!)")
-
-    def _open_receipts_folder(self):
-        """Opens the receipts directory in the file explorer."""
-        if os.path.exists(RECEIPTS_DIR):
-            os.startfile(RECEIPTS_DIR)
-        else:
-            messagebox.showerror("Error", "Receipts folder not found.")
 
 
 class RealEstateApp(tk.Tk):
