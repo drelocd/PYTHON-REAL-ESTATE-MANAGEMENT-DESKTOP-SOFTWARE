@@ -1,0 +1,29 @@
+
+        ----------------------------------------------------
+            PROPERTY SALE RECEIPT - MATHENGE REAL ESTATE
+        ----------------------------------------------------
+
+        Date: 2025-06-25
+        Transaction ID: 1
+
+        BUYER DETAILS:
+        Name: ff
+        Contact: fff
+
+        PROPERTY DETAILS:
+        Title Deed: A001
+        Location: KITE
+        Size: 22.00 ACRES
+
+        FINANCIAL SUMMARY:
+        Original Price: KES 4,444.00
+        Discount:       KES 0.00
+        Net Price:      KES 4,444.00
+        Amount Paid:    KES 4,444.00
+        Balance Due:    KES 0.00
+        Payment Mode:   Cash
+
+        ----------------------------------------------------
+        Thank you for your business!
+        ----------------------------------------------------
+        
