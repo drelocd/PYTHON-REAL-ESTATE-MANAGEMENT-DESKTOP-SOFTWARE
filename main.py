@@ -9,13 +9,50 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 # Import your DatabaseManager
 from database import DatabaseManager
+db_manager = DatabaseManager()
+print("\n--- Checking/Adding Default Users ---")
+
+# Add 'admin' user if they don't exist
+# We use db_manager.authenticate_user to check for existence and valid password (for a robust check)
+# If authenticate_user returns None, the user doesn't exist or password is wrong, so we can try adding them.
+admin_username = "admin"
+admin_password = "admin" # This will be hashed by add_user
+
+if not db_manager.authenticate_user(admin_username, admin_password):
+    print(f"'{admin_username}' user not found or password incorrect. Attempting to add...")
+    admin_id = db_manager.add_user(admin_username, admin_password, "admin")
+    if admin_id:
+        print(f"Admin user '{admin_username}' added successfully with ID: {admin_id}")
+    else:
+        print(f"Failed to add admin user '{admin_username}'. It might already exist with a different password.")
+else:
+    print(f"Admin user '{admin_username}' already exists.")
+
+# Add 'user' user if they don't exist
+user_username = "user"
+user_password = "user" # This will be hashed by add_user (if you want 'user' as password for 'user')
+# OR user_password = "admin" if you want 'admin' password for both 'user' and 'admin' accounts
+# Based on your request, I'll use "admin" as the password for the 'user' account too.
+user_password_for_creation = "admin"
+
+
+if not db_manager.authenticate_user(user_username, user_password_for_creation):
+    print(f"'{user_username}' user not found or password incorrect. Attempting to add...")
+    user_id = db_manager.add_user(user_username, user_password_for_creation, "user")
+    if user_id:
+        print(f"Regular user '{user_username}' added successfully with ID: {user_id}")
+    else:
+        print(f"Failed to add regular user '{user_username}'. It might already exist with a different password.")
+else:
+    print(f"Regular user '{user_username}' already exists.")
+
+print("--- Default User Setup Complete ---")
 
 # Import form classes from your forms directory
 # Assuming property_forms.py now contains AddPropertyForm, SellPropertyForm,
 # TrackPaymentsForm, SoldPropertiesView, ViewAllPropertiesForm, and EditPropertyForm
 from forms.property_forms import AddPropertyForm, SellPropertyForm, TrackPaymentsForm, SoldPropertiesView, ViewAllPropertiesForm, EditPropertyForm, SalesReportsForm
-from forms.survey_forms import AddSurveyJobForm, ManagePaymentForm, TrackSurveyJobsForm, SurveyReportsForm # Import SurveyReportsForm here
-
+from forms.survey_forms import AddSurveyJobForm,  PaymentSurveyJobsFrame, TrackSurveyJobsFrame, SurveyReportsForm
 
 # --- Global Constants ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -35,10 +72,12 @@ for d in [PROPERTY_IMAGES_DIR, TITLE_DEEDS_DIR, RECEIPTS_DIR, SURVEY_ATTACHMENTS
 # --- Section View Classes ---
 
 class SalesSectionView(ttk.Frame):
-    def __init__(self, master, db_manager, load_icon_callback):
+    def __init__(self, master, db_manager, load_icon_callback, user_id):
         super().__init__(master, padding="10 10 10 10")
         self.db_manager = db_manager
         self.load_icon_callback = load_icon_callback # Callback to main app's _load_icon
+        self.user_id = user_id
+        
 
         # Initialize a list to hold references to PhotoImage objects for SalesSection buttons
         self.sales_button_icons = [] 
@@ -203,6 +242,7 @@ class SalesSectionView(ttk.Frame):
     # --- Methods called by buttons within SalesSection ---
     def _open_add_property_form(self):
         AddPropertyForm(self.master, self.db_manager, self.populate_system_overview,
+                        user_id=self.user_id,
                         parent_icon_loader=self.load_icon_callback, window_icon_name="add_property.png")
 
     def _open_sell_property_form(self):
@@ -230,23 +270,22 @@ class SalesSectionView(ttk.Frame):
 
 
 class SurveySectionView(ttk.Frame):
-    def __init__(self, master, db_manager, load_icon_callback):
+    def __init__(self, master, db_manager, load_icon_callback, user_id):
         super().__init__(master, padding="10 10 10 10")
         self.db_manager = db_manager
-        self.load_icon_callback = load_icon_callback # Store the callback
-        # Initialize a list to hold references to PhotoImage objects for SurveySection buttons
-        self.survey_button_icons = []
+        self.load_icon_callback = load_icon_callback
+        self.user_id = user_id
+        self.survey_button_icons = [] # To hold PhotoImage references
         self._create_widgets()
         self.populate_survey_overview()
 
     def _create_widgets(self):
         button_grid_container = ttk.Frame(self, padding="20")
         button_grid_container.pack(pady=20, padx=20, fill="x", anchor="n")
-        
-        # Configure columns for uniform spacing
-        for i in range(2): # Assuming 2 columns of buttons as per original layout
+
+        for i in range(2):
             button_grid_container.grid_columnconfigure(i, weight=1, uniform="survey_button_cols")
-        for i in range(2): # Assuming 2 rows of buttons
+        for i in range(2):
             button_grid_container.grid_rowconfigure(i, weight=1, uniform="survey_button_rows")
 
         buttons_data = [
@@ -258,25 +297,26 @@ class SurveySectionView(ttk.Frame):
 
         row, col = 0, 0
         for data in buttons_data:
-            icon_img = self.load_icon_callback(data["icon"]) # Load icon
-            self.survey_button_icons.append(icon_img) # <--- IMPORTANT: Store reference here!
-            
+            # Ensure load_icon_callback can handle 'size' if needed by your IconLoader
+            icon_img = self.load_icon_callback(data["icon"], size=(64, 64)) # Example size for a button icon
+            self.survey_button_icons.append(icon_img) # IMPORTANT: Store reference here!
+
             btn_wrapper_frame = ttk.Frame(button_grid_container, relief="raised", borderwidth=1, cursor="hand2")
             btn_wrapper_frame.grid(row=row, column=col, padx=10, pady=10, sticky="nsew")
 
             btn = ttk.Button(
                 btn_wrapper_frame,
                 text=data["text"],
-                image=icon_img,    # Set the image
-                compound=tk.TOP,    # Place image above text
+                image=icon_img,
+                compound=tk.TOP,
                 command=data["command"]
             )
             btn.pack(expand=True, fill="both", ipadx=20, ipady=20)
-            
-            btn.image = icon_img # <--- IMPORTANT: Also store reference on the button widget itself!
+
+            btn.image = icon_img # Also store reference on the button widget itself!
 
             col += 1
-            if col > 1: # Move to next row after 2 columns
+            if col > 1:
                 col = 0
                 row += 1
 
@@ -296,9 +336,7 @@ class SurveySectionView(ttk.Frame):
         self.lbl_pending_survey_payments.pack(side="left", padx=10)
 
     def populate_survey_overview(self):
-        """
-        Fetches data from the database and updates the Survey Overview dashboard.
-        """
+        # ... (Your existing populate_survey_overview method) ...
         try:
             total_jobs = self.db_manager.get_total_survey_jobs()
             completed_jobs = self.db_manager.get_completed_survey_jobs_count()
@@ -320,60 +358,176 @@ class SurveySectionView(ttk.Frame):
 
     def _open_add_survey_job_form(self):
         AddSurveyJobForm(self.master, self.db_manager, self.populate_survey_overview,
-                         parent_icon_loader=self.load_icon_callback, window_icon_name="add_survey.png")
+                         parent_icon_loader=self.load_icon_callback, window_icon_name="add_survey.png",current_user_id=self.user_id)
 
     def _open_track_survey_jobs_view(self):
-        TrackSurveyJobsForm(self.master, self.db_manager, self.populate_survey_overview,
-                         parent_icon_loader=self.load_icon_callback, window_icon_name="track_jobs.png")
+        TrackSurveyJobsFrame(self.master, self.db_manager,self.populate_survey_overview,
+                             parent_icon_loader=self.load_icon_callback,window_icon_name="track_jobs.png")
+
 
     def _open_manage_survey_payments_view(self):
-        ManagePaymentForm(self.master, self.db_manager, self.populate_survey_overview,
-                         parent_icon_loader=self.load_icon_callback, window_icon_name="manage_payments.png")
+        PaymentSurveyJobsFrame(self.master, self.db_manager, self.populate_survey_overview,
+                              parent_icon_loader=self.load_icon_callback, 
+                              window_icon_name="manage_payments.png")
+
+
 
     def _open_survey_reports_view(self):
-        SurveyReportsForm(self.master, self.db_manager, self.populate_survey_overview,
-                         parent_icon_loader=self.load_icon_callback, window_icon_name="survey_reports.png")
-
-    def _open_receipts_folder(self):
-        """Opens the receipts directory in the file explorer."""
-        if os.path.exists(RECEIPTS_DIR):
-            os.startfile(RECEIPTS_DIR)
-        else:
-            messagebox.showerror("Error", "Receipts folder not found.")
+        SurveyReportsForm(self.master, self.db_manager,
+                               parent_icon_loader=self.load_icon_callback,window_icon_name="survey_reports.png")
 
     def generate_report_type(self, report_name):
         messagebox.showinfo("Report", f"Generating {report_name} Report from Survey Section... (Feature coming soon!)")
 
+class LoginPage(tk.Toplevel):
+    def __init__(self, master, db_manager, login_callback):
+        super().__init__(master)
+        self.master = master
+        self.db_manager = db_manager
+        self.login_callback = login_callback
+        
+        self.title("Login")
+        self.geometry("400x250")
+        self.resizable(False, False)
+        self.grab_set()  # Make the login window modal
+        self.transient(master) # Make it appear on top of the master window
+
+        # Center the login window
+        self.update_idletasks()
+        x = master.winfo_x() + (master.winfo_width() // 2) - (self.winfo_width() // 2)
+        y = master.winfo_y() + (master.winfo_height() // 2) - (self.winfo_height() // 2)
+        self.geometry(f"+{x}+{y}")
+        
+        self._create_widgets()
+
+        # Bind Enter key to login
+        self.bind('<Return>', lambda event=None: self._login())
+        # Protocol handler for closing the window (X button)
+        self.protocol("WM_DELETE_WINDOW", self._on_closing)
+
+    def _create_widgets(self):
+        main_frame = ttk.Frame(self, padding="20")
+        main_frame.pack(expand=True, fill="both")
+
+        lbl_title = ttk.Label(main_frame, text="Login to Mathenge's System", font=("Arial", 16, "bold"))
+        lbl_title.pack(pady=10)
+
+        # Username/Email
+        username_frame = ttk.Frame(main_frame)
+        username_frame.pack(pady=5, fill="x")
+        ttk.Label(username_frame, text="Username/Email:").pack(side="left", padx=(0, 5))
+        self.username_entry = ttk.Entry(username_frame, width=30)
+        self.username_entry.pack(side="right", expand=True, fill="x")
+        self.username_entry.focus_set()
+
+        # Password
+        password_frame = ttk.Frame(main_frame)
+        password_frame.pack(pady=5, fill="x")
+        ttk.Label(password_frame, text="Password:").pack(side="left", padx=(0, 5))
+        self.password_entry = ttk.Entry(password_frame, show="*", width=30)
+        self.password_entry.pack(side="right", expand=True, fill="x")
+
+        login_button = ttk.Button(main_frame, text="Login", command=self._login)
+        login_button.pack(pady=15)
+
+    def _login(self):
+        username_email = self.username_entry.get().strip()
+        password = self.password_entry.get().strip()
+
+        if not username_email or not password:
+            messagebox.showwarning("Login Error", "Please enter both username/email and password.")
+            return
+
+        user_data = self.db_manager.authenticate_user(username_email, password)
+
+        if user_data:
+            role = user_data.get('role')
+            user_id = user_data.get('user_id') # Get the user_id (employee ID)
+            
+            messagebox.showinfo("Login Success", f"Welcome, {username_email}! You are logged in as {role.upper()} (ID: {user_id}).")
+            self.login_callback(True, role, user_id) # Pass True, role, and user_id
+            self.destroy() # Close login window
+        else:
+            messagebox.showerror("Login Failed", "Invalid username/email or password.")
+            self.password_entry.delete(0, tk.END) # Clear password field
+
+    def _on_closing(self):
+        """Handle the window close button (X) to exit the app if login is not successful."""
+        if messagebox.askokcancel("Exit Login", "Are you sure you want to exit the application?"):
+            # When closing without successful login, pass False, None for role, and None for user_id
+            self.login_callback(False, None, None) 
+            self.destroy()
 
 
 
 class RealEstateApp(tk.Tk):
     def __init__(self):
         super().__init__()
+        self.withdraw() # Hide the main window initially
         self.title("Mathenge's Real Estate Management System")
         self.geometry("1200x800")
         self.state('zoomed')
 
-        # Set window properties
-        self._set_window_icon()
-        self._set_taskbar_icon()
-        self._customize_title_bar()
-
         self.db_manager = DatabaseManager()
         self.icon_images = {}  # Cache for PhotoImage objects
 
-        self._create_menu_bar()
-        self._create_main_frames()
+        # --- Apply Dark Theme ---
+        self.style = ttk.Style(self)
+        self.style.theme_use('clam') # 'clam' is a good base for customization
         
-        self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_change)
-        self._on_tab_change(None)
+        
+        
+        
+        
+        # Notebook (tabs) styling
+        self.style.configure('TNotebook', background="#FFFFFF", borderwidth=0)
+        self.style.configure('TNotebook.Tab', foreground='black', padding=[5, 2])
+        self.style.map('TNotebook.Tab',
+                       background=[('selected', '#007ACC'), ('active', "#2F8043")],
+                       foreground=[('selected', 'white')])
+        
+        # Treeview (for tables) styling
+        self.style.configure("Treeview",
+                             background="#8F8F8F",
+                             foreground="black",
+                             fieldbackground="#818181",
+                             rowheight=25)
+        self.style.configure("Treeview.Heading",
+                             background="#6BBCF1",
+                             foreground="black",
+                             font=('Arial', 10, 'bold'))
+        self.style.map("Treeview",
+               background=[('selected', "#F5F5F5")],
+               foreground=[('selected', 'black')],
+               font=[('selected', ('Arial', 10, 'bold'))]) # Added font style
+                       
+        self.login_successful = False
+        self.user_type = None
+        self.show_login_page() # Start with the login page
 
-        # For custom title bar dragging
-        self._start_x = 0
-        self._start_y = 0
+    def show_login_page(self):
+        """Displays the login window."""
+        LoginPage(self, self.db_manager, self.on_login_complete)
+        # The mainloop will pause here until the Toplevel (LoginPage) is destroyed.
+
+    def on_login_complete(self, success, user_type=None, user_id=None):
+        """Callback from LoginPage, executed after a login attempt."""
+        self.login_successful = success
+        self.user_type = user_type
+        self.user_id = user_id  # Store the user ID (employee ID)
+        if self.login_successful:
+            self.deiconify() # Show the main window
+            self._set_window_icon()
+            self._set_taskbar_icon()
+            self._customize_title_bar()
+            self._create_menu_bar() # Menu bar now depends on user_type
+            self._create_main_frames()
+            self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_change)
+            self._on_tab_change(None) # Populate initial tab data
+        else:
+            self.destroy() # Exit application if login fails or is cancelled
 
     def _on_tab_change(self, event):
-        """Callback for when the notebook tab changes, to refresh active tab's data."""
         selected_tab_id = self.notebook.select()
         selected_tab_widget = self.notebook.nametowidget(selected_tab_id)
         
@@ -383,8 +537,6 @@ class RealEstateApp(tk.Tk):
             selected_tab_widget.populate_survey_overview()
 
     def _set_window_icon(self):
-        """Sets the window icon from the assets directory."""
-        # Try .ico first (best for Windows)
         ico_path = os.path.join(ICONS_DIR, "home.ico")
         png_path = os.path.join(ICONS_DIR, "home.png")
         
@@ -395,7 +547,6 @@ class RealEstateApp(tk.Tk):
             except Exception as e:
                 print(f"Error loading .ico icon: {e}")
         
-        # Fallback to .png (cross-platform)
         if os.path.exists(png_path):
             try:
                 img = Image.open(png_path)
@@ -407,9 +558,6 @@ class RealEstateApp(tk.Tk):
             print("No valid icon file found")
 
     def _set_taskbar_icon(self):
-        """Ensures the icon appears in the taskbar/dock."""
-        # This is handled by _set_window_icon on most platforms
-        # Additional Windows-specific taskbar grouping
         if os.name == 'nt':
             try:
                 from ctypes import windll
@@ -418,66 +566,38 @@ class RealEstateApp(tk.Tk):
                 print(f"Could not set taskbar ID: {e}")
 
     def _customize_title_bar(self):
-        """Attempts to customize the title bar appearance."""
-        # Try Windows-specific customization first
         if os.name == 'nt':
             self._customize_windows_title_bar()
         else:
-            # Fallback to custom title bar for other platforms
             self._create_custom_title_bar()
 
     def _customize_windows_title_bar(self):
-        """Windows-specific title bar customization."""
         try:
             from ctypes import windll, byref, sizeof, c_int
-            
-            # Windows constants
             DWMWA_USE_IMMERSIVE_DARK_MODE = 20
             DWMWA_CAPTION_COLOR = 35
             DWMWA_TEXT_COLOR = 36
             
             hwnd = windll.user32.GetParent(self.winfo_id())
             
-            # Set dark mode
             value = c_int(1)
-            windll.dwmapi.DwmSetWindowAttribute(
-                hwnd, 
-                DWMWA_USE_IMMERSIVE_DARK_MODE, 
-                byref(value), 
-                sizeof(value)
-            )
+            windll.dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, byref(value), sizeof(value))
             
-            # Set title bar color to dark blue (RGB: 0, 51, 102)
-            color = c_int(0x00663300)  # BGR format for Windows
-            windll.dwmapi.DwmSetWindowAttribute(
-                hwnd, 
-                DWMWA_CAPTION_COLOR, 
-                byref(color), 
-                sizeof(color)
-            )
+            color = c_int(0x00663300)
+            windll.dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, byref(color), sizeof(color))
             
-            # Set title text color to white
-            text_color = c_int(0x00FFFFFF)  # White in BGR
-            windll.dwmapi.DwmSetWindowAttribute(
-                hwnd, 
-                DWMWA_TEXT_COLOR, 
-                byref(text_color), 
-                sizeof(text_color)
-            )
+            text_color = c_int(0x00FFFFFF)
+            windll.dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_TEXT_COLOR, byref(text_color), sizeof(text_color))
         except Exception as e:
             print(f"Could not customize Windows title bar: {e}")
             self._create_custom_title_bar()
 
     def _create_custom_title_bar(self):
-        """Creates a custom title bar when native customization isn't available."""
-        # Remove native title bar
         self.overrideredirect(True)
         
-        # Create custom title bar frame
         title_bar = tk.Frame(self, bg='#003366', relief='raised', bd=0, height=30)
         title_bar.pack(fill=tk.X)
         
-        # Title label
         title_label = tk.Label(
             title_bar, 
             text="Mathenge's Real Estate Management System",
@@ -487,7 +607,6 @@ class RealEstateApp(tk.Tk):
         )
         title_label.pack(side=tk.LEFT, padx=10)
         
-        # Close button
         close_button = tk.Button(
             title_bar, 
             text='×', 
@@ -500,7 +619,6 @@ class RealEstateApp(tk.Tk):
         )
         close_button.pack(side=tk.RIGHT, padx=5)
         
-        # Minimize button
         minimize_button = tk.Button(
             title_bar,
             text='−',
@@ -513,32 +631,24 @@ class RealEstateApp(tk.Tk):
         )
         minimize_button.pack(side=tk.RIGHT, padx=5)
         
-        # Bind mouse events for window dragging
         title_bar.bind('<Button-1>', self._save_drag_start_pos)
         title_bar.bind('<B1-Motion>', self._move_window)
         title_label.bind('<Button-1>', self._save_drag_start_pos)
         title_label.bind('<B1-Motion>', self._move_window)
 
     def _save_drag_start_pos(self, event):
-        """Saves the initial position for window dragging."""
         self._start_x = event.x
         self._start_y = event.y
 
     def _move_window(self, event):
-        """Handles window movement for custom title bar."""
         x = self.winfo_pointerx() - self._start_x
         y = self.winfo_pointery() - self._start_y
         self.geometry(f'+{x}+{y}')
 
     def _load_icon(self, icon_name, size=(40,40)):
-        """
-        Loads and resizes an icon from the 'assets/icons' directory.
-        Stores a reference to the PhotoImage object to prevent garbage collection.
-        """
         path = os.path.join(ICONS_DIR, icon_name)
         if not os.path.exists(path):
             print(f"Warning: Icon not found at {path}")
-            # Create a placeholder red square if icon is missing
             img = Image.new('RGB', size, color='red')
             tk_img = ImageTk.PhotoImage(img)
             self.icon_images[path] = tk_img
@@ -551,23 +661,19 @@ class RealEstateApp(tk.Tk):
             return tk_img
         except Exception as e:
             print(f"Error loading icon {icon_name}: {e}")
-            # Create a placeholder gray square on error
             img = Image.new('RGB', size, color='gray')
             tk_img = ImageTk.PhotoImage(img)
             self.icon_images[path] = tk_img
             return tk_img
 
     def _create_menu_bar(self):
-        """Creates the application's menu bar."""
         menubar = tk.Menu(self)
         self.config(menu=menubar)
 
-        # File menu
         file_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="File", menu=file_menu)
         file_menu.add_command(label="Exit", command=self.on_exit)
 
-        # Sales menu
         sales_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Sales", menu=sales_menu)
         sales_menu.add_command(label="Add New Property", command=lambda: self._go_to_sales_tab_and_action("add_property"))
@@ -577,13 +683,11 @@ class RealEstateApp(tk.Tk):
         sales_menu.add_command(label="Track Payments", command=lambda: self._go_to_sales_tab_and_action("track_payments"))
         sales_menu.add_command(label="Sold Properties Records", command=lambda: self._go_to_sales_tab_and_action("sold_properties"))
 
-        # Surveys menu
         surveys_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Surveys", menu=surveys_menu)
         surveys_menu.add_command(label="Register New Job", command=lambda: self._go_to_survey_tab_and_action("add_job"))
         surveys_menu.add_command(label="Track Jobs", command=lambda: self._go_to_survey_tab_and_action("track_jobs"))
 
-        # Reports menu
         reports_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Reports", menu=reports_menu)
         reports_menu.add_command(label="Daily/Monthly Sales Report", command=lambda: self.sales_section.generate_report_type("Daily/Monthly Sales"))
@@ -592,13 +696,23 @@ class RealEstateApp(tk.Tk):
         reports_menu.add_command(label="Completed Survey Jobs Report", command=lambda: self.survey_section.generate_report_type("Completed Survey Jobs"))
         reports_menu.add_command(label="Upcoming Deadlines for Surveys", command=lambda: self.survey_section.generate_report_type("Upcoming Survey Deadlines"))
 
-        # Help menu
+        # --- ADMIN MENU: Only visible if user_type is 'admin' ---
+        if self.user_type == 'admin':
+            admin_menu = tk.Menu(menubar, tearoff=0)
+            menubar.add_cascade(label="Admin", menu=admin_menu)
+            admin_menu.add_command(label="Manage Users", command=self._open_admin_panel)
+            # You can add more admin-specific functionalities here later
+        # --- END ADMIN MENU ---
+
         help_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Help", menu=help_menu)
         help_menu.add_command(label="About", command=self.show_about_dialog)
 
+    def _open_admin_panel(self):
+        messagebox.showinfo("Admin Panel", "Opening Admin Panel... (Functionality to manage users and system settings will be implemented here later!)")
+        # This is where you would launch a new Tkinter window/form for admin controls.
+
     def _go_to_sales_tab_and_action(self, action):
-        """Helper to switch to sales tab and trigger an action if needed."""
         self.notebook.select(self.sales_section)
         if action == "add_property":
             self.sales_section._open_add_property_form()
@@ -612,24 +726,20 @@ class RealEstateApp(tk.Tk):
             self.sales_section._open_sold_properties_view()
 
     def _go_to_survey_tab_and_action(self, action):
-        """Helper to switch to survey tab and trigger an action if needed."""
         self.notebook.select(self.survey_section)
         if action == "add_job":
             self.survey_section._open_add_survey_job_form()
         elif action == "track_jobs":
-            self.survey_section._open_track_survey_jobs_view()
+            self.survey_section._open_track_survey_jobs_view() 
 
     def _create_main_frames(self):
-        """Creates the main tabbed interface for different sections."""
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(expand=True, fill="both", padx=10, pady=10)
 
-        # Pass load_icon_callback to SalesSectionView
-        self.sales_section = SalesSectionView(self.notebook, self.db_manager, self._load_icon)
+        self.sales_section = SalesSectionView(self.notebook, self.db_manager, self._load_icon,user_id=self.user_id)
         self.notebook.add(self.sales_section, text="   Land Sales & Purchases   ")
 
-        # Pass load_icon_callback to SurveySectionView
-        self.survey_section = SurveySectionView(self.notebook, self.db_manager, self._load_icon)
+        self.survey_section = SurveySectionView(self.notebook, self.db_manager, self._load_icon, user_id=self.user_id)
         self.notebook.add(self.survey_section, text="   Survey Services   ")
 
     def show_about_dialog(self):
@@ -642,8 +752,8 @@ class RealEstateApp(tk.Tk):
         )
 
     def on_exit(self):
-        """Handles application exit, confirming with the user."""
         if messagebox.askyesno("Exit Application", "Are you sure you want to exit?"):
+            self.db_manager.close() # Close database connection
             self.destroy()
 
 if __name__ == "__main__":
