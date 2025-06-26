@@ -549,7 +549,7 @@ class DatabaseManager:
             t.balance,
             t.receipt_path,
             c.name AS client_name,
-            c.contact_info AS client_contact_info, -- Changed alias for clarity and consistency
+            c.contact_info AS client_contact, -- Changed alias for clarity and consistency
             p.property_id,
             p.title_deed_number,
             p.location,
@@ -654,7 +654,7 @@ class DatabaseManager:
             t.discount,
             t.balance,
             c.name AS client_name,
-            c.contact_info AS client_contact_info
+            c.contact_info AS client_contact
         FROM
             properties p
         JOIN
@@ -731,7 +731,7 @@ class DatabaseManager:
                 sj.job_id,
                 sj.client_id,
                 c.name AS client_name,
-                c.contact_info AS client_contact_info,
+                c.contact_info AS client_contact,
                 sj.property_location,
                 sj.job_description,
                 sj.fee,
@@ -954,7 +954,7 @@ class DatabaseManager:
                         p.title_deed_number,
                         p.price AS original_price,
                         c.name AS client_name,
-                        c.contact_info AS client_contact_info
+                        c.contact_info AS client_contact
                     FROM 
                         transactions t
                     JOIN 
@@ -981,3 +981,144 @@ class DatabaseManager:
         except Exception as e:  # Use a more general Exception to catch all potential issues during DB operations
             print(f"Database error in update_survey_job_status: {e}")
             return False
+
+    def get_all_survey_jobs_with_client_info_for_date_range(self, start_date, end_date):
+        """
+        Retrieves all survey jobs along with client name and contact info,
+        filtered by a date range (based on job deadline).
+        Args:
+            start_date (str): Start date for the filter (YYYY-MM-DD).
+            end_date (str): End date for the filter (YYYY-MM-DD).
+        Returns:
+            list: A list of sqlite3.Row objects, each representing a survey job
+                  with associated client details.
+        """
+        query = '''
+            SELECT
+                sj.job_id,
+                c.name AS client_name,
+                c.contact_info AS client_contact_info,
+                sj.property_location,
+                sj.job_description,
+                sj.fee,
+                sj.amount_paid,
+                sj.balance,
+                sj.deadline,
+                sj.status,
+                sj.attachments_path
+            FROM
+                survey_jobs sj
+            JOIN
+                clients c ON sj.client_id = c.client_id
+            WHERE
+                sj.deadline BETWEEN ? AND ? || ' 23:59:59'
+            ORDER BY sj.deadline ASC
+        '''
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(query, (start_date, end_date))
+                return cursor.fetchall()
+        except sqlite3.Error as e:
+            print(f"Database error in get_all_survey_jobs_with_client_info_for_date_range: {e}")
+            return []
+
+    def get_survey_jobs_by_status_for_date_range(self, status=None, start_date=None, end_date=None):
+        """
+        Retrieves survey jobs along with client name and contact info,
+        optionally filtered by status and/or a date range (based on job deadline).
+
+        Args:
+            status (str, optional): The status to filter by ('Pending', 'Ongoing', 'Completed', 'Cancelled').
+                                    If None, jobs of all statuses are returned.
+            start_date (str, optional): Start date for the deadline filter (YYYY-MM-DD). If None, no start date filter.
+            end_date (str, optional): End date for the deadline filter (YYYY-MM-DD). If None, no end date filter.
+        Returns:
+            list: A list of sqlite3.Row objects, each representing a survey job
+                  with associated client details.
+        """
+        query = '''
+            SELECT
+                sj.job_id,
+                c.name AS client_name,
+                c.contact_info AS client_contact_info,
+                sj.property_location,
+                sj.job_description,
+                sj.fee,
+                sj.amount_paid,
+                sj.balance,
+                sj.deadline,
+                sj.status,
+                sj.attachments_path
+            FROM
+                survey_jobs sj
+            JOIN
+                clients c ON sj.client_id = c.client_id
+            WHERE 1=1
+        '''
+        params = []
+
+        if status:
+            query += " AND sj.status = ?"
+            params.append(status)
+
+        if start_date:
+            query += " AND sj.deadline >= ?"
+            params.append(start_date)
+
+        if end_date:
+            query += " AND sj.deadline <= ? || ' 23:59:59'"  # Include end of day
+            params.append(end_date)
+
+        query += " ORDER BY sj.deadline ASC"
+
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(query, tuple(params))
+                return cursor.fetchall()
+        except sqlite3.Error as e:
+            print(f"Database error in get_survey_jobs_by_status_for_date_range: {e}")
+            return []
+
+        # Add this method to your DatabaseManager class in database.py
+
+    def get_survey_job_by_id(self, job_id):
+            """
+            Retrieves a single survey job's details by its job_id, including client information.
+
+            Args:
+                job_id (int): The ID of the survey job to retrieve.
+
+            Returns:
+                sqlite3.Row or None: An sqlite3.Row object if the job is found, otherwise None.
+            """
+            query = '''
+                SELECT
+                    sj.job_id,
+                    sj.client_id, -- Important for pre-filling client in edit form if needed
+                    c.name AS client_name,
+                    c.contact_info AS client_contact_info,
+                    sj.property_location,
+                    sj.job_description,
+                    sj.fee,
+                    sj.amount_paid,
+                    sj.balance,
+                    sj.deadline,
+                    sj.status,
+                    sj.attachments_path
+                FROM
+                    survey_jobs sj
+                JOIN
+                    clients c ON sj.client_id = c.client_id
+                WHERE
+                    sj.job_id = ?
+            '''
+            try:
+                with self._get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(query, (job_id,))
+                    return cursor.fetchone()
+            except sqlite3.Error as e:
+                print(f"Database error in get_survey_job_by_id: {e}")
+                return None
