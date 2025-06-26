@@ -52,7 +52,7 @@ print("--- Default User Setup Complete ---")
 # Assuming property_forms.py now contains AddPropertyForm, SellPropertyForm,
 # TrackPaymentsForm, SoldPropertiesView, ViewAllPropertiesForm, and EditPropertyForm
 from forms.property_forms import AddPropertyForm, SellPropertyForm, TrackPaymentsForm, SoldPropertiesView, ViewAllPropertiesForm, EditPropertyForm, SalesReportsForm
-from forms.survey_forms import AddSurveyJobForm, ManagePaymentForm
+from forms.survey_forms import AddSurveyJobForm,  PaymentSurveyJobsFrame
 
 # --- Global Constants ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -273,21 +273,19 @@ class SurveySectionView(ttk.Frame):
     def __init__(self, master, db_manager, load_icon_callback, user_id):
         super().__init__(master, padding="10 10 10 10")
         self.db_manager = db_manager
-        self.load_icon_callback = load_icon_callback # Store the callback
-        # Initialize a list to hold references to PhotoImage objects for SurveySection buttons
+        self.load_icon_callback = load_icon_callback
         self.user_id = user_id
-        self.survey_button_icons = []
+        self.survey_button_icons = [] # To hold PhotoImage references
         self._create_widgets()
         self.populate_survey_overview()
 
     def _create_widgets(self):
         button_grid_container = ttk.Frame(self, padding="20")
         button_grid_container.pack(pady=20, padx=20, fill="x", anchor="n")
-        
-        # Configure columns for uniform spacing
-        for i in range(2): # Assuming 2 columns of buttons as per original layout
+
+        for i in range(2):
             button_grid_container.grid_columnconfigure(i, weight=1, uniform="survey_button_cols")
-        for i in range(2): # Assuming 2 rows of buttons
+        for i in range(2):
             button_grid_container.grid_rowconfigure(i, weight=1, uniform="survey_button_rows")
 
         buttons_data = [
@@ -299,25 +297,26 @@ class SurveySectionView(ttk.Frame):
 
         row, col = 0, 0
         for data in buttons_data:
-            icon_img = self.load_icon_callback(data["icon"]) # Load icon
-            self.survey_button_icons.append(icon_img) # <--- IMPORTANT: Store reference here!
-            
+            # Ensure load_icon_callback can handle 'size' if needed by your IconLoader
+            icon_img = self.load_icon_callback(data["icon"], size=(64, 64)) # Example size for a button icon
+            self.survey_button_icons.append(icon_img) # IMPORTANT: Store reference here!
+
             btn_wrapper_frame = ttk.Frame(button_grid_container, relief="raised", borderwidth=1, cursor="hand2")
             btn_wrapper_frame.grid(row=row, column=col, padx=10, pady=10, sticky="nsew")
 
             btn = ttk.Button(
                 btn_wrapper_frame,
                 text=data["text"],
-                image=icon_img,    # Set the image
-                compound=tk.TOP,    # Place image above text
+                image=icon_img,
+                compound=tk.TOP,
                 command=data["command"]
             )
             btn.pack(expand=True, fill="both", ipadx=20, ipady=20)
-            
-            btn.image = icon_img # <--- IMPORTANT: Also store reference on the button widget itself!
+
+            btn.image = icon_img # Also store reference on the button widget itself!
 
             col += 1
-            if col > 1: # Move to next row after 2 columns
+            if col > 1:
                 col = 0
                 row += 1
 
@@ -337,9 +336,7 @@ class SurveySectionView(ttk.Frame):
         self.lbl_pending_survey_payments.pack(side="left", padx=10)
 
     def populate_survey_overview(self):
-        """
-        Fetches data from the database and updates the Survey Overview dashboard.
-        """
+        # ... (Your existing populate_survey_overview method) ...
         try:
             total_jobs = self.db_manager.get_total_survey_jobs()
             completed_jobs = self.db_manager.get_completed_survey_jobs_count()
@@ -366,16 +363,19 @@ class SurveySectionView(ttk.Frame):
     def _open_track_survey_jobs_view(self):
         messagebox.showinfo("Action", "Opening Track Survey Jobs View... (Coming Soon)")
 
+
     def _open_manage_survey_payments_view(self):
-        ManagePaymentForm(self.master, self.db_manager, self.populate_survey_overview,
-                          parent_icon_loader=self.load_icon_callback, window_icon_name="manage_payments.png")
+        PaymentSurveyJobsFrame(self.master, self.db_manager, self.populate_survey_overview,
+                              parent_icon_loader=self.load_icon_callback, 
+                              window_icon_name="manage_payments.png")
+
+
 
     def _open_survey_reports_view(self):
         messagebox.showinfo("Action", "Opening Survey Reports View... (Coming Soon)")
 
     def generate_report_type(self, report_name):
         messagebox.showinfo("Report", f"Generating {report_name} Report from Survey Section... (Feature coming soon!)")
-
 class LoginPage(tk.Toplevel):
     def __init__(self, master, db_manager, login_callback):
         super().__init__(master)

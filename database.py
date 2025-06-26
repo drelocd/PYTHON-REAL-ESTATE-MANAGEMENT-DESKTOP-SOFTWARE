@@ -862,13 +862,67 @@ class DatabaseManager:
         """
         query = """
             UPDATE survey_jobs
-            SET receipt_path = ?
+            SET receipt_creation_path = ?
             WHERE job_id = ?
         """
         # _execute_query returns True on success for updates, False on failure.
         return self._execute_query(query, (receipt_path, job_id), fetch_one=False)
     
 
+    def add_survey_job(self, client_id, property_location, job_description, fee, deadline,
+                       amount_paid=0.0, balance=0.0, status='Pending',
+                       attachments_path=None, added_by_user_id=None, created_at=None):
+        """
+        Adds a new survey job, tracking the user who created it and the creation timestamp.
+        Args:
+            client_id (int): ID of the client requesting the survey.
+            property_location (str): Location where the survey is to be conducted.
+            job_description (str): Description of the survey job.
+            fee (float): Total fee for the survey job.
+            deadline (str): Deadline for the survey in 'YYYY-MM-DD' format.
+            amount_paid (float, optional): Initial amount paid for the survey. Defaults to 0.0.
+            balance (float, optional): Remaining balance for the survey. Defaults to 0.0.
+            status (str, optional): Current status ('Pending', 'Ongoing', 'Completed', 'Cancelled'). Defaults to 'Pending'.
+            attachments_path (str, optional): Comma-separated paths to job attachments. Defaults to None.
+            added_by_user_id (int, optional): The user_id of the employee who added this survey job. Defaults to None.
+            created_at (str, optional): Timestamp when the job was created (YYYY-MM-DD HH:MM:SS). Defaults to None.
+                                        If None, and DB column has DEFAULT CURRENT_TIMESTAMP, DB will set it.
+        Returns:
+            int: The ID of the newly added survey job, or None on error.
+        """
+        query = '''INSERT INTO survey_jobs (client_id, property_location, job_description, fee,
+                                     amount_paid, balance, deadline, status, attachments_path, added_by_user_id, created_at)
+                                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'''
+        return self._execute_query(query, (client_id, property_location, job_description, fee,
+                                            amount_paid, balance, deadline, status, attachments_path, added_by_user_id, created_at))
+
+    def get_survey_job_by_id(self, job_id): # Renamed as per traceback
+        """
+        Retrieves a survey job by its ID.
+        Args:
+            job_id (int): The ID of the survey job to retrieve.
+        Returns:
+            sqlite3.Row: The survey job details, or None if not found.
+        """
+        query = "SELECT * FROM survey_jobs WHERE job_id = ?"
+        return self._execute_query(query, (job_id,), fetch_one=True)
+
+    def update_survey_job_receipt_path(self, job_id, receipt_path):
+        """
+        Updates the 'receipt_path' field for a given survey job.
+        Args:
+            job_id (int): The ID of the survey job to update.
+            receipt_path (str): The path to the generated receipt PDF.
+        Returns:
+            bool: True if the update was successful, False otherwise.
+        """
+        query = """
+            UPDATE survey_jobs
+            SET receipt_creation_path = ?
+            WHERE job_id = ?
+        """
+        return self._execute_query(query, (receipt_path, job_id), fetch_one=False)
+    
     def get_all_survey_jobs(self, status=None):
         """
         Retrieves all survey jobs, optionally filtered by status.
@@ -884,7 +938,6 @@ class DatabaseManager:
             params = (status,)
         return self._execute_query(query, params, fetch_all=True)
     
-    # --- ADD THIS NEW METHOD ---
     def update_survey_job_attachments(self, job_id, attachments_paths_str):
         """
         Updates the 'attachments_path' field for a given survey job.
@@ -895,7 +948,7 @@ class DatabaseManager:
             SET attachments_path = ?
             WHERE job_id = ?
         """
-        return self._execute_query(query, (attachments_paths_str, job_id), fetch_one=False) # No fetch needed for UPDATE
+        return self._execute_query(query, (attachments_paths_str, job_id), fetch_one=False)
 
     def update_survey_job(self, job_id, **kwargs):
         """
@@ -910,7 +963,6 @@ class DatabaseManager:
         """
         set_clauses = []
         params = []
-        # Updated allowed keys to match your schema and added 'added_by_user_id'
         allowed_keys = ['client_id', 'property_location', 'job_description', 
                         'fee', 'amount_paid', 'balance', 'deadline', 
                         'status', 'attachments_path', 'added_by_user_id'] 
@@ -926,7 +978,6 @@ class DatabaseManager:
 
         params.append(job_id)
         query = f"UPDATE survey_jobs SET {', '.join(set_clauses)} WHERE job_id = ?"
-        # Use _execute_query, it will return True/False based on affected rows
         return self._execute_query(query, params, fetch_one=False)
 
     def delete_survey_job(self, job_id):
@@ -987,9 +1038,6 @@ class DatabaseManager:
         return result[0] if result else 0
 
     # --- NEW REPORTING METHODS (FOR SalesReportsForm) ---
-    # These methods assume 'transactions' and 'properties' tables exist.
-    # Ensure those tables are also created in _create_tables() if not already.
-
     def get_total_sales_for_date_range(self, start_date, end_date):
         """
         Retrieves total revenue and total properties sold within a specified date range.
@@ -1038,7 +1086,6 @@ class DatabaseManager:
                 ORDER BY t.transaction_date ASC
             """
             results = self._execute_query(query, (start_date, end_date), fetch_all=True)
-            # Manually add 'property_type' as 'Land' since it's not a DB column
             return [dict(row) | {'property_type': 'Land'} for row in results] if results else []
         except Exception as e:
             print(f"Error in get_detailed_sales_transactions_for_date_range: {e}")
@@ -1104,3 +1151,108 @@ class DatabaseManager:
         except Exception as e:
             print(f"Error in get_pending_instalments_for_date_range: {e}")
             return []
+
+    def get_survey_jobs_paginated(self, page=1, page_size=15, filters=None, sort_by='created_at', sort_order='DESC'):
+        """
+        Retrieves a paginated list of survey jobs with client and user information,
+        applying filters and sorting.
+        """
+        jobs = []
+        total_count = 0
+        try:
+            where_clauses = []
+            params = []
+
+            # Base query including JOINs to client and user tables
+            base_query_select = """
+                SELECT 
+                    sj.job_id, sj.client_id, sj.property_location, sj.job_description,
+                    sj.fee, sj.amount_paid, sj.balance, sj.deadline, sj.status,
+                    sj.attachments_path, sj.added_by_user_id, sj.created_at, sj.receipt_creation_path,
+                    c.name AS client_name, c.contact_info AS client_contact,
+                    u.username AS added_by_username
+                FROM 
+                    survey_jobs sj
+                JOIN 
+                    clients c ON sj.client_id = c.client_id
+                LEFT JOIN 
+                    users u ON sj.added_by_user_id = u.user_id
+            """
+            
+            # Filters
+            if filters:
+                if 'client_name' in filters and filters['client_name']:
+                    where_clauses.append("c.name LIKE ?")
+                    params.append(f"%{filters['client_name']}%")
+                if 'location' in filters and filters['location']:
+                    where_clauses.append("sj.property_location LIKE ?")
+                    params.append(f"%{filters['location']}%")
+                if 'contact_info' in filters and filters['contact_info']:
+                    where_clauses.append("c.contact_info LIKE ?")
+                    params.append(f"%{filters['contact_info']}%")
+                if 'job_description' in filters and filters['job_description']:
+                    where_clauses.append("sj.job_description LIKE ?")
+                    params.append(f"%{filters['job_description']}%")
+                if 'job_status' in filters and filters['job_status'] and filters['job_status'].lower() != 'all':
+                    where_clauses.append("sj.status = ?")
+                    params.append(filters['job_status'])
+                
+                # Date filtering for 'created_at' column
+                if 'start_date' in filters and filters['start_date']:
+                    try:
+                        datetime.strptime(filters['start_date'], '%Y-%m-%d')
+                        where_clauses.append("sj.created_at >= ?")
+                        params.append(filters['start_date'] + ' 00:00:00')
+                    except ValueError:
+                        pass # Ignore invalid date format
+                if 'end_date' in filters and filters['end_date']:
+                    try:
+                        datetime.strptime(filters['end_date'], '%Y-%m-%d')
+                        where_clauses.append("sj.created_at <= ?")
+                        params.append(filters['end_date'] + ' 23:59:59')
+                    except ValueError:
+                        pass # Ignore invalid date format
+
+            where_sql = " WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+
+            # Count total jobs with filters (uses same WHERE clause)
+            count_query = f"SELECT COUNT(*) FROM survey_jobs sj JOIN clients c ON sj.client_id = c.client_id {where_sql}"
+            total_count_row = self._execute_query(count_query, params, fetch_one=True)
+            total_count = total_count_row[0] if total_count_row else 0
+
+            # Fetch paginated jobs
+            offset = (page - 1) * page_size
+            
+            # Validate sort_by column to prevent SQL injection
+            allowed_sort_columns_full = ['sj.created_at', 'c.name', 'sj.property_location', 'sj.fee', 'sj.status', 'sj.deadline', 'sj.job_id']
+            if sort_by not in [col.replace('sj.', '').replace('c.', '') for col in allowed_sort_columns_full]: # Check against friendly names
+                sort_by_full = 'sj.created_at' # Default to a safe column with table alias
+            else:
+                # Map friendly name back to full column name with alias
+                if sort_by == 'client_name':
+                    sort_by_full = 'c.name'
+                else: # For all other columns, assume they are on survey_jobs table
+                    sort_by_full = f'sj.{sort_by}'
+            
+            # Validate sort_order
+            if sort_order.upper() not in ['ASC', 'DESC']:
+                sort_order = 'DESC'
+
+            order_sql = f"ORDER BY {sort_by_full} {sort_order}"
+            limit_sql = f"LIMIT ? OFFSET ?"
+
+            main_query_params = list(params)
+            main_query_params.extend([page_size, offset])
+
+            query = f"{base_query_select} {where_sql} {order_sql} {limit_sql}"
+            
+            rows = self._execute_query(query, main_query_params, fetch_all=True)
+
+            if rows:
+                jobs = [dict(row) for row in rows] # Convert sqlite3.Row objects to dictionaries
+
+        except Exception as e:
+            print(f"Error in get_survey_jobs_paginated: {e}")
+            # Do not re-raise, return empty lists so app doesn't crash
+            return [], 0 
+        return jobs, total_count

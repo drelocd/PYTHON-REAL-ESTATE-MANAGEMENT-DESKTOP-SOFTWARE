@@ -301,7 +301,7 @@ class AddSurveyJobForm(tk.Toplevel):
             self.cancel_icon_ref = parent_icon_loader("cancel.png", size=(20, 20))
 
         ttk.Button(button_frame, text="Add Survey Job", image=self.add_icon_ref, compound=tk.LEFT, command=self._add_survey_job).pack(side="left", padx=10)
-        ttk.Button(button_frame, text="Cancel", image=self.cancel_icon_ref, compound=tk.LEFT, command=self._on_closing).pack(side="left", padx=10)
+        ttk.Button(button_frame, text="Cancel", image=self.cancel_icon_ref, compound=tk.LEFT, command=self._on_closing).pack(side="right", padx=10)
 
     def _add_files(self):
         filetypes = [
@@ -631,38 +631,39 @@ class AddSurveyJobForm(tk.Toplevel):
         self.destroy()
 
 
-
-
-        
-class ManagePaymentForm(tk.Toplevel):
-    def __init__(self, master, db_manager, refresh_callback, parent_icon_loader=None, window_icon_name="payment.png"):
+# Mock the original ManagePaymentForm (now specifically for adding a single payment to a job)
+class RecordSinglePaymentForm(tk.Toplevel):
+    def __init__(self, master, db_manager, refresh_callback, parent_icon_loader=None,
+                 window_icon_name="payment.png", job_id_to_pay=None):
         super().__init__(master)
-        self.title("Manage Payment")
+        self.title("Record Payment for Survey Job" + (f" ID {job_id_to_pay}" if job_id_to_pay else ""))
         self.resizable(False, False)
         self.grab_set()
         self.transient(master)
+        
+        # Set blue title bar (Windows only)
+        try:
+            self.attributes("-toolwindow", True)
+            self.configure(bg='#0078d7')
+        except:
+            pass
 
         self.db_manager = db_manager
         self.refresh_callback = refresh_callback
-        self._window_icon_ref = None # For icon persistence
+        self.parent_icon_loader = parent_icon_loader
+        self.job_id_to_pay = job_id_to_pay
 
-        self.selected_receipt_path = None
-
-        # Store references to button icons (assuming they are loaded via parent_icon_loader)
-        self._btn_receipt_icon = None
+        self._window_icon_ref = None
         self._record_payment_icon = None
         self._cancel_payment_icon = None
 
-        # Set window properties and customize title bar (placeholders for actual implementation)
-        self._set_window_properties(650, 450, window_icon_name, parent_icon_loader)
-        # self._customize_title_bar() # Uncomment and implement fully if needed
-
+        self._set_window_properties(650, 350, window_icon_name, parent_icon_loader)
         self._create_widgets(parent_icon_loader)
+        self._load_job_details()
+
+        self.protocol("WM_DELETE_WINDOW", self._on_closing)
 
     def _set_window_properties(self, width, height, icon_name, parent_icon_loader):
-        """Sets the window size, position, and icon.
-           (Similar to AddPropertyForm)
-        """
         self.geometry(f"{width}x{height}")
         self.update_idletasks()
         screen_width = self.winfo_screenwidth()
@@ -679,7 +680,6 @@ class ManagePaymentForm(tk.Toplevel):
                 print(f"Failed to set icon for {self.title()}: {e}")
 
     def _create_widgets(self, parent_icon_loader):
-        """Creates and arranges the widgets for the payment management form."""
         main_frame = ttk.Frame(self, padding="20")
         main_frame.pack(fill="both", expand=True)
 
@@ -687,372 +687,497 @@ class ManagePaymentForm(tk.Toplevel):
         main_frame.columnconfigure(1, weight=1)
 
         row = 0
-        # Client/Property/Job Identification
-        ttk.Label(main_frame, text="Client Name/ID:").grid(row=row, column=0, sticky="w", pady=2, padx=5)
-        self.entry_client_info = ttk.Entry(main_frame, width=40)
-        self.entry_client_info.grid(row=row, column=1, sticky="ew", pady=2, padx=5)
+        ttk.Label(main_frame, text="Job ID:").grid(row=row, column=0, sticky="w", pady=2, padx=5)
+        self.lbl_job_id = ttk.Label(main_frame, text=self.job_id_to_pay, font=('Helvetica', 10, 'bold'))
+        self.lbl_job_id.grid(row=row, column=1, sticky="w", pady=2, padx=5)
         row += 1
 
-        ttk.Label(main_frame, text="Property/Job ID:").grid(row=row, column=0, sticky="w", pady=2, padx=5)
-        self.entry_property_job_id = ttk.Entry(main_frame, width=40)
-        self.entry_property_job_id.grid(row=row, column=1, sticky="ew", pady=2, padx=5)
+        ttk.Label(main_frame, text="Client:").grid(row=row, column=0, sticky="w", pady=2, padx=5)
+        self.lbl_client_name = ttk.Label(main_frame, text="Loading...", font=('Helvetica', 10))
+        self.lbl_client_name.grid(row=row, column=1, sticky="w", pady=2, padx=5)
         row += 1
 
-        # Payment Details
-        ttk.Label(main_frame, text="Payment Date:").grid(row=row, column=0, sticky="w", pady=2, padx=5)
-        self.date_entry = DateEntry(main_frame, width=37, background='darkblue', foreground='white',
-                                    borderwidth=2, year=datetime.now().year, month=datetime.now().month,
-                                    day=datetime.now().day, date_pattern='yyyy-mm-dd')
-        self.date_entry.grid(row=row, column=1, sticky="ew", pady=2, padx=5)
+        ttk.Label(main_frame, text="Current Balance:").grid(row=row, column=0, sticky="w", pady=2, padx=5)
+        self.lbl_current_balance = ttk.Label(main_frame, text="Loading...", font=('Helvetica', 10, 'bold'), foreground='red')
+        self.lbl_current_balance.grid(row=row, column=1, sticky="w", pady=2, padx=5)
         row += 1
 
         ttk.Label(main_frame, text="Amount Paid (KES):").grid(row=row, column=0, sticky="w", pady=2, padx=5)
-        self.entry_amount_paid = ttk.Entry(main_frame, width=40)
+        self.entry_amount_paid = ttk.Entry(main_frame)
         self.entry_amount_paid.grid(row=row, column=1, sticky="ew", pady=2, padx=5)
         row += 1
 
         ttk.Label(main_frame, text="Payment Method:").grid(row=row, column=0, sticky="w", pady=2, padx=5)
         self.method_combobox = ttk.Combobox(main_frame, values=["Cash", "Bank Transfer", "M-Pesa", "Cheque", "Other"],
-                                            state="readonly", width=37)
-        self.method_combobox.set("Cash") # Default value
+                                             state="readonly")
+        self.method_combobox.set("Cash")
         self.method_combobox.grid(row=row, column=1, sticky="ew", pady=2, padx=5)
         row += 1
 
-        ttk.Label(main_frame, text="Transaction ID/Receipt No.:").grid(row=row, column=0, sticky="w", pady=2, padx=5)
-        self.entry_transaction_id = ttk.Entry(main_frame, width=40)
+        ttk.Label(main_frame, text="Transaction ID/Ref:").grid(row=row, column=0, sticky="w", pady=2, padx=5)
+        self.entry_transaction_id = ttk.Entry(main_frame)
         self.entry_transaction_id.grid(row=row, column=1, sticky="ew", pady=2, padx=5)
         row += 1
 
-        ttk.Label(main_frame, text="Notes/Description:").grid(row=row, column=0, sticky="nw", pady=2, padx=5)
-        self.text_notes = tk.Text(main_frame, width=40, height=4, wrap=tk.WORD)
-        self.text_notes.grid(row=row, column=1, sticky="ew", pady=2, padx=5)
-        row += 1
-
-        # Attach Receipt
-        if parent_icon_loader:
-            self._btn_receipt_icon = parent_icon_loader("folder_open.png", size=(20,20))
-            self._record_payment_icon = parent_icon_loader("save.png", size=(20,20))
-            self._cancel_payment_icon = parent_icon_loader("cancel.png", size=(20,20))
-
-        ttk.Label(main_frame, text="Attach Receipt:").grid(row=row, column=0, sticky="w", pady=2, padx=5)
-        btn_attach_receipt = ttk.Button(main_frame, text="Browse...", image=self._btn_receipt_icon,
-                                        compound=tk.LEFT, command=self._select_receipt_image)
-        btn_attach_receipt.grid(row=row, column=1, sticky="ew", pady=2, padx=5)
-        btn_attach_receipt.image = self._btn_receipt_icon # Keep reference
-        self.lbl_receipt_path = ttk.Label(main_frame, text="No file selected")
-        self.lbl_receipt_path.grid(row=row+1, column=1, sticky="w", padx=5, pady=0)
-        row += 2
-
-        # Action Buttons
         button_frame = ttk.Frame(main_frame)
         button_frame.grid(row=row, column=0, columnspan=2, pady=10)
 
-        record_btn = ttk.Button(button_frame, text="Record Payment", image=self._record_payment_icon,
-                                compound=tk.LEFT, command=self._record_payment)
+        if parent_icon_loader:
+            self._record_payment_icon = parent_icon_loader("save.png", size=(20,20))
+            self._cancel_payment_icon = parent_icon_loader("cancel.png", size=(20,20))
+
+        record_btn = ttk.Button(button_frame, text="Record Payment", image=self._record_payment_icon, compound=tk.LEFT, command=self._record_payment_action)
         record_btn.pack(side="left", padx=5)
-        record_btn.image = self._record_payment_icon # Keep reference
+        record_btn.image = self._record_payment_icon
 
-        cancel_btn = ttk.Button(button_frame, text="Cancel", image=self._cancel_payment_icon,
-                                compound=tk.LEFT, command=self.destroy)
+        cancel_btn = ttk.Button(button_frame, text="Cancel", image=self._cancel_payment_icon, compound=tk.LEFT, command=self.destroy)
         cancel_btn.pack(side="left", padx=5)
-        cancel_btn.image = self._cancel_payment_icon # Keep reference
+        cancel_btn.image = self._cancel_payment_icon
 
-        ttk.Button(button_frame, text="Add Payment", image=self._save_icon_ref, compound=tk.LEFT,
-                   command=self._add_payment).pack(side="left", padx=10)
-        self.btn_generate_receipt = ttk.Button(button_frame, text="Generate Receipt",
-                                               image=self._generate_receipt_icon_ref, compound=tk.LEFT,
-                                               command=self._generate_receipt, state=tk.DISABLED)
-        self.btn_generate_receipt.pack(side="left", padx=10)
-        ttk.Button(button_frame, text="Cancel", image=self._cancel_icon_ref, compound=tk.LEFT,
-                   command=self._on_closing).pack(side="left", padx=10)
-
-    def _populate_job_dropdown(self):
-        jobs = self.db_manager.get_all_survey_jobs()
-        job_ids = [job['job_id'] for job in jobs]
-        self.job_id_combobox['values'] = job_ids
-        if job_ids:
-            self.job_id_combobox.set(job_ids[0])
-            self._on_job_selected(None)  # Manually trigger selection for the first item
-
-    def _on_job_selected(self, event):
-        selected_job_id = self.job_id_combobox.get()
-        if selected_job_id:
-            job_info = self.db_manager.get_survey_job_by_id(selected_job_id)
+    def _load_job_details(self):
+        if self.job_id_to_pay:
+            job_info = self.db_manager.get_survey_job_by_id(self.job_id_to_pay)
             if job_info:
                 client_info = self.db_manager.get_client_by_id(job_info['client_id'])
-                self.entry_client_info.config(state="normal")
-                self.entry_client_info.delete(0, tk.END)
-                self.entry_client_info.insert(0, client_info['name'] if client_info else "N/A")
-                self.entry_client_info.config(state="readonly")
-
-                self.entry_total_price.config(state="normal")
-                self.entry_total_price.delete(0, tk.END)
-                self.entry_total_price.insert(0, f"{job_info['agreed_price']:.2f}")
-                self.entry_total_price.config(state="readonly")
-
-                self._update_receipt_button_state()
+                self.lbl_client_name.config(text=client_info['name'] if client_info else "N/A")
+                self.lbl_current_balance.config(text=f"KES {job_info['balance']:,.2f}")
+                if job_info['balance'] <= 0:
+                    self.lbl_current_balance.config(foreground='green')
+                    self.entry_amount_paid.config(state='disabled') # Disable input if no balance
+                else:
+                    self.lbl_current_balance.config(foreground='red')
             else:
-                self._clear_fields()
-        else:
-            self._clear_fields()
+                messagebox.showerror("Error", "Job not found.")
+                self.destroy()
 
-    def _clear_fields(self):
-        self.entry_client_info.config(state="normal")
-        self.entry_client_info.delete(0, tk.END)
-        self.entry_client_info.config(state="readonly")
-
-        self.entry_total_price.config(state="normal")
-        self.entry_total_price.delete(0, tk.END)
-        self.entry_total_price.config(state="readonly")
-
-        self.entry_amount_paid.delete(0, tk.END)
-        self.entry_payment_date.set_date(datetime.now().date())
-        self.payment_method_combobox.set("Cash")
-        self.btn_generate_receipt.config(state=tk.DISABLED)
-
-
-
-    def _select_receipt_image(self):
-        """Handles selection of a receipt image file."""
-        file_path = filedialog.askopenfilename(
-            title="Select Receipt Image",
-            filetypes=[("Image Files", "*.png *.jpg *.jpeg *.gif *.bmp"), ("PDF Files", "*.pdf"), ("All Files", "*.*")]
-        )
-        if file_path:
-            self.selected_receipt_path = file_path
-            self.lbl_receipt_path.config(text=os.path.basename(file_path))
-
-    def _save_receipt(self, source_path, destination_dir):
-        """
-        Saves the receipt file to the specified directory and returns its relative path.
-        (Similar to _save_images in AddPropertyForm)
-        """
-        if not source_path:
-            return None
-
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
-        filename, file_extension = os.path.splitext(os.path.basename(source_path))
-        new_filename = f"receipt_{timestamp}{file_extension}"
-        destination_path = os.path.join(destination_dir, new_filename)
-
-        try:
-            shutil.copy2(source_path, destination_path)
-            # Make path relative to DATA_DIR, consistent with your other forms
-            relative_path = os.path.relpath(destination_path, DATA_DIR).replace("\\", "/")
-            return relative_path
-        except Exception as e:
-            messagebox.showerror("File Save Error", f"Failed to save receipt {source_path}: {e}")
-            return None
-
-    def _record_payment(self):
-        """Handles the recording of a payment."""
-        client_info = self.entry_client_info.get().strip()
-        property_job_id = self.entry_property_job_id.get().strip()
-        payment_date_str = self.date_entry.get()
-        amount_paid_str = self.entry_amount_paid.get().strip()
+    def _record_payment_action(self):
+        amount_str = self.entry_amount_paid.get().strip()
         payment_method = self.method_combobox.get().strip()
         transaction_id = self.entry_transaction_id.get().strip()
-        notes = self.text_notes.get("1.0", tk.END).strip()
 
-        if not client_info or not amount_paid_str or not payment_date_str:
-            messagebox.showerror("Input Error", "Client Info, Amount Paid, and Payment Date are required.")
-            return
-
-        try:
-            amount_paid = float(amount_paid_str)
-            if amount_paid <= 0:
-                messagebox.showerror("Input Error", "Amount Paid must be a positive number.")
-                return
-        except ValueError:
-            messagebox.showerror("Input Error", "Invalid value for Amount Paid. Please enter a number.")
-            return
-
-        # Save the receipt file if selected
-        saved_receipt_path = self._save_receipt(self.selected_receipt_path, RECEIPTS_DIR)
-
-        try:
-            # --- Database Interaction Placeholder ---
-            # Here you would call your database manager to record the payment.
-            # Example:
-            # payment_id = self.db_manager.add_payment(
-            #     client_info,
-            #     property_job_id if property_job_id else None, # Allow null for optional fields
-            #     payment_date_str,
-            #     amount_paid,
-            #     payment_method,
-            #     transaction_id if transaction_id else None,
-            #     notes if notes else None,
-            #     saved_receipt_path
-            # )
-            #
-            # if payment_id:
-            #     messagebox.showinfo("Success", f"Payment recorded successfully! Payment ID: {payment_id}")
-            #     self.refresh_callback() # Refresh parent view on successful add
-            #     self.destroy()
-            # else:
-            #     messagebox.showerror("Database Error", "Failed to record payment.")
-
-            # --- Mock Success Message for Demonstration ---
-            messagebox.showinfo("Success", f"Payment recorded for {client_info} (Mock success).")
-            self.refresh_callback()
-            self.destroy()
-
-        except Exception as e:
-            messagebox.showerror("Error", f"An error occurred while recording payment: {e}")
-            print(f"Error recording payment: {e}")
-
-    def _add_payment(self):
-        job_id = self.job_id_combobox.get()
-        amount_str = self.entry_amount_paid.get().strip()
-        payment_date_str = self.entry_payment_date.get_date().strftime("%Y-%m-%d")
-        payment_method = self.payment_method_combobox.get()
-
-        if not all([job_id, amount_str, payment_date_str, payment_method]):
-            messagebox.showerror("Input Error", "All payment fields are required.")
+        if not amount_str:
+            messagebox.showerror("Input Error", "Amount Paid is required.")
             return
 
         try:
             amount = float(amount_str)
             if amount <= 0:
-                messagebox.showerror("Input Error", "Amount paid must be a positive number.")
+                messagebox.showerror("Invalid Amount", "Payment amount must be positive.")
                 return
         except ValueError:
-            messagebox.showerror("Input Error", "Invalid value for Amount Paid. Please enter a number.")
+            messagebox.showerror("Invalid Input", "Please enter a valid number for the payment amount.")
             return
+        
+        job_info = self.db_manager.get_survey_job_by_id(self.job_id_to_pay)
+        if job_info and amount > job_info['balance']:
+            confirm = messagebox.askyesno("Overpayment Warning",
+                                        f"Payment amount (KES {amount:,.2f}) exceeds current balance (KES {job_info['balance']:,.2f}). Proceed?",
+                                        icon='warning')
+            if not confirm:
+                return
 
-        try:
-            if self.db_manager.add_survey_payment(job_id, amount, payment_date_str, payment_method):
-                messagebox.showinfo("Success", "Payment added successfully!")
-                self.refresh_callback()  # Refresh the parent view
-                self._update_receipt_button_state()  # Update button state after payment
-                # Clear amount field for next entry
-                self.entry_amount_paid.delete(0, tk.END)
-            else:
-                messagebox.showerror("Database Error", "Failed to add payment.")
-        except Exception as e:
-            messagebox.showerror("Error", f"An error occurred: {e}")
-            print(f"Error adding survey payment: {e}")
-
-    def _update_receipt_button_state(self):
-        """Enables the 'Generate Receipt' button if a job is selected."""
-        if self.job_id_combobox.get():
-            self.btn_generate_receipt.config(state=tk.NORMAL)
+        success = self.db_manager.update_survey_job_payment(self.job_id_to_pay, amount)
+        if success:
+            messagebox.showinfo("Success", "Payment recorded successfully!")
+            self.refresh_callback() # Refresh the managing table
+            self.destroy()
         else:
-            self.btn_generate_receipt.config(state=tk.DISABLED)
-
-    def _generate_receipt(self):
-        if not _REPORTLAB_AVAILABLE:
-            messagebox.showwarning("Feature Unavailable",
-                                   "ReportLab library is not installed. Cannot generate PDF receipts. Please install it using: pip install reportlab")
-            return
-
-        job_id = self.job_id_combobox.get()
-        if not job_id:
-            messagebox.showerror("Selection Error", "Please select a Survey Job to generate a receipt.")
-            return
-
-        try:
-            job_info = self.db_manager.get_survey_job_by_id(job_id)
-            if not job_info:
-                messagebox.showerror("Error", "Could not retrieve job information.")
-                return
-
-            client_info = self.db_manager.get_client_by_id(job_info['client_id'])
-            if not client_info:
-                messagebox.showerror("Error", "Could not retrieve client information.")
-                return
-
-            payments = self.db_manager.get_payments_for_survey_job(job_id)
-            if not payments:
-                messagebox.showwarning("No Payments",
-                                       "No payments recorded for this survey job. Cannot generate a receipt.")
-                return
-
-            total_paid = sum(p['amount'] for p in payments)
-            balance = job_info['agreed_price'] - total_paid
-
-            # Generate PDF
-            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-            receipt_filename = f"Survey_Receipt_Job_{job_id}_{timestamp}.pdf"
-            pdf_path = os.path.join(RECEIPTS_DIR, receipt_filename)
-
-            doc = SimpleDocTemplate(pdf_path, pagesize=letter)
-            styles = getSampleStyleSheet()
-
-            # Custom style for bold text
-            styles.add(ParagraphStyle(name='BoldCentered', alignment=1, fontName='Helvetica-Bold', fontSize=12))
-
-            story = []
-
-            # Company Header
-            story.append(Paragraph("<b>Mathenge's Real Estate Management System</b>", styles['h2']))
-            story.append(Paragraph("Survey Services Payment Receipt", styles['h3']))
-            story.append(Spacer(1, 0.2 * inch))
-
-            # Receipt Details
-            story.append(
-                Paragraph(f"<b>Receipt Date:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
-            story.append(Paragraph(f"<b>Job ID:</b> {job_id}", styles['Normal']))
-            story.append(Spacer(1, 0.1 * inch))
-
-            # Client Details
-            story.append(Paragraph("<b>Client Details:</b>", styles['Normal']))
-            story.append(Paragraph(f"Name: {client_info['name']}", styles['Normal']))
-            story.append(Paragraph(f"Contact: {client_info['contact_info']}", styles['Normal']))
-            story.append(Spacer(1, 0.2 * inch))
-
-            # Job Details
-            story.append(Paragraph("<b>Survey Job Details:</b>", styles['Normal']))
-            story.append(Paragraph(f"Location: {job_info['location']}", styles['Normal']))
-            story.append(Paragraph(f"Description: {job_info['description']}", styles['Normal']))
-            story.append(Paragraph(f"Agreed Price: KES {job_info['agreed_price']:.2f}", styles['Normal']))
-            story.append(Spacer(1, 0.2 * inch))
-
-            # Payment History Table
-            story.append(Paragraph("<b>Payment History:</b>", styles['Normal']))
-            table_data = [['Payment ID', 'Amount', 'Date', 'Method']]
-            for p in payments:
-                table_data.append(
-                    [str(p['payment_id']), f"KES {p['amount']:.2f}", p['payment_date'], p['payment_method']])
-
-            # Table style
-            table_style = TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-                ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                ('BOX', (0, 0), (-1, -1), 1, colors.black)
-            ])
-
-            # Calculate column widths to fit content, allowing description to take more space
-            col_widths = [1.5 * inch, 1.5 * inch, 1.5 * inch, 1.5 * inch]
-
-            payment_table = Table(table_data, colWidths=col_widths)
-            payment_table.setStyle(table_style)
-            story.append(payment_table)
-            story.append(Spacer(1, 0.2 * inch))
-
-            story.append(Paragraph(f"<b>Total Paid:</b> KES {total_paid:.2f}", styles['Normal']))
-            story.append(Paragraph(f"<b>Balance Due:</b> KES {balance:.2f}", styles['Normal']))
-            story.append(Spacer(1, 0.4 * inch))
-
-            story.append(Paragraph("Thank you for your business!", styles['BoldCentered']))
-
-            doc.build(story)
-
-            SuccessMessage(
-                self,
-                success=True,
-                message="Receipt PDF generated successfully!",
-                pdf_path=pdf_path,
-                parent_icon_loader=self.parent_icon_loader
-            )
-        except Exception as e:
-            messagebox.showerror("Receipt Generation Error", f"An error occurred while generating the receipt: {e}")
+            messagebox.showerror("Error", "Failed to record payment in database.")
 
     def _on_closing(self):
         self.grab_release()
         self.destroy()
+
+
+# --- ManageSurveyJobsFrame (The main table view for jobs) ---
+class PaymentSurveyJobsFrame(tk.Toplevel):
+    def __init__(self, master, db_manager, refresh_main_view_callback=None, parent_icon_loader=None, window_icon_name="payment.png"):
+        super().__init__(master)
+        self.resizable(False, False)
+        self.grab_set()
+        self.transient(master)
+        self.title("Manage Survey Payments")
+
+        self.db_manager = db_manager
+        self.refresh_main_view_callback = refresh_main_view_callback
+        self.parent_icon_loader = parent_icon_loader
+
+        self.current_page = 1
+        self.items_per_page = 15
+        self.total_jobs = 0
+        self.total_pages = 0
+        self.all_jobs_data = []
+        self.selected_job_data = None
+
+        # Filter variables
+        self.filter_client_name = tk.StringVar(self, value="")
+        self.filter_location = tk.StringVar(self, value="")
+        self.filter_start_date = tk.StringVar(self, value="")
+        self.filter_end_date = tk.StringVar(self, value="")
+
+        # Icon references
+        self._icons = {}
+        self._window_icon_ref = None
+
+        self._set_window_properties(1000, 600, window_icon_name, parent_icon_loader)
+        self._customize_title_bar()
+        self._create_widgets()
+        self._apply_filters()
+
+        self.protocol("WM_DELETE_WINDOW", self._on_closing)
+
+    def _set_window_properties(self, width, height, icon_name, parent_icon_loader):
+        self.geometry(f"{width}x{height}")
+        self.update_idletasks()
+        screen_width = self.winfo_screenwidth()
+        x = (screen_width - width) // 2
+        y = 100
+        self.geometry(f"+{x}+{y}")
+
+        if parent_icon_loader and icon_name:
+            try:
+                icon_image = parent_icon_loader(icon_name, size=(32, 32))
+                self.iconphoto(False, icon_image)
+                self._window_icon_ref = icon_image
+            except Exception as e:
+                print(f"Failed to set icon for {self.title()}: {e}")
+
+    def _customize_title_bar(self):
+        """Customizes the title bar appearance."""
+        try:
+            # Windows-specific title bar customization
+            if os.name == 'nt':
+                from ctypes import windll, byref, sizeof, c_int
+                
+                DWMWA_CAPTION_COLOR = 35
+                DWMWA_TEXT_COLOR = 36
+                
+                hwnd = windll.user32.GetParent(self.winfo_id())
+                
+                # Set title bar color to blue (RGB: 0, 119, 215) -> 0x00D77700 in BGR
+                color = c_int(0x00663300) 
+                windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, 
+                    DWMWA_CAPTION_COLOR, 
+                    byref(color), 
+                    sizeof(color)
+                )
+                
+                # Set title text color to white
+                text_color = c_int(0x00FFFFFF)  # White in BGR
+                windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, 
+                    DWMWA_TEXT_COLOR, 
+                    byref(text_color), 
+                    sizeof(text_color)
+                )
+        except Exception as e:
+            print(f"Could not customize title bar: {e}")
+
+    def _create_widgets(self):
+        main_frame = ttk.Frame(self, padding="10")
+        main_frame.pack(fill="both", expand=True)
+
+        # Filter Frame
+        filter_frame = ttk.LabelFrame(main_frame, text="Filters", padding="10")
+        filter_frame.pack(padx=10, pady=5, fill="x")
+
+        # Filter Grid
+        filter_grid = ttk.Frame(filter_frame)
+        filter_grid.pack(fill="x", padx=5, pady=5)
+        
+        # Client Name Filter
+        ttk.Label(filter_grid, text="Client Name:").grid(row=0, column=0, sticky="w", padx=5, pady=2)
+        ttk.Entry(filter_grid, textvariable=self.filter_client_name).grid(row=0, column=1, sticky="ew", padx=5, pady=2)
+        
+        # Location Filter
+        ttk.Label(filter_grid, text="Location:").grid(row=0, column=2, sticky="w", padx=5, pady=2)
+        ttk.Entry(filter_grid, textvariable=self.filter_location).grid(row=0, column=3, sticky="ew", padx=5, pady=2)
+        
+        # Date Range Filters
+        ttk.Label(filter_grid, text="From Date:").grid(row=1, column=0, sticky="w", padx=5, pady=2)
+        self.start_date_entry = DateEntry(filter_grid, selectmode='day', date_pattern='yyyy-mm-dd', 
+                                         textvariable=self.filter_start_date)
+        self.start_date_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=2)
+        self.start_date_entry.set_date(None)
+        
+        ttk.Label(filter_grid, text="To Date:").grid(row=1, column=2, sticky="w", padx=5, pady=2)
+        self.end_date_entry = DateEntry(filter_grid, selectmode='day', date_pattern='yyyy-mm-dd', 
+                                       textvariable=self.filter_end_date)
+        self.end_date_entry.grid(row=1, column=3, sticky="ew", padx=5, pady=2)
+        self.end_date_entry.set_date(None)
+        
+        # Filter Buttons
+        button_frame = ttk.Frame(filter_frame)
+        button_frame.pack(fill="x", pady=5)
+        
+        # Load icons
+        if self.parent_icon_loader:
+            self._search_icon = self.parent_icon_loader("search.png", size=(20,20))
+            self._clear_icon = self.parent_icon_loader("clear_filter.png", size=(20,20))
+
+        ttk.Button(button_frame, text="Apply Filters", image=self._search_icon, compound=tk.LEFT, 
+                  command=self._apply_filters).pack(side="left", padx=5)
+        ttk.Button(button_frame, text="Clear Filters", image=self._clear_icon, compound=tk.LEFT, 
+                  command=self._clear_filters).pack(side="left", padx=5)
+
+        # Treeview
+        columns = ("Date", "Time", "Client Name", "Location", "Fee", "Paid", "Balance")
+        self.job_tree = ttk.Treeview(main_frame, columns=columns, show="headings", style='Treeview')
+        
+        # Configure columns
+        self.job_tree.heading("Date", text="Date", anchor=tk.CENTER)
+        self.job_tree.heading("Time", text="Time", anchor=tk.CENTER)
+        self.job_tree.heading("Client Name", text="Client Name", anchor=tk.W)
+        self.job_tree.heading("Location", text="Location", anchor=tk.W)
+        self.job_tree.heading("Fee", text="Fee (KES)", anchor=tk.E)
+        self.job_tree.heading("Paid", text="Paid (KES)", anchor=tk.E)
+        self.job_tree.heading("Balance", text="Balance (KES)", anchor=tk.E)
+        
+        self.job_tree.column("Date", width=100, anchor=tk.CENTER, stretch=tk.NO)
+        self.job_tree.column("Time", width=80, anchor=tk.CENTER, stretch=tk.NO)
+        self.job_tree.column("Client Name", width=150, anchor=tk.W)
+        self.job_tree.column("Location", width=150, anchor=tk.W)
+        self.job_tree.column("Fee", width=100, anchor=tk.E)
+        self.job_tree.column("Paid", width=100, anchor=tk.E)
+        self.job_tree.column("Balance", width=100, anchor=tk.E)
+        
+        self.job_tree.pack(side="top", fill="both", expand=True, padx=10, pady=5)
+        
+        # Scrollbar
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=self.job_tree.yview)
+        self.job_tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Bind selection event
+        self.job_tree.bind("<<TreeviewSelect>>", self._on_job_select)
+
+        # Action Buttons
+        action_frame = ttk.Frame(main_frame, padding="10")
+        action_frame.pack(fill="x", pady=5)
+        
+        # Load payment icon
+        if self.parent_icon_loader:
+            self._payment_icon = self.parent_icon_loader("pay.png", size=(20,20))
+            self._close_icon = self.parent_icon_loader("cancel.png", size=(20,20))
+            self._prev_icon = self.parent_icon_loader("arrow_left.png", size=(16,16))
+            self._next_icon = self.parent_icon_loader("arrow_right.png", size=(16,16))
+
+        self.make_payment_btn = ttk.Button(
+            action_frame, 
+            text="Make Payment", 
+            image=self._payment_icon, 
+            compound=tk.LEFT, 
+            command=self._open_record_payment_form,
+            state="disabled"
+        )
+        self.make_payment_btn.pack(side="left", padx=5)
+        self.make_payment_btn.image = self._payment_icon
+
+        # Pagination
+        pagination_frame = ttk.Frame(main_frame, padding="5")
+        pagination_frame.pack(pady=5, fill="x")
+        
+        self.prev_button = ttk.Button(
+            pagination_frame, 
+            text="Previous",
+            image=self._prev_icon,
+            compound=tk.LEFT,
+            command=self._go_previous_page,
+            state="disabled"
+        )
+        self.prev_button.pack(side="left", padx=5)
+        self.prev_button.image = self._prev_icon
+        
+        self.page_info_label = ttk.Label(pagination_frame, text="Page 1 of 1")
+        self.page_info_label.pack(side="left", padx=5)
+        
+        self.next_button = ttk.Button(
+            pagination_frame, 
+            text="Next",
+            image=self._next_icon,
+            compound=tk.RIGHT,
+            command=self._go_next_page,
+            state="disabled"
+        )
+        self.next_button.pack(side="left", padx=5)
+        self.next_button.image = self._next_icon
+
+        ttk.Button(
+            pagination_frame,
+            text="Close",
+            image=self._close_icon,
+            compound=tk.LEFT,
+            command=self._on_closing
+        ).pack(side="right", padx=5)
+
+    def _apply_filters(self):
+        """Applies filters and reloads the first page of survey jobs."""
+        filters = {
+            'client_name': self.filter_client_name.get().strip() or None,
+            'location': self.filter_location.get().strip() or None,
+            'start_date': self.filter_start_date.get() if self.filter_start_date.get() != 'None' else None,
+            'end_date': self.filter_end_date.get() if self.filter_end_date.get() != 'None' else None
+        }
+
+        # Validate date range if both dates are provided
+        if filters['start_date'] and filters['end_date']:
+            try:
+                start_date = datetime.strptime(filters['start_date'], '%Y-%m-%d')
+                end_date = datetime.strptime(filters['end_date'], '%Y-%m-%d')
+                if start_date > end_date:
+                    messagebox.showwarning("Input Error", "Start date cannot be after end date.")
+                    return
+            except ValueError:
+                messagebox.showwarning("Input Error", "Invalid date format. Use YYYY-MM-DD.")
+                return
+
+        # Fetch data with pagination
+        self.all_jobs_data, self.total_jobs = self.db_manager.get_survey_jobs_paginated(
+            page=1,
+            page_size=self.items_per_page,
+            filters=filters,
+            sort_by='created_at',
+            sort_order='DESC'
+        )
+
+        self.total_pages = max(1, (self.total_jobs + self.items_per_page - 1) // self.items_per_page)
+        self._load_page(1)
+
+    def _clear_filters(self):
+        """Clears all filters and reloads data."""
+        self.filter_client_name.set("")
+        self.filter_location.set("")
+        self.start_date_entry.set_date(None)
+        self.end_date_entry.set_date(None)
+        self._apply_filters()
+
+    def _load_page(self, page_number):
+        """Loads data for the specified page number into the Treeview."""
+        if page_number < 1 or page_number > self.total_pages:
+            return
+
+        self.current_page = page_number
+        
+        # Re-fetch data for the current page with filters
+        filters = {
+            'client_name': self.filter_client_name.get().strip() or None,
+            'location': self.filter_location.get().strip() or None,
+            'start_date': self.filter_start_date.get() if self.filter_start_date.get() != 'None' else None,
+            'end_date': self.filter_end_date.get() if self.filter_end_date.get() != 'None' else None
+        }
+        
+        self.all_jobs_data, self.total_jobs = self.db_manager.get_survey_jobs_paginated(
+            page=self.current_page,
+            page_size=self.items_per_page,
+            filters=filters,
+            sort_by='created_at',
+            sort_order='DESC'
+        )
+
+        self._populate_job_treeview()
+        self._update_pagination_buttons()
+        self.selected_job_data = None
+        self._update_payment_button_state()
+
+    def _populate_job_treeview(self):
+        """Populates the Treeview with the current page of data."""
+        self.job_tree.delete(*self.job_tree.get_children())
+        
+        if not self.all_jobs_data:
+            self.job_tree.insert("", "end", values=("No jobs found", "", "", "", "", "", ""))
+            return
+
+        for job in self.all_jobs_data:
+            # Split created_at into date and time components
+            created_at = job.get('created_at', '')
+            if created_at:
+                try:
+                    dt = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
+                    date_str = dt.strftime('%Y-%m-%d')
+                    time_str = dt.strftime('%H:%M')
+                except ValueError:
+                    date_str = created_at.split(' ')[0] if ' ' in created_at else created_at
+                    time_str = created_at.split(' ')[1] if ' ' in created_at else ''
+            else:
+                date_str = time_str = ''
+
+            self.job_tree.insert("", "end", values=(
+                date_str,
+                time_str,
+                job.get('client_name', ''),
+                job.get('property_location', ''),
+                f"{job.get('fee', 0):,.2f}",
+                f"{job.get('amount_paid', 0):,.2f}",
+                f"{job.get('balance', 0):,.2f}"
+            ), iid=job.get('job_id'))
+
+    def _on_job_select(self, event):
+        """Handles job selection in the Treeview."""
+        selected_item = self.job_tree.focus()
+        if selected_item:
+            job_id = int(selected_item)
+            self.selected_job_data = next((j for j in self.all_jobs_data if j['job_id'] == job_id), None)
+        else:
+            self.selected_job_data = None
+            
+        self._update_payment_button_state()
+
+    def _update_payment_button_state(self):
+        """Updates the state of the payment button based on selection and balance."""
+        if self.selected_job_data and self.selected_job_data.get('balance', 0) > 0:
+            self.make_payment_btn.config(state="normal")
+        else:
+            self.make_payment_btn.config(state="disabled")
+
+    def _open_record_payment_form(self):
+        """Opens the payment form for the selected job."""
+        if not self.selected_job_data:
+            messagebox.showwarning("No Selection", "Please select a job to record payment for.")
+            return
+            
+        job_id = self.selected_job_data['job_id']
+        if self.selected_job_data['balance'] <= 0:
+            messagebox.showinfo("No Balance", "This job has no outstanding balance.")
+            return
+
+        payment_form = RecordSinglePaymentForm(
+            self.master,
+            self.db_manager,
+            self._refresh_after_payment,
+            parent_icon_loader=self.parent_icon_loader,
+            window_icon_name="payment.png",
+            job_id_to_pay=job_id
+        )
+        payment_form.wait_window()
+
+    def _refresh_after_payment(self):
+        """Refreshes the view after a payment is recorded."""
+        self._apply_filters()
+        if self.refresh_main_view_callback:
+            self.refresh_main_view_callback()
+
+    def _go_previous_page(self):
+        if self.current_page > 1:
+            self._load_page(self.current_page - 1)
+
+    def _go_next_page(self):
+        if self.current_page < self.total_pages:
+            self._load_page(self.current_page + 1)
+
+    def _update_pagination_buttons(self):
+        """Updates the state of pagination buttons and page info."""
+        self.prev_button.config(state="normal" if self.current_page > 1 else "disabled")
+        self.next_button.config(state="normal" if self.current_page < self.total_pages else "disabled")
+        
+        if self.total_jobs == 0:
+            self.page_info_label.config(text="No Jobs")
+        else:
+            self.page_info_label.config(text=f"Page {self.current_page} of {self.total_pages}")
+
+    def _on_closing(self):
+        """Handles window closing, releases grab, and calls callback."""
+        self.grab_release()
+        self.destroy()
+        if self.refresh_main_view_callback:
+            self.refresh_main_view_callback()
