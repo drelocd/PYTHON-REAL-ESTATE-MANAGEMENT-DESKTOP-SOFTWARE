@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 from datetime import datetime, timedelta
 import os
 import shutil
@@ -990,11 +990,34 @@ class TrackSurveyJobsView(ttk.Frame):
 
     def _edit_job(self):
         """Opens a form to edit the selected job."""
-        job_id = self._get_selected_job_id()
+        selected_item = self.tree.focus()  # Change from self.jobs_treeview.focus() to self.tree.focus()
+        if not selected_item:
+            messagebox.showwarning("No Selection", "Please select a job to edit.")
+            return
+
+        # Get the job_id from the values of the selected item
+        # Assuming Job ID is the first column in your treeview
+        job_id = self.tree.item(selected_item, 'values')[0]
+
         if job_id:
-            messagebox.showinfo("Edit Job", f"Editing Job ID: {job_id}\n(Implement actual edit form here)")
-            # You would typically open an EditSurveyJobForm here, pre-filled with job data
-            # e.g., EditSurveyJobForm(self.master, self.db_manager, job_id, self.load_jobs, self.parent_icon_loader)
+            try:
+                job_id = int(job_id) # Ensure job_id is an integer
+            except ValueError:
+                messagebox.showerror("Error", "Invalid job ID selected.")
+                return
+
+            # Open the EditSurveyJobForm, passing the job_id and refresh callback
+            EditSurveyJobForm(
+                self.master,
+                self.db_manager,
+                job_id,
+                self.load_jobs,  # Use the method that refreshes your treeview
+                parent_icon_loader=self.parent_icon_loader, # Assuming parent_icon_loader is an attribute of TrackSurveyJobsView
+                window_icon_name="edit_job.png"
+            )
+        else:
+            messagebox.showwarning("No Selection", "Please select a job to edit.")
+
 
     def _add_payment(self):
         """Opens the ManagePaymentForm for the selected job."""
@@ -1385,3 +1408,172 @@ class SurveyReportsForm(tk.Toplevel):
     def _on_closing(self):
         self.grab_release()
         self.destroy()
+
+
+class EditSurveyJobForm(tk.Toplevel):
+    def __init__(self, master, db_manager, job_id, refresh_callback, parent_icon_loader=None,
+                 window_icon_name="edit_job.png"):
+        super().__init__(master)
+        self.db_manager = db_manager
+        self.job_id = job_id
+        self.refresh_callback = refresh_callback
+        self.parent_icon_loader_ref = parent_icon_loader
+        self._window_icon_ref = None  # To keep a reference to the window icon
+
+        self.title("Edit Survey Job")
+        self.resizable(False, False)
+        self.grab_set()  # Make this window modal
+        self.transient(master)  # Set master as parent window
+
+        self._set_window_properties(600, 500, window_icon_name, parent_icon_loader)
+
+        # Fetch existing job data
+        self.job_data = self.db_manager.get_survey_job_by_id(self.job_id)
+        if not self.job_data:
+            messagebox.showerror("Error", "Selected job not found.")
+            self.destroy()
+            return
+
+        self._create_widgets(parent_icon_loader)
+        self._populate_fields()
+
+    def _set_window_properties(self, width, height, icon_name, parent_icon_loader):
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        x = (screen_width / 2) - (width / 2)
+        y = (screen_height / 2) - (height / 2)
+        self.geometry(f'{width}x{height}+{int(x)}+{int(y)}')
+
+        if parent_icon_loader and icon_name:
+            self._window_icon_ref = parent_icon_loader(icon_name)
+            if self._window_icon_ref:
+                self.iconphoto(True, self._window_icon_ref)
+
+    def _create_widgets(self, parent_icon_loader):
+        main_frame = ttk.Frame(self, padding="20")
+        main_frame.pack(fill="both", expand=True)
+
+        # Labels and Entry fields
+        ttk.Label(main_frame, text="Client Name:").grid(row=0, column=0, sticky="w", pady=5)
+        self.client_name_var = tk.StringVar()
+        # This will be read-only as client linkage shouldn't change
+        ttk.Entry(main_frame, textvariable=self.client_name_var, state='readonly', width=40).grid(row=0, column=1,
+                                                                                                  sticky="ew", pady=5)
+
+        ttk.Label(main_frame, text="Property Location:").grid(row=1, column=0, sticky="w", pady=5)
+        self.property_location_var = tk.StringVar()
+        ttk.Entry(main_frame, textvariable=self.property_location_var, width=40).grid(row=1, column=1, sticky="ew",
+                                                                                      pady=5)
+
+        ttk.Label(main_frame, text="Job Description:").grid(row=2, column=0, sticky="w", pady=5)
+        self.job_description_text = tk.Text(main_frame, height=4, width=30)
+        self.job_description_text.grid(row=2, column=1, sticky="ew", pady=5)
+
+        ttk.Label(main_frame, text="Fee:").grid(row=3, column=0, sticky="w", pady=5)
+        self.fee_var = tk.DoubleVar()
+        ttk.Entry(main_frame, textvariable=self.fee_var, width=40).grid(row=3, column=1, sticky="ew", pady=5)
+
+        ttk.Label(main_frame, text="Deadline:").grid(row=4, column=0, sticky="w", pady=5)
+        self.deadline_date_entry = DateEntry(main_frame, width=37, background='darkblue',
+                                             foreground='white', borderwidth=2,
+                                             date_pattern='yyyy-mm-dd')
+        self.deadline_date_entry.grid(row=4, column=1, sticky="ew", pady=5)
+
+        ttk.Label(main_frame, text="Status:").grid(row=5, column=0, sticky="w", pady=5)
+        self.status_var = tk.StringVar()
+        self.status_options = ['Pending', 'Ongoing', 'Completed', 'Cancelled']
+        ttk.OptionMenu(main_frame, self.status_var, self.status_options[0], *self.status_options).grid(row=5, column=1,
+                                                                                                       sticky="ew",
+                                                                                                       pady=5)
+
+        ttk.Label(main_frame, text="Attachments Path:").grid(row=6, column=0, sticky="w", pady=5)
+        self.attachments_path_var = tk.StringVar()
+        self.attachments_entry = ttk.Entry(main_frame, textvariable=self.attachments_path_var, width=30)
+        self.attachments_entry.grid(row=6, column=1, sticky="ew", pady=5)
+        ttk.Button(main_frame, text="Browse...", command=self._browse_attachments,
+                   image=parent_icon_loader("browse_folder_icon.png") if parent_icon_loader else None,
+                   compound=tk.LEFT).grid(row=6, column=2, sticky="w", padx=5)
+
+        # Buttons
+        button_frame = ttk.Frame(main_frame)
+        button_frame.grid(row=7, column=0, columnspan=3, pady=20)
+
+        save_icon = parent_icon_loader("save_icon.png") if parent_icon_loader else None
+        self._save_icon_ref = save_icon  # Keep a reference
+        ttk.Button(button_frame, text="Save Changes", command=self._save_changes,
+                   image=save_icon, compound=tk.LEFT,
+                   style='Green.TButton').pack(side=tk.LEFT, padx=5)
+
+        cancel_icon = parent_icon_loader("cancel_icon.png") if parent_icon_loader else None
+        self._cancel_icon_ref = cancel_icon  # Keep a reference
+        ttk.Button(button_frame, text="Cancel", command=self.destroy,
+                   image=cancel_icon, compound=tk.LEFT,
+                   style='Red.TButton').pack(side=tk.LEFT, padx=5)
+
+        main_frame.grid_columnconfigure(1, weight=1)  # Allow column 1 to expand
+
+    def _populate_fields(self):
+        # Populate client name (read-only)
+        self.client_name_var.set(self.job_data['client_name'])
+
+        # Populate other fields
+        self.property_location_var.set(self.job_data['property_location'])
+        self.job_description_text.delete("1.0", tk.END)
+        self.job_description_text.insert("1.0", self.job_data['job_description'])
+        self.fee_var.set(self.job_data['fee'])
+
+        # Populate deadline DateEntry
+        deadline_dt_obj = datetime.strptime(self.job_data['deadline'], '%Y-%m-%d %H:%M:%S')  # Assuming format
+        self.deadline_date_entry.set_date(deadline_dt_obj.date())  # Set only the date part
+
+        # Populate status dropdown
+        current_status = self.job_data['status']
+        if current_status in self.status_options:
+            self.status_var.set(current_status)
+        else:
+            self.status_var.set(self.status_options[0])  # Default to first if not recognized
+
+        self.attachments_path_var.set(self.job_data['attachments_path'] or "")
+
+    def _browse_attachments(self):
+        initial_dir = self.attachments_path_var.get()
+        if not os.path.isdir(initial_dir):
+            initial_dir = SURVEY_ATTACHMENTS_DIR  # Fallback to default attachments dir
+
+        folder_path = filedialog.askdirectory(initialdir=initial_dir)
+        if folder_path:
+            self.attachments_path_var.set(folder_path)
+
+    def _save_changes(self):
+        try:
+            # Get values from fields
+            property_location = self.property_location_var.get().strip()
+            job_description = self.job_description_text.get("1.0", tk.END).strip()
+            fee = self.fee_var.get()
+            deadline_str = self.deadline_date_entry.get_date().strftime('%Y-%m-%d %H:%M:%S')  # Ensure full timestamp
+            status = self.status_var.get()
+            attachments_path = self.attachments_path_var.get().strip()
+
+            # Basic validation
+            if not property_location or not job_description or fee <= 0 or not deadline_str:
+                messagebox.showerror("Validation Error",
+                                     "Please fill in all required fields and ensure fee is positive.")
+                return
+
+            # Use the existing client_id from the fetched job_data
+            client_id = self.job_data['client_id']
+
+            if self.db_manager.update_survey_job(
+                    self.job_id, client_id, property_location, job_description, fee, deadline_str, status,
+                    attachments_path
+            ):
+                messagebox.showinfo("Success", "Survey job updated successfully!")
+                self.refresh_callback()  # Refresh the parent view's data
+                self.destroy()
+            else:
+                messagebox.showerror("Error", "Failed to update survey job. Please check inputs.")
+
+        except ValueError:
+            messagebox.showerror("Input Error", "Please enter a valid number for Fee.")
+        except Exception as e:
+            messagebox.showerror("Error", f"An unexpected error occurred: {e}")
