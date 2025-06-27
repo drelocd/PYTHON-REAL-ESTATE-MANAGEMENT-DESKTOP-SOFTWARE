@@ -1,6 +1,8 @@
 import sqlite3
 import os
 from datetime import datetime, timedelta
+from tkinter import messagebox
+
 import bcrypt
 
 # Define the path for the database file
@@ -185,7 +187,7 @@ class DatabaseManager:
             user_data = dict(user_data_row) # Explicitly convert to dict here
             stored_password_hash = user_data['password_hash'].encode('utf-8')
             if bcrypt.checkpw(password.encode('utf-8'), stored_password_hash):
-                del user_data['password_hash'] 
+                del user_data['password_hash']
                 return user_data
         return None
 
@@ -218,14 +220,57 @@ class DatabaseManager:
         query = "UPDATE users SET role = ? WHERE user_id = ?"
         return self._execute_query(query, (new_role, user_id))
 
+        # --- NEW METHODS FOR USER MANAGEMENT (ADD THESE) ---
+    def get_all_users(self):
+            """Retrieves all user records from the database."""
+            try:
+                rows = self._execute_query("SELECT user_id, username, role FROM users", fetch_all=True)
+                if rows:
+                    return [{"user_id": row[0], "username": row[1], "role": row[2]} for row in rows]
+                return []
+            except Exception as e:
+                print(f"Error fetching all users: {e}")
+                return []
+
+    def update_user(self, user_id, new_username=None, new_password=None, new_role=None):
+            """Updates an existing user's details."""
+            try:
+                query_parts = []
+                params = []
+                if new_username:
+                    query_parts.append("username = ?")
+                    params.append(new_username)
+                if new_password:
+                    query_parts.append("password_hash = ?")
+                    params.append(self._hash_password(new_password))
+                if new_role:
+                    query_parts.append("role = ?")
+                    params.append(new_role)
+
+                if not query_parts:
+                    return False  # Nothing to update
+
+                query = "UPDATE users SET " + ", ".join(query_parts) + " WHERE user_id = ?"
+                params.append(user_id)
+
+                row_count = self._execute_query(query, tuple(params))
+                return row_count is not None and row_count > 0
+            except sqlite3.IntegrityError:
+                messagebox.showerror("Error", f"Username '{new_username}' already exists.")
+                return False
+            except Exception as e:
+                print(f"Error updating user: {e}")
+                return False
+
     def delete_user(self, user_id):
-        """
-        Deletes a user from the database.
-        Returns: True if deletion was successful, False otherwise.
-        """
-        query = "DELETE FROM users WHERE user_id = ?"
-        return self._execute_query(query, (user_id,))
-    
+            """Deletes a user from the database."""
+            try:
+                row_count = self._execute_query("DELETE FROM users WHERE user_id = ?", (user_id,))
+                return row_count is not None and row_count > 0
+            except Exception as e:
+                print(f"Error deleting user: {e}")
+                return False
+
     ## CRUD Operations for Properties
 
     def get_properties_by_title_deed(self, title_deed_number):

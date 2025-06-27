@@ -53,6 +53,8 @@ print("--- Default User Setup Complete ---")
 # TrackPaymentsForm, SoldPropertiesView, ViewAllPropertiesForm, and EditPropertyForm
 from forms.property_forms import AddPropertyForm, SellPropertyForm, TrackPaymentsForm, SoldPropertiesView, ViewAllPropertiesForm, EditPropertyForm, SalesReportsForm
 from forms.survey_forms import AddSurveyJobForm,  PaymentSurveyJobsFrame, TrackSurveyJobsFrame, SurveyReportsForm
+from forms.admin_form import AdminPanel # Import the AdminPanel class
+
 
 # --- Global Constants ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -456,7 +458,7 @@ class LoginPage(tk.Toplevel):
         if messagebox.askokcancel("Exit Login", "Are you sure you want to exit the application?"):
             # When closing without successful login, pass False, None for role, and None for user_id
             self.login_callback(False, None, None) 
-            self.destroy()
+            #self.destroy()
 
 
 
@@ -709,8 +711,8 @@ class RealEstateApp(tk.Tk):
         help_menu.add_command(label="About", command=self.show_about_dialog)
 
     def _open_admin_panel(self):
-        messagebox.showinfo("Admin Panel", "Opening Admin Panel... (Functionality to manage users and system settings will be implemented here later!)")
-        # This is where you would launch a new Tkinter window/form for admin controls.
+        # Open the AdminPanel window
+        AdminPanel(self, self.db_manager, self.user_id, parent_icon_loader=self._load_icon)
 
     def _go_to_sales_tab_and_action(self, action):
         self.notebook.select(self.sales_section)
