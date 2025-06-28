@@ -191,6 +191,15 @@ class DatabaseManager:
                 return user_data
         return None
 
+    def get_user_by_username(self, username):
+        """
+        Retrieves user data by username without password authentication.
+        Returns: The user's data (user_id, username, role) as a dict if found, None otherwise.
+        """
+        query = "SELECT user_id, username, role FROM users WHERE username = ?"
+        user_data_row = self._execute_query(query, (username,), fetch_one=True)
+        return dict(user_data_row) if user_data_row else None
+
     def get_user_by_id(self, user_id):
         """
         Retrieves a user by their ID.

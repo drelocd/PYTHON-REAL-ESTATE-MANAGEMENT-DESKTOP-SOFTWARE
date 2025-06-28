@@ -54,6 +54,7 @@ print("--- Default User Setup Complete ---")
 from forms.property_forms import AddPropertyForm, SellPropertyForm, TrackPaymentsForm, SoldPropertiesView, ViewAllPropertiesForm, EditPropertyForm, SalesReportsForm
 from forms.survey_forms import AddSurveyJobForm,  PaymentSurveyJobsFrame, TrackSurveyJobsFrame, SurveyReportsForm
 from forms.admin_form import AdminPanel # Import the AdminPanel class
+from forms.signup_form import SignupForm
 
 
 # --- Global Constants ---
@@ -382,11 +383,12 @@ class SurveySectionView(ttk.Frame):
         messagebox.showinfo("Report", f"Generating {report_name} Report from Survey Section... (Feature coming soon!)")
 
 class LoginPage(tk.Toplevel):
-    def __init__(self, master, db_manager, login_callback):
+    def __init__(self, master, db_manager, login_callback, signup_callback):
         super().__init__(master)
         self.master = master
         self.db_manager = db_manager
         self.login_callback = login_callback
+        self.signup_callback = signup_callback
         
         self.title("Login")
         self.geometry("400x250")
@@ -431,6 +433,13 @@ class LoginPage(tk.Toplevel):
 
         login_button = ttk.Button(main_frame, text="Login", command=self._login)
         login_button.pack(pady=15)
+
+
+
+        # Signup Button - Now packed directly into main_frame
+        signup_button = ttk.Button(main_frame, text="Sign Up for New Account", command=self.signup_callback)
+        signup_button.pack(pady=(10, 0))  # Changed parent and used pack
+
 
     def _login(self):
         username_email = self.username_entry.get().strip()
@@ -509,7 +518,7 @@ class RealEstateApp(tk.Tk):
 
     def show_login_page(self):
         """Displays the login window."""
-        LoginPage(self, self.db_manager, self.on_login_complete)
+        LoginPage(self, self.db_manager, self.on_login_complete, self._open_signup_form)
         # The mainloop will pause here until the Toplevel (LoginPage) is destroyed.
 
     def on_login_complete(self, success, user_type=None, user_id=None):
@@ -528,6 +537,17 @@ class RealEstateApp(tk.Tk):
             self._on_tab_change(None) # Populate initial tab data
         else:
             self.destroy() # Exit application if login fails or is cancelled
+
+    def _open_signup_form(self):
+        """
+        Opens the SignupForm window to allow new user registration.
+        """
+        if not self.db_manager:
+            messagebox.showerror("Error", "Database manager is not initialized.")
+            return
+
+        signup_window = SignupForm(self, self.db_manager, parent_icon_loader=self._load_icon)
+        signup_window.wait_window()  # Makes the signup form modal (waits for it to close)
 
     def _on_tab_change(self, event):
         selected_tab_id = self.notebook.select()
@@ -703,6 +723,7 @@ class RealEstateApp(tk.Tk):
             admin_menu = tk.Menu(menubar, tearoff=0)
             menubar.add_cascade(label="Admin", menu=admin_menu)
             admin_menu.add_command(label="Manage Users", command=self._open_admin_panel)
+            admin_menu.add_command(label="Add New User (Signup)", command=self._open_signup_form)  # Added signup option for admin
             # You can add more admin-specific functionalities here later
         # --- END ADMIN MENU ---
 
@@ -755,7 +776,7 @@ class RealEstateApp(tk.Tk):
 
     def on_exit(self):
         if messagebox.askyesno("Exit Application", "Are you sure you want to exit?"):
-            self.db_manager.close() # Close database connection
+            #self.db_manager.close() # Close database connection
             self.destroy()
 
 if __name__ == "__main__":
