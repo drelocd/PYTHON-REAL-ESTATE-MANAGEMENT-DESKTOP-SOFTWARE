@@ -3,6 +3,8 @@ from tkinter import ttk, messagebox
 import os
 import datetime
 from datetime import datetime, timedelta
+
+import menubar
 from PIL import Image, ImageTk
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -55,6 +57,7 @@ from forms.property_forms import AddPropertyForm, SellPropertyForm, TrackPayment
 from forms.survey_forms import AddSurveyJobForm,  PaymentSurveyJobsFrame, TrackSurveyJobsFrame, SurveyReportsForm
 from forms.admin_form import AdminPanel # Import the AdminPanel class
 from forms.signup_form import SignupForm
+from forms.client_form import ClientForm
 
 
 # --- Global Constants ---
@@ -225,7 +228,7 @@ class SalesSectionView(ttk.Frame):
                 display_pending_payments = total_pending_sales_payments / 100000
             
             ax2.bar(payment_labels, [num_properties_sold, display_pending_payments], color=['skyblue', 'salmon'])
-            ax2.set_title('Sales vs. Pending Payments (illustrative scale)')
+            ax2.set_title('Sales vs. Pending Payments')
             ax2.set_ylabel('Count / Value')
             for i, v in enumerate([num_properties_sold, display_pending_payments]):
                 ax2.text(i, v + 0.1, f'{v:,.0f}', color='black', ha='center', va='bottom')
@@ -268,8 +271,16 @@ class SalesSectionView(ttk.Frame):
     def _open_sales_reports_receipts_view(self):
         SalesReportsForm(self.master, self.db_manager, parent_icon_loader=self.load_icon_callback, window_icon_name="reports.png")
 
-    def generate_report_type(self, report_name):
-        messagebox.showinfo("Report", f"Generating {report_name} Report from Sales Section... (Feature coming soon!)")
+    def generate_report_type(self, action):
+        #self.notebook.select(self.sales_section)
+        if action == "Daily/Monthly Sales":
+            self._open_sales_reports_receipts_view()  # Corrected from self.sales_section
+        elif action == "Sold Properties":
+            self._open_sales_reports_receipts_view()  # Corrected from self.sales_section
+        elif action == "Pending Instalments":
+            self._open_sales_reports_receipts_view()
+
+
 
 
 class SurveySectionView(ttk.Frame):
@@ -339,6 +350,8 @@ class SurveySectionView(ttk.Frame):
         self.lbl_pending_survey_payments.pack(side="left", padx=10)
 
     def populate_survey_overview(self):
+        
+        
         # ... (Your existing populate_survey_overview method) ...
         try:
             total_jobs = self.db_manager.get_total_survey_jobs()
@@ -379,8 +392,13 @@ class SurveySectionView(ttk.Frame):
         SurveyReportsForm(self.master, self.db_manager,
                                parent_icon_loader=self.load_icon_callback,window_icon_name="survey_reports.png")
 
-    def generate_report_type(self, report_name):
-        messagebox.showinfo("Report", f"Generating {report_name} Report from Survey Section... (Feature coming soon!)")
+    def generate_report_type(self, action):
+        # self.notebook.select(self.sales_section)
+        if action == "Completed Survey Jobs":
+            self._open_survey_reports_view()  # Corrected from self.sales_section
+        elif action == "Upcoming Survey Deadlines":
+            self._open_survey_reports_view()
+
 
 class LoginPage(tk.Toplevel):
     def __init__(self, master, db_manager, login_callback, signup_callback):
@@ -395,11 +413,12 @@ class LoginPage(tk.Toplevel):
         self.resizable(False, False)
         self.grab_set()  # Make the login window modal
         self.transient(master) # Make it appear on top of the master window
+        self.focus_set()
 
         # Center the login window
         self.update_idletasks()
-        x = master.winfo_x() + (master.winfo_width() // 2) - (self.winfo_width() // 2)
-        y = master.winfo_y() + (master.winfo_height() // 2) - (self.winfo_height() // 2)
+        x = master.winfo_x() + (master.winfo_width() // 3) - (self.winfo_width() // 3)
+        y = master.winfo_y() + (master.winfo_height() // 3) - (self.winfo_height() // 3)
         self.geometry(f"+{x}+{y}")
         
         self._create_widgets()
@@ -423,6 +442,8 @@ class LoginPage(tk.Toplevel):
         self.username_entry = ttk.Entry(username_frame, width=30)
         self.username_entry.pack(side="right", expand=True, fill="x")
         self.username_entry.focus_set()
+        # Bind Enter key on username entry to move focus to password
+        self.username_entry.bind('<Return>', lambda event=None: self._focus_password_entry())
 
         # Password
         password_frame = ttk.Frame(main_frame)
@@ -437,8 +458,12 @@ class LoginPage(tk.Toplevel):
 
 
         # Signup Button - Now packed directly into main_frame
-        signup_button = ttk.Button(main_frame, text="Sign Up for New Account", command=self.signup_callback)
-        signup_button.pack(pady=(10, 0))  # Changed parent and used pack
+       # signup_button = ttk.Button(main_frame, text="Sign Up for New Account", command=self.signup_callback)
+       # signup_button.pack(pady=(10, 0))  # Changed parent and used pack
+
+    def _focus_password_entry(self):
+        """Moves focus to the password entry field."""
+        self.password_entry.focus_set()
 
 
     def _login(self):
@@ -688,6 +713,18 @@ class RealEstateApp(tk.Tk):
             self.icon_images[path] = tk_img
             return tk_img
 
+    def _handle_report_generation(self, section_name, report_type):
+        """
+        Selects the relevant tab and triggers the report generation method
+        on the corresponding section view.
+        """
+        if section_name == "sales":
+            self.notebook.select(self.sales_section)  # Select the Sales tab
+            self.sales_section.generate_report_type(report_type)
+        elif section_name == "survey":
+            self.notebook.select(self.survey_section)  # Select the Survey tab
+            self.survey_section.generate_report_type(report_type)
+
     def _create_menu_bar(self):
         menubar = tk.Menu(self)
         self.config(menu=menubar)
@@ -695,6 +732,11 @@ class RealEstateApp(tk.Tk):
         file_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="File", menu=file_menu)
         file_menu.add_command(label="Exit", command=self.on_exit)
+
+        # Clients Menu - NEWLY ADDED
+        self.client_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Clients", menu=self.client_menu)
+        self.client_menu.add_command(label="Client Management", command=self._open_client_management_form)
 
         sales_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Sales", menu=sales_menu)
@@ -735,6 +777,12 @@ class RealEstateApp(tk.Tk):
         # Open the AdminPanel window
         AdminPanel(self, self.db_manager, self.user_id, parent_icon_loader=self._load_icon)
 
+    def _open_client_management_form(self):
+        """
+        Opens the ClientForm window for client management.
+        """
+        ClientForm(self, self.db_manager, parent_icon_loader=self._load_icon)
+
     def _go_to_sales_tab_and_action(self, action):
         self.notebook.select(self.sales_section)
         if action == "add_property":
@@ -753,7 +801,8 @@ class RealEstateApp(tk.Tk):
         if action == "add_job":
             self.survey_section._open_add_survey_job_form()
         elif action == "track_jobs":
-            self.survey_section._open_track_survey_jobs_view() 
+            self.survey_section._open_track_survey_jobs_view()
+
 
     def _create_main_frames(self):
         self.notebook = ttk.Notebook(self)

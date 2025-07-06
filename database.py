@@ -1161,3 +1161,34 @@ class DatabaseManager:
             return [], 0 
         return jobs, total_count
 
+
+    #NEW
+    def get_client_properties(self, client_id):
+        """
+        Retrieves properties associated with a specific client.
+        This assumes properties are linked to clients via transactions.
+        """
+        query = """
+            SELECT p.property_id, p.title_deed_number, p.location, p.size, p.price, p.status,
+                   t.transaction_date, t.total_amount_paid
+            FROM properties p
+            JOIN transactions t ON p.property_id = t.property_id
+            WHERE t.client_id = ?
+            ORDER BY t.transaction_date DESC
+        """
+        rows = self._execute_query(query, (client_id,), fetch_all=True)
+        return [dict(row) for row in rows] if rows else []
+
+    def get_client_survey_jobs(self, client_id):
+        """
+        Retrieves all survey jobs for a specific client.
+        """
+        query = """
+            SELECT job_id, property_location, job_description, fee, amount_paid, balance,
+                   deadline, status, created_at
+            FROM survey_jobs
+            WHERE client_id = ?
+            ORDER BY created_at DESC
+        """
+        rows = self._execute_query(query, (client_id,), fetch_all=True)
+        return [dict(row) for row in rows] if rows else []
