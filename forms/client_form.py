@@ -321,7 +321,7 @@ class ClientForm(tk.Toplevel):
                     prop['size'],
                     prop['price'],
                     prop['status'],
-                    prop['purchase_date']
+                    prop['transaction_date']
                 ))
 
         # Load associated Survey Jobs
