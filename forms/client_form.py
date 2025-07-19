@@ -40,11 +40,9 @@ class ClientForm(tk.Toplevel):
         self._load_clients()
 
     def _create_widgets(self):
-        # Main frame for content
         main_frame = ttk.Frame(self, padding="15")
         main_frame.pack(fill="both", expand=True)
 
-        # PanedWindow to separate client details from associated activities
         paned_window = ttk.PanedWindow(main_frame, orient=tk.VERTICAL)
         paned_window.pack(fill="both", expand=True, pady=10)
 
@@ -73,10 +71,15 @@ class ClientForm(tk.Toplevel):
 
         self.update_button = ttk.Button(button_frame, text="Update Selected Client", command=self._update_client)
         self.update_button.pack(side="left", padx=5)
-        self.update_button.config(state="disabled")  # Disabled until a client is selected
+        self.update_button.config(state="disabled")
 
         self.clear_button = ttk.Button(button_frame, text="Clear Form", command=self._clear_form)
         self.clear_button.pack(side="left", padx=5)
+
+        # Keep this single definition of the delete button
+        self.delete_button = ttk.Button(button_frame, text="Delete Selected Client", command=self._delete_client)
+        self.delete_button.pack(side="right", padx=5)
+        self.delete_button.config(state="disabled")
 
         # Client List View
         list_frame = ttk.LabelFrame(top_pane, text="Existing Clients", padding="10")
@@ -100,13 +103,6 @@ class ClientForm(tk.Toplevel):
         scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
-
-        # Delete Button
-        delete_frame = ttk.Frame(top_pane, padding="5")
-        delete_frame.pack(fill="x", pady=5)
-        self.delete_button = ttk.Button(delete_frame, text="Delete Selected Client", command=self._delete_client)
-        self.delete_button.pack(side="right", padx=5)
-        self.delete_button.config(state="disabled")  # Disabled until a client is selected
 
         # --- Bottom Pane: Associated Activities ---
         bottom_pane = ttk.Frame(paned_window)
@@ -177,7 +173,7 @@ class ClientForm(tk.Toplevel):
         if clients:
             for client in clients:
                 self.tree.insert("", "end", values=(
-                client['client_id'], client['name'], client['contact_info'], client['added_by_user_id']))
+                client['client_id'], client['name'], client['contact_info'], client['added_by_username']))
         self._clear_associated_data()  # Clear associated data when loading all clients
 
     def _add_client(self):

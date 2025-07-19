@@ -1,0 +1,29 @@
+
+        ----------------------------------------------------
+            PROPERTY SALE RECEIPT - MATHENGE REAL ESTATE
+        ----------------------------------------------------
+
+        Date: 2025-06-26
+        Transaction ID: 2
+
+        BUYER DETAILS:
+        Name: pp
+        Contact: 11
+
+        PROPERTY DETAILS:
+        Title Deed: T11
+        Location: ISINYA
+        Size: 2.00 ACRES
+
+        FINANCIAL SUMMARY:
+        Original Price: KES 100.00
+        Discount:       KES 0.00
+        Net Price:      KES 100.00
+        Amount Paid:    KES 100.00
+        Balance Due:    KES 0.00
+        Payment Mode:   Cash
+
+        ----------------------------------------------------
+        Thank you for your business!
+        ----------------------------------------------------
+        

@@ -4,8 +4,6 @@ from datetime import datetime, timedelta
 import os
 from PIL import Image, ImageTk
 import shutil
-import shutil
-from datetime import datetime, timedelta
 import io
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
@@ -15,26 +13,25 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from tkcalendar import DateEntry
 
-from forms.property_forms import DatePicker # Import DateEntry for the date picker
-
+# Assuming database.py is in the same directory or accessible via PYTHONPATH
+from database import DatabaseManager
 
 # Define paths relative to the project root for icon loading
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASSETS_DIR = os.path.join(BASE_DIR, 'assets')
-ICONS_DIR = os.path.join(ASSETS_DIR, 'icons') 
+ICONS_DIR = os.path.join(ASSETS_DIR, 'icons')
 
 # Data and Receipts
-DATA_DIR = os.path.join(BASE_DIR, 'data') # Directly use BASE_DIR here
+DATA_DIR = os.path.join(BASE_DIR, 'data')
 RECEIPTS_DIR = os.path.join(DATA_DIR, 'receipts')
-os.makedirs(RECEIPTS_DIR, exist_ok=True) # Ensure receipts directory exists
+os.makedirs(RECEIPTS_DIR, exist_ok=True)  # Ensure receipts directory exists
 
 try:
     from tkcalendar import DateEntry
 except ImportError:
     messagebox.showerror("Import Error", "The 'tkcalendar' library is not found. "
-                                        "Please install it using: pip install tkcalendar")
-    # Exit or disable datepicker functionality if tkcalendar is not available
-    DateEntry = None # Set to None to handle gracefully if not installed
+                                         "Please install it using: pip install tkcalendar")
+    DateEntry = None
 
 # Import ReportLab components for PDF generation
 try:
@@ -43,11 +40,11 @@ try:
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import inch
+
     _REPORTLAB_AVAILABLE = True
 except ImportError:
     _REPORTLAB_AVAILABLE = False
     print("ReportLab not found. PDF receipt generation will be disabled.")
-
 
 # Import functions and directories directly from file_manager
 try:
@@ -58,6 +55,7 @@ except ImportError as e:
     SURVEY_ATTACHMENTS_DIR = None
     get_full_path = None
 
+
 class SuccessMessage(tk.Toplevel):
     def __init__(self, master, success, message, pdf_path="", parent_icon_loader=None):
         super().__init__(master)
@@ -65,23 +63,24 @@ class SuccessMessage(tk.Toplevel):
         self.transient(master)
         self.grab_set()
         self.resizable(False, False)
-        
-        self._icon_photo_ref = None # Keep strong reference to PhotoImage
-        
+
+        self._icon_photo_ref = None  # Keep strong reference to PhotoImage
+
         if parent_icon_loader:
             icon_name = "success.png" if success else "error.png"
             try:
                 icon_image = parent_icon_loader(icon_name, size=(32, 32))
                 self.iconphoto(False, icon_image)
-                self._icon_photo_ref = icon_image # Store strong reference
+                self._icon_photo_ref = icon_image  # Store strong reference
             except Exception as e:
                 print(f"Failed to set icon for SuccessMessage: {e}")
 
         lbl = ttk.Label(self, text=message, font=('Helvetica', 10), wraplength=300, justify=tk.CENTER)
         lbl.pack(padx=20, pady=10)
 
-        if success and pdf_path and _REPORTLAB_AVAILABLE: # Only show Open button if PDF was actually generated
-            open_btn = ttk.Button(self, text="Open Report Folder", command=lambda: os.startfile(os.path.dirname(pdf_path))) # Open parent directory of PDF
+        if success and pdf_path and _REPORTLAB_AVAILABLE:  # Only show Open button if PDF was actually generated
+            open_btn = ttk.Button(self, text="Open Report Folder", command=lambda: os.startfile(
+                os.path.dirname(pdf_path)))  # Open parent directory of PDF
             open_btn.pack(pady=5)
 
         ok_btn = ttk.Button(self, text="OK", command=self.destroy)
@@ -113,13 +112,18 @@ class AddSurveyJobForm(tk.Toplevel):
         self.current_user_id = current_user_id
 
         self.selected_files = []
+        self.all_clients = []  # Store all clients for filtering
+        self.client_name_to_id = {}  # Map client name to ID
+        self.client_id_to_details = {}  # Map client ID to full details
 
         self.balance_var = tk.StringVar(self, value="0.00")
+        self.selected_client_id = None  # To store the ID of the selected client
 
         self._set_window_properties(600, 520, window_icon_name, parent_icon_loader)
         self._customize_title_bar()
 
         self._create_widgets(parent_icon_loader)
+        self._load_clients_for_combobox()  # Load clients when the form initializes
 
         if os.name != 'nt' or not hasattr(self, '_original_wm_protocol'):
             self.protocol("WM_DELETE_WINDOW", self._on_closing)
@@ -128,12 +132,11 @@ class AddSurveyJobForm(tk.Toplevel):
 
         self._update_balance_display()
 
-
     def _customize_title_bar(self):
         """Customizes the title bar appearance. Attempts Windows-specific
         customization, falls back to a custom Tkinter title bar."""
         try:
-            if os.name == 'nt': # Windows-specific title bar customization
+            if os.name == 'nt':  # Windows-specific title bar customization
                 from ctypes import windll, byref, sizeof, c_int
 
                 DWMWA_CAPTION_COLOR = 35
@@ -208,7 +211,6 @@ class AddSurveyJobForm(tk.Toplevel):
         y = self.winfo_pointery() - self._start_y
         self.geometry(f'+{x}+{y}')
 
-
     def _set_window_properties(self, width, height, icon_name, parent_icon_loader):
         """Sets the window size, position, and icon."""
         self.geometry(f"{width}x{height}")
@@ -237,12 +239,14 @@ class AddSurveyJobForm(tk.Toplevel):
 
         row = 0
         ttk.Label(main_frame, text="Client Name:").grid(row=row, column=0, sticky="w", pady=5, padx=5)
-        self.entry_client_name = ttk.Entry(main_frame)
-        self.entry_client_name.grid(row=row, column=1, sticky="ew", pady=5, padx=5)
+        self.client_combobox = ttk.Combobox(main_frame, state="normal")  # Can be 'readonly' or 'normal'
+        self.client_combobox.grid(row=row, column=1, sticky="ew", pady=5, padx=5)
+        self.client_combobox.bind("<<ComboboxSelected>>", self._on_client_selected)
+        self.client_combobox.bind("<KeyRelease>", self._filter_clients)  # For auto-suggestion
         row += 1
 
         ttk.Label(main_frame, text="Client Contact:").grid(row=row, column=0, sticky="w", pady=5, padx=5)
-        self.entry_client_contact = ttk.Entry(main_frame)
+        self.entry_client_contact = ttk.Entry(main_frame)  # Changed from Label to Entry
         self.entry_client_contact.grid(row=row, column=1, sticky="ew", pady=5, padx=5)
         row += 1
 
@@ -270,15 +274,16 @@ class AddSurveyJobForm(tk.Toplevel):
         row += 1
 
         ttk.Label(main_frame, text="Balance (KES):").grid(row=row, column=0, sticky="w", pady=5, padx=5)
-        self.label_balance = ttk.Label(main_frame, textvariable=self.balance_var, font=('Helvetica', 10, 'bold'), foreground='green')
+        self.label_balance = ttk.Label(main_frame, textvariable=self.balance_var, font=('Helvetica', 10, 'bold'),
+                                       foreground='green')
         self.label_balance.grid(row=row, column=1, sticky="w", pady=5, padx=5)
         row += 1
 
         ttk.Label(main_frame, text="Deadline Date (YYYY-MM-DD):").grid(row=row, column=0, sticky="w", pady=5, padx=5)
         if DateEntry:
             self.datepicker_deadline = DateEntry(main_frame, selectmode='day',
-                                                year=datetime.now().year, month=datetime.now().month,
-                                                day=datetime.now().day, date_pattern='yyyy-mm-dd')
+                                                 year=datetime.now().year, month=datetime.now().month,
+                                                 day=datetime.now().day, date_pattern='yyyy-mm-dd')
             self.datepicker_deadline.grid(row=row, column=1, sticky="ew", pady=5, padx=5)
             default_deadline = datetime.now() + timedelta(days=365)
             self.datepicker_deadline.set_date(default_deadline)
@@ -303,7 +308,8 @@ class AddSurveyJobForm(tk.Toplevel):
         if parent_icon_loader:
             self.attach_icon_ref = parent_icon_loader("attach.png", size=(20, 20))
 
-        ttk.Button(file_frame, text="Add Files", image=self.attach_icon_ref, compound=tk.LEFT, command=self._add_files).grid(row=1, column=0, columnspan=2, pady=5)
+        ttk.Button(file_frame, text="Add Files", image=self.attach_icon_ref, compound=tk.LEFT,
+                   command=self._add_files).grid(row=1, column=0, columnspan=2, pady=5)
         row += 1
 
         button_frame = ttk.Frame(main_frame)
@@ -313,8 +319,71 @@ class AddSurveyJobForm(tk.Toplevel):
             self.add_icon_ref = parent_icon_loader("add_job.png", size=(20, 20))
             self.cancel_icon_ref = parent_icon_loader("cancel.png", size=(20, 20))
 
-        ttk.Button(button_frame, text="Add Survey Job", image=self.add_icon_ref, compound=tk.LEFT, command=self._add_survey_job).pack(side="left", padx=10)
-        ttk.Button(button_frame, text="Cancel", image=self.cancel_icon_ref, compound=tk.LEFT, command=self._on_closing).pack(side="right", padx=10)
+        ttk.Button(button_frame, text="Add Survey Job", image=self.add_icon_ref, compound=tk.LEFT,
+                   command=self._add_survey_job).pack(side="left", padx=10)
+        ttk.Button(button_frame, text="Cancel", image=self.cancel_icon_ref, compound=tk.LEFT,
+                   command=self._on_closing).pack(side="right", padx=10)
+
+    def _load_clients_for_combobox(self):
+        """Loads all clients from the database and populates the combobox."""
+        self.all_clients = self.db_manager.get_all_clients()
+        client_names = []
+        self.client_name_to_id = {}
+        self.client_id_to_details = {}
+
+        for client in self.all_clients:
+            client_name = client['name']
+            client_id = client['client_id']
+            client_names.append(client_name)
+            self.client_name_to_id[client_name] = client_id
+            self.client_id_to_details[client_id] = client
+
+        self.client_combobox['values'] = sorted(client_names)
+        self.client_combobox.set("")  # Clear any initial selection
+
+    def _filter_clients(self, event):
+        """Filters the client combobox based on user input for auto-suggestion."""
+        search_text = self.client_combobox.get().strip().lower()
+        if not search_text:
+            self.client_combobox['values'] = sorted([c['name'] for c in self.all_clients])
+            self.entry_client_contact.delete(0, tk.END)  # Clear contact if text is cleared
+            self.selected_client_id = None
+            return
+
+        filtered_names = []
+        for client in self.all_clients:
+            if search_text in client['name'].lower() or search_text in client['contact_info'].lower():
+                filtered_names.append(client['name'])
+
+        self.client_combobox['values'] = sorted(filtered_names)
+        # If there's only one exact match, select it
+        if len(filtered_names) == 1 and filtered_names[0].lower() == search_text:
+            self.client_combobox.set(filtered_names[0])
+            self._on_client_selected(event)  # Manually trigger selection logic
+        else:
+            # If the current text doesn't match a selected client, clear contact and ID
+            current_name_in_box = self.client_combobox.get()
+            if current_name_in_box not in self.client_name_to_id:
+                self.entry_client_contact.delete(0, tk.END)
+                self.selected_client_id = None
+
+    def _on_client_selected(self, event):
+        """Handles selection of a client from the combobox."""
+        selected_name = self.client_combobox.get()
+        client_id = self.client_name_to_id.get(selected_name)
+
+        if client_id:
+            self.selected_client_id = client_id
+            client_details = self.client_id_to_details.get(client_id)
+            if client_details:
+                self.entry_client_contact.delete(0, tk.END)  # Clear existing text
+                self.entry_client_contact.insert(0, client_details['contact_info'])  # Insert new contact
+            else:
+                self.entry_client_contact.delete(0, tk.END)
+                self.entry_client_contact.insert(0, "Contact not found")
+        else:
+            self.selected_client_id = None
+            self.entry_client_contact.delete(0, tk.END)  # Clear contact if no client is selected or new text typed
 
     def _add_files(self):
         filetypes = [
@@ -355,7 +424,7 @@ class AddSurveyJobForm(tk.Toplevel):
             paid_amount = 0.0
 
         calculated_balance = agreed_price - paid_amount
-        self.balance_var.set(f"{calculated_balance:,.2f}") # Format with commas for thousands
+        self.balance_var.set(f"{calculated_balance:,.2f}")  # Format with commas for thousands
 
         if calculated_balance > 0:
             self.label_balance.config(foreground='black')
@@ -384,11 +453,15 @@ class AddSurveyJobForm(tk.Toplevel):
             styles = getSampleStyleSheet()
 
             # Custom styles
-            styles.add(ParagraphStyle(name='TitleStyle', alignment=1, fontName='Helvetica-Bold', fontSize=16, spaceAfter=10))
-            styles.add(ParagraphStyle(name='HeadingStyle', alignment=0, fontName='Helvetica-Bold', fontSize=12, spaceAfter=6))
+            styles.add(
+                ParagraphStyle(name='TitleStyle', alignment=1, fontName='Helvetica-Bold', fontSize=16, spaceAfter=10))
+            styles.add(
+                ParagraphStyle(name='HeadingStyle', alignment=0, fontName='Helvetica-Bold', fontSize=12, spaceAfter=6))
             styles.add(ParagraphStyle(name='NormalStyle', alignment=0, fontName='Helvetica', fontSize=10, spaceAfter=3))
-            styles.add(ParagraphStyle(name='BoldValue', alignment=0, fontName='Helvetica-Bold', fontSize=10, spaceAfter=3))
-            styles.add(ParagraphStyle(name='SignatureLine', alignment=0, fontName='Helvetica', fontSize=10, spaceBefore=40))
+            styles.add(
+                ParagraphStyle(name='BoldValue', alignment=0, fontName='Helvetica-Bold', fontSize=10, spaceAfter=3))
+            styles.add(
+                ParagraphStyle(name='SignatureLine', alignment=0, fontName='Helvetica', fontSize=10, spaceBefore=40))
 
             story = []
 
@@ -398,7 +471,8 @@ class AddSurveyJobForm(tk.Toplevel):
             story.append(Spacer(1, 0.2 * inch))
 
             # Receipt Details
-            story.append(Paragraph(f"<b>Receipt Date:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['NormalStyle']))
+            story.append(Paragraph(f"<b>Receipt Date:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                                   styles['NormalStyle']))
             story.append(Paragraph(f"<b>Job ID:</b> {job_info['job_id']}", styles['NormalStyle']))
             story.append(Spacer(1, 0.1 * inch))
 
@@ -428,20 +502,21 @@ class AddSurveyJobForm(tk.Toplevel):
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#F0F0F0')),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
                 ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('ALIGN', (1, 0), (-1, -1), 'RIGHT'), # Align amounts to the right
+                ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),  # Align amounts to the right
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
                 ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
                 ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
                 ('BOX', (0, 0), (-1, -1), 1, colors.black),
-                ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'), # Make balance bold
-                ('TEXTCOLOR', (0, -1), (-1, -1), colors.green if job_info['balance'] <= 0 else colors.orange) # Color balance
+                ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),  # Make balance bold
+                ('TEXTCOLOR', (0, -1), (-1, -1), colors.green if job_info['balance'] <= 0 else colors.orange)
+                # Color balance
             ]))
             story.append(financial_table)
             story.append(Spacer(1, 0.3 * inch))
 
             # Footer
             story.append(Paragraph("This receipt confirms the registration of a new survey job "
-                                  "and any initial payment received.", styles['NormalStyle']))
+                                   "and any initial payment received.", styles['NormalStyle']))
             story.append(Spacer(1, 0.2 * inch))
             story.append(Paragraph("Thank you for your business!", styles['HeadingStyle']))
             story.append(Spacer(1, 0.5 * inch))
@@ -456,10 +531,9 @@ class AddSurveyJobForm(tk.Toplevel):
             print(f"Error generating job creation receipt: {e}")
             return None
 
-
     def _add_survey_job(self):
-        client_name = self.entry_client_name.get().strip()
-        client_contact = self.entry_client_contact.get().strip()
+        client_name = self.client_combobox.get().strip()
+        client_contact = self.entry_client_contact.get().strip()  # Get contact from Entry
         location = self.entry_location.get().strip()
         description = self.text_description.get("1.0", tk.END).strip()
         price_str = self.entry_price.get().strip()
@@ -517,22 +591,40 @@ class AddSurveyJobForm(tk.Toplevel):
         if calculated_balance < 0:
             # This should ideally not happen if paid_amount > agreed_price is caught above,
             # but as a safeguard.
-            messagebox.showerror("Input Error", "Calculated Balance cannot be negative. Please check fee and amount paid.")
+            messagebox.showerror("Input Error",
+                                 "Calculated Balance cannot be negative. Please check fee and amount paid.")
             return
 
         try:
-            client = self.db_manager.get_client_by_contact_info(client_contact)
-            if client:
-                client_id = client['client_id']
-                if client['name'] != client_name:
-                    # It's better to verify the update result if it's critical
-                    if not self.db_manager.update_client(client_id, name=client_name):
-                         messagebox.showwarning("Database Warning", "Could not update existing client name.")
-            else:
-                client_id = self.db_manager.add_client(client_name, client_contact, added_by_user_id=self.current_user_id) # Ensure user ID is passed
-                if not client_id:
-                    messagebox.showerror("Database Error", "Failed to add new client. Contact info might already exist.")
-                    return
+            client_id = self.selected_client_id  # Use the ID from combobox selection
+            full_client_info = None
+
+            if client_id:  # An existing client was selected
+                full_client_info = self.client_id_to_details.get(client_id)
+                # Ensure client_name and client_contact match the selected client
+                if full_client_info and (
+                        full_client_info['name'] != client_name or full_client_info['contact_info'] != client_contact):
+                    # This scenario means user typed something different after selecting, or manually edited.
+                    # For simplicity, if an ID is selected, we prioritize its details.
+                    # If you want to allow editing, you'd need more complex logic here.
+                    client_name = full_client_info['name']
+                    client_contact = full_client_info['contact_info']
+            else:  # No existing client selected, attempt to find or add
+                client = self.db_manager.get_client_by_contact_info(client_contact)
+                if client:
+                    client_id = client['client_id']
+                    full_client_info = client
+                    if client['name'] != client_name:
+                        if not self.db_manager.update_client(client_id, name=client_name):
+                            messagebox.showwarning("Database Warning", "Could not update existing client name.")
+                else:
+                    client_id = self.db_manager.add_client(client_name, client_contact,
+                                                           added_by_user_id=self.current_user_id)
+                    if not client_id:
+                        messagebox.showerror("Database Error",
+                                             "Failed to add new client. Contact info might already exist.")
+                        return
+                    full_client_info = self.db_manager.get_client_by_id(client_id)  # Fetch newly added client details
 
             job_id = self.db_manager.add_survey_job(
                 client_id=client_id,
@@ -543,69 +635,63 @@ class AddSurveyJobForm(tk.Toplevel):
                 amount_paid=paid_amount,
                 balance=calculated_balance,
                 status='Pending',
-                attachments_path=None, # This is for other attachments, not the auto-generated receipt
+                attachments_path=None,  # This is for other attachments, not the auto-generated receipt
                 added_by_user_id=self.current_user_id,
                 created_at=created_at_timestamp
             )
 
             if job_id:
-                # Prepare job_info and client_info for receipt generation
-                # You'll need to fetch client details based on client_id for the receipt.
-                # Assuming your db_manager has get_client_by_id and get_survey_job_by_id
-                # (even though you just added it, it's good practice for consistency)
-                full_client_info = self.db_manager.get_client_by_id(client_id)
-                
-                # Construct job_info dictionary for the receipt generation
-                # Ensure all necessary fields are included for the receipt template
-                job_info_for_receipt = {
-                    'job_id': job_id,
-                    'client_name': full_client_info['name'], # Pass client name directly for receipt
-                    'client_contact': full_client_info['contact_info'], # Pass client contact directly
-                    'property_location': location,
-                    'job_description': description,
-                    'fee': agreed_price,
-                    'amount_paid': paid_amount,
-                    'balance': calculated_balance,
-                    'deadline': deadline_date_str,
-                    'status': 'Pending',
-                    'created_at': created_at_timestamp
-                }
-
                 receipt_pdf_path = None
-                try:
-                    receipt_pdf_path = self._generate_job_creation_receipt(job_info_for_receipt, full_client_info)
-                except Exception as e:
-                    messagebox.showwarning("Receipt Generation Error", f"Failed to generate receipt PDF: {e}")
-                    print(f"Error generating receipt: {e}")
+                if full_client_info:  # Ensure client info is available for receipt
+                    job_info_for_receipt = {
+                        'job_id': job_id,
+                        'property_location': location,
+                        'job_description': description,
+                        'fee': agreed_price,
+                        'amount_paid': paid_amount,
+                        'balance': calculated_balance,
+                        'deadline': deadline_date_str,
+                        'status': 'Pending',
+                        'created_at': created_at_timestamp
+                    }
+                    try:
+                        receipt_pdf_path = self._generate_job_creation_receipt(job_info_for_receipt, full_client_info)
+                    except Exception as e:
+                        messagebox.showwarning("Receipt Generation Error", f"Failed to generate receipt PDF: {e}")
+                        print(f"Error generating receipt: {e}")
 
                 if receipt_pdf_path:
                     # Update the newly added survey job with the receipt path
                     if self.db_manager.update_survey_job_receipt_path(job_id, receipt_pdf_path):
                         # Ask user to print the receipt
                         response = messagebox.askyesno(
-                            "Success & Print", 
+                            "Success & Print",
                             f"Survey Job added with ID: {job_id} and receipt generated at:\n{receipt_pdf_path}\n\nDo you want to print this receipt?",
                             detail="Click 'Yes' to print, 'No' to close."
                         )
                         if response:
                             try:
                                 # Use default system PDF viewer/printer (cross-platform approach)
-                                if os.name == 'nt': # For Windows
+                                import subprocess
+                                if os.name == 'nt':  # For Windows
                                     os.startfile(receipt_pdf_path, "print")
-                                elif os.sys.platform == 'darwin': # For macOS
+                                elif os.sys.platform == 'darwin':  # For macOS
                                     subprocess.run(['open', '-a', 'Preview', '-p', receipt_pdf_path])
-                                else: # For Linux/Unix
-                                    subprocess.run(['lp', receipt_pdf_path]) # or 'lpr'
+                                else:  # For Linux/Unix
+                                    subprocess.run(['lp', receipt_pdf_path])  # or 'lpr'
                                 messagebox.showinfo("Print Status", "Print command sent successfully.")
                             except Exception as print_e:
-                                messagebox.showwarning("Print Error", f"Could not send print command:\n{print_e}\nYou may need to print manually from {receipt_pdf_path}")
+                                messagebox.showwarning("Print Error",
+                                                       f"Could not send print command:\n{print_e}\nYou may need to print manually from {receipt_pdf_path}")
                                 print(f"Error printing PDF: {print_e}")
                         else:
                             messagebox.showinfo("Success", f"Survey Job added with ID: {job_id} and receipt generated.")
                     else:
-                        messagebox.showwarning("Database Update Warning", f"Survey Job added with ID: {job_id}, receipt generated but failed to save path in DB.")
+                        messagebox.showwarning("Database Update Warning",
+                                               f"Survey Job added with ID: {job_id}, receipt generated but failed to save path in DB.")
                 else:
-                    messagebox.showwarning("Receipt Warning", f"Survey Job added with ID: {job_id}, but receipt generation failed or path was not returned.")
+                    messagebox.showwarning("Receipt Warning",
+                                           f"Survey Job added with ID: {job_id}, but receipt generation failed or path was not returned.")
 
                 # Handle other attachments
                 survey_attachments_paths_str = None
@@ -622,11 +708,12 @@ class AddSurveyJobForm(tk.Toplevel):
                             messagebox.showwarning("File Save Error", f"Failed to save attachments: {e}")
                             print(f"Error saving attachments: {e}")
                     else:
-                        messagebox.showwarning("File Manager Missing", "File saving functionality for attachments not available.")
+                        messagebox.showwarning("File Manager Missing",
+                                               "File saving functionality for attachments not available.")
 
                 # Final success message, if no specific messages were already shown by receipt/attachments
                 if not receipt_pdf_path and (not self.selected_files or survey_attachments_paths_str is None):
-                     messagebox.showinfo("Success", f"Survey Job added with ID: {job_id}")
+                    messagebox.showinfo("Success", f"Survey Job added with ID: {job_id}")
 
                 self.refresh_callback()
                 self.destroy()
@@ -639,7 +726,7 @@ class AddSurveyJobForm(tk.Toplevel):
 
     def _on_closing(self):
         """Handles window closing by releasing grab and destroying the window."""
-        if self.master.winfo_exists(): # Check if master still exists before releasing grab
+        if self.master.winfo_exists():  # Check if master still exists before releasing grab
             self.grab_release()
         self.destroy()
 
@@ -653,7 +740,7 @@ class RecordSinglePaymentForm(tk.Toplevel):
         self.resizable(False, False)
         self.grab_set()
         self.transient(master)
-        
+
         # Set blue title bar (Windows only)
         try:
             from ctypes import windll, byref, sizeof, c_int
@@ -729,7 +816,8 @@ class RecordSinglePaymentForm(tk.Toplevel):
         row += 1
 
         ttk.Label(main_frame, text="Current Balance:").grid(row=row, column=0, sticky="w", pady=5, padx=5)
-        self.lbl_current_balance = ttk.Label(main_frame, text="Loading...", font=('Helvetica', 10, 'bold'), foreground='red')
+        self.lbl_current_balance = ttk.Label(main_frame, text="Loading...", font=('Helvetica', 10, 'bold'),
+                                             foreground='red')
         self.lbl_current_balance.grid(row=row, column=1, sticky="w", pady=5, padx=5)
         row += 1
 
@@ -742,16 +830,16 @@ class RecordSinglePaymentForm(tk.Toplevel):
         button_frame.grid(row=row, column=0, columnspan=2, pady=10)
 
         if parent_icon_loader:
-            self._record_payment_icon = parent_icon_loader("save.png", size=(20,20))
-            self._cancel_payment_icon = parent_icon_loader("cancel.png", size=(20,20))
+            self._record_payment_icon = parent_icon_loader("save.png", size=(20, 20))
+            self._cancel_payment_icon = parent_icon_loader("cancel.png", size=(20, 20))
 
-        record_btn = ttk.Button(button_frame, text="Record Payment", image=self._record_payment_icon, 
-                               compound=tk.LEFT, command=self.record_payment_action)
+        record_btn = ttk.Button(button_frame, text="Record Payment", image=self._record_payment_icon,
+                                compound=tk.LEFT, command=self.record_payment_action)
         record_btn.pack(side="left", padx=5)
         record_btn.image = self._record_payment_icon  # Fixed this line - was using wrong variable name
 
-        cancel_btn = ttk.Button(button_frame, text="Cancel", image=self._cancel_payment_icon, 
-                               compound=tk.LEFT, command=self.destroy)
+        cancel_btn = ttk.Button(button_frame, text="Cancel", image=self._cancel_payment_icon,
+                                compound=tk.LEFT, command=self.destroy)
         cancel_btn.pack(side="left", padx=5)
         cancel_btn.image = self._cancel_payment_icon
 
@@ -763,11 +851,11 @@ class RecordSinglePaymentForm(tk.Toplevel):
                 self.lbl_client_name.config(text=client_info['name'] if client_info else "N/A")
                 self.lbl_fee.config(text=f"KES {job_info['fee']:,.2f}")
                 self.lbl_amount_paid.config(text=f"KES {job_info['amount_paid']:,.2f}")
-                
+
                 # Calculate and display current balance
                 balance = job_info['fee'] - job_info['amount_paid']
                 self.lbl_current_balance.config(text=f"KES {balance:,.2f}")
-                
+
                 if balance <= 0:
                     self.lbl_current_balance.config(foreground='green')
                     self.entry_payment_amount.config(state='disabled')
@@ -792,14 +880,14 @@ class RecordSinglePaymentForm(tk.Toplevel):
         except ValueError:
             messagebox.showerror("Invalid Input", "Please enter a valid number for the payment amount.")
             return
-        
+
         job_info = self.db_manager.get_survey_job_by_id(self.job_id_to_pay)
         if not job_info:
             messagebox.showerror("Error", "Job information could not be retrieved.")
             return
-            
+
         current_balance = job_info['fee'] - job_info['amount_paid']
-        
+
         if payment_amount > current_balance:
             messagebox.showerror(
                 "Payment Error",
@@ -807,17 +895,17 @@ class RecordSinglePaymentForm(tk.Toplevel):
                 "Please enter a lower amount that doesn't exceed the outstanding balance."
             )
             return
-        
+
         # Calculate new amount_paid (add to existing amount)
         new_amount_paid = job_info['amount_paid'] + payment_amount
-        
+
         # Update the database
         success = self.db_manager.update_survey_job(
-            self.job_id_to_pay, 
+            self.job_id_to_pay,
             amount_paid=new_amount_paid,
             balance=job_info['fee'] - new_amount_paid
         )
-        
+
         if success:
             messagebox.showinfo("Success", f"Payment of KES {payment_amount:,.2f} recorded successfully!")
             self.refresh_callback()
@@ -829,9 +917,11 @@ class RecordSinglePaymentForm(tk.Toplevel):
         self.grab_release()
         self.destroy()
 
+
 # --- ManageSurveyJobsFrame (The main table view for jobs) ---
 class PaymentSurveyJobsFrame(tk.Toplevel):
-    def __init__(self, master, db_manager, refresh_main_view_callback=None, parent_icon_loader=None, window_icon_name="payment.png"):
+    def __init__(self, master, db_manager, refresh_main_view_callback=None, parent_icon_loader=None,
+                 window_icon_name="payment.png"):
         super().__init__(master)
         self.resizable(False, False)
         self.grab_set()
@@ -888,27 +978,27 @@ class PaymentSurveyJobsFrame(tk.Toplevel):
             # Windows-specific title bar customization
             if os.name == 'nt':
                 from ctypes import windll, byref, sizeof, c_int
-                
+
                 DWMWA_CAPTION_COLOR = 35
                 DWMWA_TEXT_COLOR = 36
-                
+
                 hwnd = windll.user32.GetParent(self.winfo_id())
-                
+
                 # Set title bar color to blue (RGB: 0, 119, 215) -> 0x00D77700 in BGR
-                color = c_int(0x00663300) 
+                color = c_int(0x00663300)
                 windll.dwmapi.DwmSetWindowAttribute(
-                    hwnd, 
-                    DWMWA_CAPTION_COLOR, 
-                    byref(color), 
+                    hwnd,
+                    DWMWA_CAPTION_COLOR,
+                    byref(color),
                     sizeof(color)
                 )
-                
+
                 # Set title text color to white
                 text_color = c_int(0x00FFFFFF)  # White in BGR
                 windll.dwmapi.DwmSetWindowAttribute(
-                    hwnd, 
-                    DWMWA_TEXT_COLOR, 
-                    byref(text_color), 
+                    hwnd,
+                    DWMWA_TEXT_COLOR,
+                    byref(text_color),
                     sizeof(text_color)
                 )
         except Exception as e:
@@ -925,46 +1015,46 @@ class PaymentSurveyJobsFrame(tk.Toplevel):
         # Filter Grid
         filter_grid = ttk.Frame(filter_frame)
         filter_grid.pack(fill="x", padx=5, pady=5)
-        
+
         # Client Name Filter
         ttk.Label(filter_grid, text="Client Name:").grid(row=0, column=0, sticky="w", padx=5, pady=2)
         ttk.Entry(filter_grid, textvariable=self.filter_client_name).grid(row=0, column=1, sticky="ew", padx=5, pady=2)
-        
+
         # Location Filter
         ttk.Label(filter_grid, text="Location:").grid(row=0, column=2, sticky="w", padx=5, pady=2)
         ttk.Entry(filter_grid, textvariable=self.filter_location).grid(row=0, column=3, sticky="ew", padx=5, pady=2)
-        
+
         # Date Range Filters
         ttk.Label(filter_grid, text="From Date:").grid(row=1, column=0, sticky="w", padx=5, pady=2)
-        self.start_date_entry = DateEntry(filter_grid, selectmode='day', date_pattern='yyyy-mm-dd', 
-                                         textvariable=self.filter_start_date)
+        self.start_date_entry = DateEntry(filter_grid, selectmode='day', date_pattern='yyyy-mm-dd',
+                                          textvariable=self.filter_start_date)
         self.start_date_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=2)
         self.start_date_entry.set_date(None)
-        
+
         ttk.Label(filter_grid, text="To Date:").grid(row=1, column=2, sticky="w", padx=5, pady=2)
-        self.end_date_entry = DateEntry(filter_grid, selectmode='day', date_pattern='yyyy-mm-dd', 
-                                       textvariable=self.filter_end_date)
+        self.end_date_entry = DateEntry(filter_grid, selectmode='day', date_pattern='yyyy-mm-dd',
+                                        textvariable=self.filter_end_date)
         self.end_date_entry.grid(row=1, column=3, sticky="ew", padx=5, pady=2)
         self.end_date_entry.set_date(None)
-        
+
         # Filter Buttons
         button_frame = ttk.Frame(filter_frame)
         button_frame.pack(fill="x", pady=5)
-        
+
         # Load icons
         if self.parent_icon_loader:
-            self._search_icon = self.parent_icon_loader("search.png", size=(20,20))
-            self._clear_icon = self.parent_icon_loader("clear_filter.png", size=(20,20))
+            self._search_icon = self.parent_icon_loader("search.png", size=(20, 20))
+            self._clear_icon = self.parent_icon_loader("clear_filter.png", size=(20, 20))
 
-        ttk.Button(button_frame, text="Apply Filters", image=self._search_icon, compound=tk.LEFT, 
-                  command=self._apply_filters).pack(side="left", padx=5)
-        ttk.Button(button_frame, text="Clear Filters", image=self._clear_icon, compound=tk.LEFT, 
-                  command=self._clear_filters).pack(side="left", padx=5)
+        ttk.Button(button_frame, text="Apply Filters", image=self._search_icon, compound=tk.LEFT,
+                   command=self._apply_filters).pack(side="left", padx=5)
+        ttk.Button(button_frame, text="Clear Filters", image=self._clear_icon, compound=tk.LEFT,
+                   command=self._clear_filters).pack(side="left", padx=5)
 
         # Treeview
         columns = ("Date", "Time", "Client Name", "Location", "Fee", "Paid", "Balance")
         self.job_tree = ttk.Treeview(main_frame, columns=columns, show="headings", style='Treeview')
-        
+
         # Configure columns
         self.job_tree.heading("Date", text="Date", anchor=tk.CENTER)
         self.job_tree.heading("Time", text="Time", anchor=tk.CENTER)
@@ -973,7 +1063,7 @@ class PaymentSurveyJobsFrame(tk.Toplevel):
         self.job_tree.heading("Fee", text="Fee (KES)", anchor=tk.E)
         self.job_tree.heading("Paid", text="Paid (KES)", anchor=tk.E)
         self.job_tree.heading("Balance", text="Balance (KES)", anchor=tk.E)
-        
+
         self.job_tree.column("Date", width=100, anchor=tk.CENTER, stretch=tk.NO)
         self.job_tree.column("Time", width=80, anchor=tk.CENTER, stretch=tk.NO)
         self.job_tree.column("Client Name", width=150, anchor=tk.W)
@@ -981,33 +1071,33 @@ class PaymentSurveyJobsFrame(tk.Toplevel):
         self.job_tree.column("Fee", width=100, anchor=tk.E)
         self.job_tree.column("Paid", width=100, anchor=tk.E)
         self.job_tree.column("Balance", width=100, anchor=tk.E)
-        
+
         self.job_tree.pack(side="top", fill="both", expand=True, padx=10, pady=5)
-        
+
         # Scrollbar
         scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=self.job_tree.yview)
         self.job_tree.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
-        
+
         # Bind selection event
         self.job_tree.bind("<<TreeviewSelect>>", self._on_job_select)
 
         # Action Buttons
         action_frame = ttk.Frame(main_frame, padding="10")
         action_frame.pack(fill="x", pady=5)
-        
+
         # Load payment icon
         if self.parent_icon_loader:
-            self._payment_icon = self.parent_icon_loader("pay.png", size=(20,20))
-            self._close_icon = self.parent_icon_loader("cancel.png", size=(20,20))
-            self._prev_icon = self.parent_icon_loader("arrow_left.png", size=(16,16))
-            self._next_icon = self.parent_icon_loader("arrow_right.png", size=(16,16))
+            self._payment_icon = self.parent_icon_loader("pay.png", size=(20, 20))
+            self._close_icon = self.parent_icon_loader("cancel.png", size=(20, 20))
+            self._prev_icon = self.parent_icon_loader("arrow_left.png", size=(16, 16))
+            self._next_icon = self.parent_icon_loader("arrow_right.png", size=(16, 16))
 
         self.make_payment_btn = ttk.Button(
-            action_frame, 
-            text="Make Payment", 
-            image=self._payment_icon, 
-            compound=tk.LEFT, 
+            action_frame,
+            text="Make Payment",
+            image=self._payment_icon,
+            compound=tk.LEFT,
             command=self._open_record_payment_form,
             state="disabled"
         )
@@ -1017,9 +1107,9 @@ class PaymentSurveyJobsFrame(tk.Toplevel):
         # Pagination
         pagination_frame = ttk.Frame(main_frame, padding="5")
         pagination_frame.pack(pady=5, fill="x")
-        
+
         self.prev_button = ttk.Button(
-            pagination_frame, 
+            pagination_frame,
             text="Previous",
             image=self._prev_icon,
             compound=tk.LEFT,
@@ -1028,12 +1118,12 @@ class PaymentSurveyJobsFrame(tk.Toplevel):
         )
         self.prev_button.pack(side="left", padx=5)
         self.prev_button.image = self._prev_icon
-        
+
         self.page_info_label = ttk.Label(pagination_frame, text="Page 1 of 1")
         self.page_info_label.pack(side="left", padx=5)
-        
+
         self.next_button = ttk.Button(
-            pagination_frame, 
+            pagination_frame,
             text="Next",
             image=self._next_icon,
             compound=tk.RIGHT,
@@ -1098,7 +1188,7 @@ class PaymentSurveyJobsFrame(tk.Toplevel):
             return
 
         self.current_page = page_number
-        
+
         # Re-fetch data for the current page with filters
         filters = {
             'client_name': self.filter_client_name.get().strip() or None,
@@ -1106,7 +1196,7 @@ class PaymentSurveyJobsFrame(tk.Toplevel):
             'start_date': self.filter_start_date.get() if self.filter_start_date.get() != 'None' else None,
             'end_date': self.filter_end_date.get() if self.filter_end_date.get() != 'None' else None
         }
-        
+
         self.all_jobs_data, self.total_jobs = self.db_manager.get_survey_jobs_paginated(
             page=self.current_page,
             page_size=self.items_per_page,
@@ -1123,7 +1213,7 @@ class PaymentSurveyJobsFrame(tk.Toplevel):
     def _populate_job_treeview(self):
         """Populates the Treeview with the current page of data."""
         self.job_tree.delete(*self.job_tree.get_children())
-        
+
         if not self.all_jobs_data:
             self.job_tree.insert("", "end", values=("No jobs found", "", "", "", "", "", ""))
             return
@@ -1141,7 +1231,6 @@ class PaymentSurveyJobsFrame(tk.Toplevel):
                     time_str = created_at.split(' ')[1] if ' ' in created_at else ''
             else:
                 date_str = time_str = ''
-            
 
             self.job_tree.insert("", "end", values=(
                 date_str,
@@ -1161,7 +1250,7 @@ class PaymentSurveyJobsFrame(tk.Toplevel):
             self.selected_job_data = next((j for j in self.all_jobs_data if j['job_id'] == job_id), None)
         else:
             self.selected_job_data = None
-            
+
         self._update_payment_button_state()
 
     def _update_payment_button_state(self):
@@ -1176,7 +1265,7 @@ class PaymentSurveyJobsFrame(tk.Toplevel):
         if not self.selected_job_data:
             messagebox.showwarning("No Selection", "Please select a job to record payment for.")
             return
-            
+
         job_id = self.selected_job_data['job_id']
         if self.selected_job_data['balance'] <= 0:
             messagebox.showinfo("No Balance", "This job has no outstanding balance.")
@@ -1210,7 +1299,7 @@ class PaymentSurveyJobsFrame(tk.Toplevel):
         """Updates the state of pagination buttons and page info."""
         self.prev_button.config(state="normal" if self.current_page > 1 else "disabled")
         self.next_button.config(state="normal" if self.current_page < self.total_pages else "disabled")
-        
+
         if self.total_jobs == 0:
             self.page_info_label.config(text="No Jobs")
         else:
@@ -1223,8 +1312,10 @@ class PaymentSurveyJobsFrame(tk.Toplevel):
         if self.refresh_main_view_callback:
             self.refresh_main_view_callback()
 
+
 class TrackSurveyJobsFrame(tk.Toplevel):
-    def __init__(self, master, db_manager, refresh_main_view_callback=None, parent_icon_loader=None, window_icon_name="track_jobs.png"):
+    def __init__(self, master, db_manager, refresh_main_view_callback=None, parent_icon_loader=None,
+                 window_icon_name="track_jobs.png"):
         super().__init__(master)
         self.resizable(False, False)
         self.grab_set()
@@ -1302,57 +1393,61 @@ class TrackSurveyJobsFrame(tk.Toplevel):
         # Filter Grid
         filter_grid = ttk.Frame(filter_frame)
         filter_grid.pack(fill="x", padx=5, pady=5)
-        
+
         # Client Name Filter
         ttk.Label(filter_grid, text="Client Name:").grid(row=0, column=0, sticky="w", padx=5, pady=2)
         ttk.Entry(filter_grid, textvariable=self.filter_client_name).grid(row=0, column=1, sticky="ew", padx=5, pady=2)
-        
+
         # Location Filter
         ttk.Label(filter_grid, text="Location:").grid(row=0, column=2, sticky="w", padx=5, pady=2)
         ttk.Entry(filter_grid, textvariable=self.filter_location).grid(row=0, column=3, sticky="ew", padx=5, pady=2)
-        
+
         # Status Filter
         ttk.Label(filter_grid, text="Status:").grid(row=0, column=4, sticky="w", padx=5, pady=2)
         status_options = ["All", "Pending", "Ongoing", "Completed", "Cancelled"]
-        ttk.Combobox(filter_grid, textvariable=self.filter_status, values=status_options, state="readonly").grid(row=0, column=5, sticky="ew", padx=5, pady=2)
-        
+        ttk.Combobox(filter_grid, textvariable=self.filter_status, values=status_options, state="readonly").grid(row=0,
+                                                                                                                 column=5,
+                                                                                                                 sticky="ew",
+                                                                                                                 padx=5,
+                                                                                                                 pady=2)
+
         # Date Range Filters
         ttk.Label(filter_grid, text="From Date:").grid(row=1, column=0, sticky="w", padx=5, pady=2)
-        self.start_date_entry = DateEntry(filter_grid, selectmode='day', date_pattern='yyyy-mm-dd', 
-                                         textvariable=self.filter_start_date)
+        self.start_date_entry = DateEntry(filter_grid, selectmode='day', date_pattern='yyyy-mm-dd',
+                                          textvariable=self.filter_start_date)
         self.start_date_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=2)
         self.start_date_entry.set_date(None)
-        
+
         ttk.Label(filter_grid, text="To Date:").grid(row=1, column=2, sticky="w", padx=5, pady=2)
-        self.end_date_entry = DateEntry(filter_grid, selectmode='day', date_pattern='yyyy-mm-dd', 
-                                       textvariable=self.filter_end_date)
+        self.end_date_entry = DateEntry(filter_grid, selectmode='day', date_pattern='yyyy-mm-dd',
+                                        textvariable=self.filter_end_date)
         self.end_date_entry.grid(row=1, column=3, sticky="ew", padx=5, pady=2)
         self.end_date_entry.set_date(None)
-        
+
         # Filter Buttons
         button_frame = ttk.Frame(filter_frame)
         button_frame.pack(fill="x", pady=5)
-        
+
         # Load icons
         if self.parent_icon_loader:
-            self._search_icon = self.parent_icon_loader("search.png", size=(20,20))
-            self._clear_icon = self.parent_icon_loader("clear_filter.png", size=(20,20))
-            self._status_icon = self.parent_icon_loader("status.png", size=(20,20))
-            self._delete_icon = self.parent_icon_loader("delete.png", size=(20,20))
-            self._close_icon = self.parent_icon_loader("cancel.png", size=(20,20))
-            self._prev_icon = self.parent_icon_loader("arrow_left.png", size=(16,16))
-            self._next_icon = self.parent_icon_loader("arrow_right.png", size=(16,16))
-            self._edit_icon = self.parent_icon_loader("edit.png", size=(20,20))
+            self._search_icon = self.parent_icon_loader("search.png", size=(20, 20))
+            self._clear_icon = self.parent_icon_loader("clear_filter.png", size=(20, 20))
+            self._status_icon = self.parent_icon_loader("status.png", size=(20, 20))
+            self._delete_icon = self.parent_icon_loader("delete.png", size=(20, 20))
+            self._close_icon = self.parent_icon_loader("cancel.png", size=(20, 20))
+            self._prev_icon = self.parent_icon_loader("arrow_left.png", size=(16, 16))
+            self._next_icon = self.parent_icon_loader("arrow_right.png", size=(16, 16))
+            self._edit_icon = self.parent_icon_loader("edit.png", size=(20, 20))
 
-        ttk.Button(button_frame, text="Apply Filters", image=self._search_icon, compound=tk.LEFT, 
-                  command=self._apply_filters).pack(side="left", padx=5)
-        ttk.Button(button_frame, text="Clear Filters", image=self._clear_icon, compound=tk.LEFT, 
-                  command=self._clear_filters).pack(side="right", padx=5)
+        ttk.Button(button_frame, text="Apply Filters", image=self._search_icon, compound=tk.LEFT,
+                   command=self._apply_filters).pack(side="left", padx=5)
+        ttk.Button(button_frame, text="Clear Filters", image=self._clear_icon, compound=tk.LEFT,
+                   command=self._clear_filters).pack(side="right", padx=5)
 
         # Treeview
-        columns = ("Date", "Time", "Client Name", "Contact", "Location",  "Deadline", "Added By", "Status")
+        columns = ("Date", "Time", "Client Name", "Contact", "Location", "Deadline", "Added By", "Status")
         self.job_tree = ttk.Treeview(main_frame, columns=columns, show="headings", style='Treeview')
-        
+
         # Configure columns
         self.job_tree.heading("Date", text="Date", anchor=tk.CENTER)
         self.job_tree.heading("Time", text="Time", anchor=tk.CENTER)
@@ -1362,7 +1457,7 @@ class TrackSurveyJobsFrame(tk.Toplevel):
         self.job_tree.heading("Deadline", text="Deadline", anchor=tk.CENTER)
         self.job_tree.heading("Added By", text="Added By", anchor=tk.W)
         self.job_tree.heading("Status", text="Status", anchor=tk.CENTER)
-        
+
         self.job_tree.column("Date", width=100, anchor=tk.CENTER, stretch=tk.NO)
         self.job_tree.column("Time", width=80, anchor=tk.CENTER, stretch=tk.NO)
         self.job_tree.column("Client Name", width=150, anchor=tk.W)
@@ -1371,24 +1466,24 @@ class TrackSurveyJobsFrame(tk.Toplevel):
         self.job_tree.column("Deadline", width=100, anchor=tk.CENTER, stretch=tk.NO)
         self.job_tree.column("Added By", width=120, anchor=tk.W)
         self.job_tree.column("Status", width=100, anchor=tk.CENTER)
-        
+
         self.job_tree.pack(side="top", fill="both", expand=True, padx=10, pady=5)
-        
+
         # Scrollbar
         scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=self.job_tree.yview)
         self.job_tree.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
-        
+
         # Bind selection event
         self.job_tree.bind("<<TreeviewSelect>>", self._on_job_select)
 
         # Action Buttons
         action_frame = ttk.Frame(main_frame, padding="10")
         action_frame.pack(fill="x", pady=5)
-        
+
         self.update_status_btn = ttk.Button(
-            action_frame, 
-            text="Update Status", 
+            action_frame,
+            text="Update Status",
             image=self._status_icon,
             compound=tk.LEFT,
             command=self._update_job_status,
@@ -1430,13 +1525,12 @@ class TrackSurveyJobsFrame(tk.Toplevel):
         self.edit_details_btn.pack(side="right", padx=5)
         self.edit_details_btn.image = self._edit_icon
 
-
         # Pagination
         pagination_frame = ttk.Frame(main_frame, padding="5")
         pagination_frame.pack(pady=5, fill="x")
-        
+
         self.prev_button = ttk.Button(
-            pagination_frame, 
+            pagination_frame,
             text="Previous",
             image=self._prev_icon,
             compound=tk.LEFT,
@@ -1445,12 +1539,12 @@ class TrackSurveyJobsFrame(tk.Toplevel):
         )
         self.prev_button.pack(side="left", padx=5)
         self.prev_button.image = self._prev_icon
-        
+
         self.page_info_label = ttk.Label(pagination_frame, text="Page 1 of 1")
         self.page_info_label.pack(side="left", padx=5)
-        
+
         self.next_button = ttk.Button(
-            pagination_frame, 
+            pagination_frame,
             text="Next",
             image=self._next_icon,
             compound=tk.RIGHT,
@@ -1517,7 +1611,7 @@ class TrackSurveyJobsFrame(tk.Toplevel):
             return
 
         self.current_page = page_number
-        
+
         # Re-fetch data for the current page with filters
         filters = {
             'client_name': self.filter_client_name.get().strip() or None,
@@ -1526,7 +1620,7 @@ class TrackSurveyJobsFrame(tk.Toplevel):
             'start_date': self.filter_start_date.get() if self.filter_start_date.get() != 'None' else None,
             'end_date': self.filter_end_date.get() if self.filter_end_date.get() != 'None' else None
         }
-        
+
         self.all_jobs_data, self.total_jobs = self.db_manager.get_survey_jobs_paginated(
             page=self.current_page,
             page_size=self.items_per_page,
@@ -1543,7 +1637,7 @@ class TrackSurveyJobsFrame(tk.Toplevel):
     def _populate_job_treeview(self):
         """Populates the Treeview with the current page of data."""
         self.job_tree.delete(*self.job_tree.get_children())
-        
+
         if not self.all_jobs_data:
             self.job_tree.insert("", "end", values=("No jobs found", "", "", "", "", "", ""))
             return
@@ -1562,7 +1656,7 @@ class TrackSurveyJobsFrame(tk.Toplevel):
             else:
                 date_str = time_str = ''
 
-            added_by = job.get('added_by_username', job.get('added_by_user_id', 'Unknown'))    
+            added_by = job.get('added_by_username', job.get('added_by_user_id', 'Unknown'))
 
             self.job_tree.insert("", "end", values=(
                 date_str,
@@ -1579,11 +1673,11 @@ class TrackSurveyJobsFrame(tk.Toplevel):
         """Handles job selection in the Treeview."""
         selected_item = self.job_tree.focus()
         if selected_item:
-            job_id = int(selected_item)
+            job_id = selected_item
             self.selected_job_data = next((j for j in self.all_jobs_data if j['job_id'] == job_id), None)
         else:
             self.selected_job_data = None
-            
+
         self._update_action_buttons_state()
 
     def _update_action_buttons_state(self):
@@ -1596,7 +1690,6 @@ class TrackSurveyJobsFrame(tk.Toplevel):
 
         self.edit_deadline_btn.config(state="normal" if (is_selected and not is_completed) else "disabled")
         self.edit_details_btn.config(state="normal" if (is_selected and not is_completed) else "disabled")
-
 
     def _update_job_status(self):
         """Opens a dialog to update the status of the selected job."""
@@ -1622,7 +1715,7 @@ class TrackSurveyJobsFrame(tk.Toplevel):
         new_status_var = tk.StringVar(value=current_status)
         status_options = ["Pending", "Ongoing", "Completed", "Cancelled"]
         status_combobox = ttk.Combobox(dialog_frame, textvariable=new_status_var,
-                                     values=status_options, state="readonly")
+                                       values=status_options, state="readonly")
         status_combobox.pack(pady=10)
 
         def save_status():
@@ -1688,7 +1781,7 @@ class TrackSurveyJobsFrame(tk.Toplevel):
         """Updates the state of pagination buttons and page info."""
         self.prev_button.config(state="normal" if self.current_page > 1 else "disabled")
         self.next_button.config(state="normal" if self.current_page < self.total_pages else "disabled")
-        
+
         if self.total_jobs == 0:
             self.page_info_label.config(text="No Jobs")
         else:
@@ -1700,7 +1793,7 @@ class TrackSurveyJobsFrame(tk.Toplevel):
         self.destroy()
         if self.refresh_main_view_callback:
             self.refresh_main_view_callback()
-    
+
     def _edit_deadline(self):
         """Opens a dialog to edit the deadline of the selected job."""
         if not self.selected_job_data:
@@ -1732,15 +1825,15 @@ class TrackSurveyJobsFrame(tk.Toplevel):
             if not new_deadline:
                 messagebox.showwarning("Input Error", "Please select a valid deadline date.")
                 return
-                
+
             try:
                 deadline_date = datetime.strptime(new_deadline, '%Y-%m-%d').date()
                 today = datetime.now().date()
-                
+
                 if deadline_date < today:
                     messagebox.showwarning("Invalid Date", "Deadline cannot be earlier than today's date.")
                     return
-                    
+
             except ValueError:
                 messagebox.showwarning("Input Error", "Invalid date format. Please use YYYY-MM-DD.")
                 return
@@ -1759,7 +1852,7 @@ class TrackSurveyJobsFrame(tk.Toplevel):
 
         button_frame = ttk.Frame(dialog_frame)
         button_frame.pack(pady=10)
-        ttk.Button(button_frame, text="Save", command=save_deadline).pack(side="left", padx=5)
+        ttk.Button(button_frame, text="Save", command=save_status).pack(side="left", padx=5)
         ttk.Button(button_frame, text="Cancel", command=deadline_dialog.destroy).pack(side="left", padx=5)
 
         deadline_dialog.update_idletasks()
@@ -1803,7 +1896,7 @@ class TrackSurveyJobsFrame(tk.Toplevel):
             if not new_location:
                 messagebox.showwarning("Input Error", "Location cannot be empty.")
                 return
-            
+
             updates = {
                 'property_location': new_location,
                 'job_description': new_description
@@ -1825,7 +1918,7 @@ class TrackSurveyJobsFrame(tk.Toplevel):
         x = self.winfo_x() + (self.winfo_width() // 2) - (details_dialog.winfo_width() // 2)
         y = self.winfo_y() + (self.winfo_height() // 2) - (details_dialog.winfo_height() // 2)
         details_dialog.geometry(f"+{x}+{y}")
-    
+
 
 class SurveyReportsForm(tk.Toplevel):
     def __init__(self, master, db_manager, parent_icon_loader=None, window_icon_name="survey_reports.png"):
@@ -1855,9 +1948,9 @@ class SurveyReportsForm(tk.Toplevel):
 
         # Set initial window properties (geometry, icon)
         self._set_window_properties(850, 550, window_icon_name, parent_icon_loader)
-        
+
         # Apply custom title bar styling
-        self._customize_title_bar() 
+        self._customize_title_bar()
 
         # Create and lay out widgets below the (now natively styled or custom) title bar
         self._create_widgets(parent_icon_loader)
@@ -1870,7 +1963,7 @@ class SurveyReportsForm(tk.Toplevel):
         x = (screen_width - width) // 2
         y = 100
         self.geometry(f"+{x}+{y}")
-        
+
         # Set icon for the window itself (this will appear in the native title bar)
         if parent_icon_loader and icon_name:
             try:
@@ -1886,27 +1979,27 @@ class SurveyReportsForm(tk.Toplevel):
             # Windows-specific title bar customization
             if os.name == 'nt':
                 from ctypes import windll, byref, sizeof, c_int
-                
+
                 DWMWA_CAPTION_COLOR = 35
                 DWMWA_TEXT_COLOR = 36
-                
+
                 hwnd = windll.user32.GetParent(self.winfo_id())
-                
+
                 # Set title bar color to dark blue (RGB: 0, 51, 102) -> 0x00663300 in BGR
-                color = c_int(0x00663300) 
+                color = c_int(0x00663300)
                 windll.dwmapi.DwmSetWindowAttribute(
-                    hwnd, 
-                    DWMWA_CAPTION_COLOR, 
-                    byref(color), 
+                    hwnd,
+                    DWMWA_CAPTION_COLOR,
+                    byref(color),
                     sizeof(color)
                 )
-                
+
                 # Set title text color to white
                 text_color = c_int(0x00FFFFFF)  # White in BGR
                 windll.dwmapi.DwmSetWindowAttribute(
-                    hwnd, 
-                    DWMWA_TEXT_COLOR, 
-                    byref(text_color), 
+                    hwnd,
+                    DWMWA_TEXT_COLOR,
+                    byref(text_color),
                     sizeof(text_color)
                 )
             else:
@@ -1920,26 +2013,26 @@ class SurveyReportsForm(tk.Toplevel):
         """Creates a custom title bar when native customization isn't available."""
         # Remove native title bar
         self.overrideredirect(True)
-        
+
         # Create custom title bar frame
         title_bar = tk.Frame(self, bg='#003366', relief='raised', bd=0, height=30)
         title_bar.pack(fill=tk.X)
-        
+
         # Title label
         title_label = tk.Label(
-            title_bar, 
+            title_bar,
             text=self.title(),  # Use the actual window title
-            bg='#003366', 
+            bg='#003366',
             fg='white',
             font=('Helvetica', 10)
         )
         title_label.pack(side=tk.LEFT, padx=10)
-        
+
         # Close button
         close_button = tk.Button(
-            title_bar, 
-            text='×', 
-            bg='#003366', 
+            title_bar,
+            text='×',
+            bg='#003366',
             fg='white',
             bd=0,
             activebackground='red',
@@ -1947,7 +2040,7 @@ class SurveyReportsForm(tk.Toplevel):
             font=('Helvetica', 12, 'bold')
         )
         close_button.pack(side=tk.RIGHT, padx=5)
-        
+
         # Bind mouse events for window dragging
         title_bar.bind('<Button-1>', self._save_drag_start_pos)
         title_bar.bind('<B1-Motion>', self._move_window)
@@ -1983,16 +2076,17 @@ class SurveyReportsForm(tk.Toplevel):
         self._create_upcoming_deadlines_tab(notebook)
 
         # Close button at the bottom of the form (within content_frame)
-        close_btn = ttk.Button(content_frame, text="Close", image=self._close_icon, compound=tk.LEFT, command=self.destroy)
-        close_btn.image = self._close_icon # Keep a reference to prevent garbage collection
+        close_btn = ttk.Button(content_frame, text="Close", image=self._close_icon, compound=tk.LEFT,
+                               command=self.destroy)
+        close_btn.image = self._close_icon  # Keep a reference to prevent garbage collection
         close_btn.pack(pady=10)
 
     def _create_completed_surveys_tab(self, notebook):
         frame = ttk.Frame(notebook, padding="10")
         notebook.add(frame, text="Completed Surveys")
         self._create_report_tab(
-            frame, "completed_surveys", "Completed Surveys", 
-            self._generate_completed_surveys_report, 
+            frame, "completed_surveys", "Completed Surveys",
+            self._generate_completed_surveys_report,
             "completed_surveys_report_text"
         )
 
@@ -2000,8 +2094,8 @@ class SurveyReportsForm(tk.Toplevel):
         frame = ttk.Frame(notebook, padding="10")
         notebook.add(frame, text="Upcoming Deadlines")
         self._create_report_tab(
-            frame, "upcoming_deadlines", "Upcoming Deadlines", 
-            self._generate_upcoming_deadlines_report, 
+            frame, "upcoming_deadlines", "Upcoming Deadlines",
+            self._generate_upcoming_deadlines_report,
             "upcoming_deadlines_report_text"
         )
 
@@ -2009,29 +2103,37 @@ class SurveyReportsForm(tk.Toplevel):
         control_frame = ttk.LabelFrame(parent_frame, text=f"{report_title} Report Options", padding="10")
         control_frame.pack(fill="x", pady=10)
 
-        report_type_var = tk.StringVar(control_frame, value="daily") 
+        report_type_var = tk.StringVar(control_frame, value="daily")
         ttk.Label(control_frame, text="Select Report Type:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
         ttk.Radiobutton(control_frame, text="Daily", variable=report_type_var, value="daily",
-                        command=lambda v=report_type_var: self._toggle_date_entries(control_frame, False, v)).grid(row=0, column=1, padx=5, pady=5, sticky="w")
+                        command=lambda v=report_type_var: self._toggle_date_entries(control_frame, False, v)).grid(
+            row=0, column=1, padx=5, pady=5, sticky="w")
         ttk.Radiobutton(control_frame, text="Monthly", variable=report_type_var, value="monthly",
-                        command=lambda v=report_type_var: self._toggle_date_entries(control_frame, False, v)).grid(row=0, column=2, padx=5, pady=5, sticky="w")
+                        command=lambda v=report_type_var: self._toggle_date_entries(control_frame, False, v)).grid(
+            row=0, column=2, padx=5, pady=5, sticky="w")
         ttk.Radiobutton(control_frame, text="Custom Range", variable=report_type_var, value="custom",
-                        command=lambda v=report_type_var: self._toggle_date_entries(control_frame, True, v)).grid(row=0, column=3, padx=5, pady=5, sticky="w")
+                        command=lambda v=report_type_var: self._toggle_date_entries(control_frame, True, v)).grid(row=0,
+                                                                                                                  column=3,
+                                                                                                                  padx=5,
+                                                                                                                  pady=5,
+                                                                                                                  sticky="w")
 
         date_range_frame = ttk.Frame(control_frame)
         date_range_frame.grid(row=1, column=0, columnspan=4, pady=5, sticky="ew")
-        
+
         ttk.Label(date_range_frame, text="From:").pack(side="left", padx=5)
         from_entry = ttk.Entry(date_range_frame, textvariable=self.from_date_var, state="readonly", width=15)
         from_entry.pack(side="left", padx=2)
-        from_cal_btn = ttk.Button(date_range_frame, image=self._calendar_icon, command=lambda: self._open_datepicker(self.from_date_var))
+        from_cal_btn = ttk.Button(date_range_frame, image=self._calendar_icon,
+                                  command=lambda: self._open_datepicker(self.from_date_var))
         from_cal_btn.image = self._calendar_icon
         from_cal_btn.pack(side="left", padx=2)
 
         ttk.Label(date_range_frame, text="To:").pack(side="left", padx=5)
         to_entry = ttk.Entry(date_range_frame, textvariable=self.to_date_var, state="readonly", width=15)
         to_entry.pack(side="left", padx=2)
-        to_cal_btn = ttk.Button(date_range_frame, image=self._calendar_icon, command=lambda: self._open_datepicker(self.to_date_var))
+        to_cal_btn = ttk.Button(date_range_frame, image=self._calendar_icon,
+                                command=lambda: self._open_datepicker(self.to_date_var))
         to_cal_btn.image = self._calendar_icon
         to_cal_btn.pack(side="left", padx=2)
 
@@ -2052,10 +2154,10 @@ class SurveyReportsForm(tk.Toplevel):
         report_preview_frame.pack(fill="both", expand=True, pady=10)
         report_preview_frame.grid_columnconfigure(0, weight=1)
         report_preview_frame.grid_rowconfigure(0, weight=1)
-        
+
         report_text = tk.Text(report_preview_frame, wrap=tk.WORD, height=15, font=('Helvetica', 9))
         report_text.grid(row=0, column=0, sticky="nsew")
-        
+
         report_scroll_y = ttk.Scrollbar(report_preview_frame, orient="vertical", command=report_text.yview)
         report_scroll_y.grid(row=0, column=1, sticky="ns")
         report_text.config(yscrollcommand=report_scroll_y.set)
@@ -2104,8 +2206,8 @@ class SurveyReportsForm(tk.Toplevel):
         # DatePicker(self, current_date_obj, lambda d: target_var.set(d),
         #            parent_icon_loader=self.parent_icon_loader_ref,
         #            window_icon_name="calendar_icon.png")
-        messagebox.showinfo("Date Picker", f"Date picker would open for {target_var.get()}") # Placeholder if DatePicker isn't available
-
+        messagebox.showinfo("Date Picker",
+                            f"Date picker would open for {target_var.get()}")  # Placeholder if DatePicker isn't available
 
     def _get_report_dates(self, report_type):
         """Determines start and end dates based on report type."""
@@ -2153,7 +2255,8 @@ class SurveyReportsForm(tk.Toplevel):
             return
 
         if not _REPORTLAB_AVAILABLE:
-            messagebox.showerror("PDF Error", "ReportLab library is not installed. PDF generation is not available. Please install it using 'pip install reportlab'.")
+            messagebox.showerror("PDF Error",
+                                 "ReportLab library is not installed. PDF generation is not available. Please install it using 'pip install reportlab'.")
             report_text_widget.delete("1.0", tk.END)
             report_text_widget.insert("1.0", "Error: ReportLab not installed for PDF generation.")
             return
@@ -2168,17 +2271,17 @@ class SurveyReportsForm(tk.Toplevel):
 
         try:
             completed_surveys = self.db_manager.get_completed_surveys_for_date_range(start_date, end_date)
-            
+
             # Format the report text for preview
             report_text = f"Completed Surveys Report\n"
             report_text += f"Period: {start_date} to {end_date}\n\n"
             report_text += f"Total Surveys Completed: {len(completed_surveys)}\n\n"
-            
+
             if completed_surveys:
                 report_text += "Survey Details:\n"
                 report_text += "=" * 80 + "\n"
                 for i, survey in enumerate(completed_surveys):
-                    report_text += f"Survey #{i+1}\n"
+                    report_text += f"Survey #{i + 1}\n"
                     report_text += f"  Job ID: {survey.get('job_id', 'N/A')}\n"
                     report_text += f"  Client: {survey.get('client_name', 'N/A')}\n"
                     report_text += f"  Location: {survey.get('property_location', 'N/A')}\n"
@@ -2194,14 +2297,14 @@ class SurveyReportsForm(tk.Toplevel):
             # Generate PDF
             pdf_path = self._generate_pdf_report(
                 "Completed Surveys Report",
-                {'data': completed_surveys}, # Pass data for PDF generation
+                {'data': completed_surveys},  # Pass data for PDF generation
                 report_type,
                 start_date,
                 end_date
             )
-            
+
             report_text_widget.delete("1.0", tk.END)
-            report_text_widget.insert("1.0", report_text) # Show text preview regardless of PDF success
+            report_text_widget.insert("1.0", report_text)  # Show text preview regardless of PDF success
 
             if pdf_path:
                 SuccessMessage(
@@ -2220,9 +2323,10 @@ class SurveyReportsForm(tk.Toplevel):
                     parent_icon_loader=self.parent_icon_loader_ref
                 )
                 self._show_pdf_preview(None, report_text_widget)
-            
+
         except Exception as e:
-            messagebox.showerror("Report Generation Error", f"An error occurred while generating Completed Surveys Report: {type(e).__name__}: {e}")
+            messagebox.showerror("Report Generation Error",
+                                 f"An error occurred while generating Completed Surveys Report: {type(e).__name__}: {e}")
             report_text_widget.delete("1.0", tk.END)
             report_text_widget.insert("1.0", f"Error: {type(e).__name__}: {e}")
 
@@ -2234,7 +2338,8 @@ class SurveyReportsForm(tk.Toplevel):
             return
 
         if not _REPORTLAB_AVAILABLE:
-            messagebox.showerror("PDF Error", "ReportLab library is not installed. PDF generation is not available. Please install it using 'pip install reportlab'.")
+            messagebox.showerror("PDF Error",
+                                 "ReportLab library is not installed. PDF generation is not available. Please install it using 'pip install reportlab'.")
             report_text_widget.delete("1.0", tk.END)
             report_text_widget.insert("1.0", "Error: ReportLab not installed for PDF generation.")
             return
@@ -2249,17 +2354,17 @@ class SurveyReportsForm(tk.Toplevel):
 
         try:
             upcoming_deadlines = self.db_manager.get_upcoming_survey_deadlines_for_date_range(start_date, end_date)
-            
+
             # Format the report text for preview
             report_text = f"Upcoming Survey Deadlines Report\n"
             report_text += f"Period: {start_date} to {end_date}\n\n"
             report_text += f"Total Upcoming Deadlines: {len(upcoming_deadlines)}\n\n"
-            
+
             if upcoming_deadlines:
                 report_text += "Deadline Details:\n"
                 report_text += "=" * 80 + "\n"
                 for i, deadline in enumerate(upcoming_deadlines):
-                    report_text += f"Deadline #{i+1}\n"
+                    report_text += f"Deadline #{i + 1}\n"
                     report_text += f"  Job ID: {deadline.get('job_id', 'N/A')}\n"
                     report_text += f"  Client: {deadline.get('client_name', 'N/A')}\n"
                     report_text += f"  Location: {deadline.get('property_location', 'N/A')}\n"
@@ -2274,15 +2379,15 @@ class SurveyReportsForm(tk.Toplevel):
             # Generate PDF
             pdf_path = self._generate_pdf_report(
                 "Upcoming Deadlines Report",
-                {'data': upcoming_deadlines}, # Pass data for PDF generation
+                {'data': upcoming_deadlines},  # Pass data for PDF generation
                 report_type,
                 start_date,
                 end_date
             )
 
             report_text_widget.delete("1.0", tk.END)
-            report_text_widget.insert("1.0", report_text) # Show text preview regardless of PDF success
-            
+            report_text_widget.insert("1.0", report_text)  # Show text preview regardless of PDF success
+
             if pdf_path:
                 SuccessMessage(
                     self,
@@ -2300,46 +2405,48 @@ class SurveyReportsForm(tk.Toplevel):
                     parent_icon_loader=self.parent_icon_loader_ref
                 )
                 self._show_pdf_preview(None, report_text_widget)
-            
+
         except Exception as e:
-            messagebox.showerror("Report Generation Error", f"An error occurred while generating Upcoming Deadlines Report: {type(e).__name__}: {e}")
+            messagebox.showerror("Report Generation Error",
+                                 f"An error occurred while generating Upcoming Deadlines Report: {type(e).__name__}: {e}")
             report_text_widget.delete("1.0", tk.END)
             report_text_widget.insert("1.0", f"Error: {type(e).__name__}: {e}")
 
     # Your existing _generate_sales_report method (copied for reference, will assume it's already there)
     def _generate_sales_report(self, report_type):
         """Generates sales report (detailed accounting style) as PDF and shows preview."""
-        report_text_widget = self.sales_report_text # Make sure self.sales_report_text is initialized
+        report_text_widget = self.sales_report_text  # Make sure self.sales_report_text is initialized
         if report_text_widget is None:
             messagebox.showerror("Internal Error", "Sales report text widget not initialized.")
             return
 
         if not _REPORTLAB_AVAILABLE:
-            messagebox.showerror("PDF Error", "ReportLab library is not installed. PDF generation is not available. Please install it using 'pip install reportlab'.")
+            messagebox.showerror("PDF Error",
+                                 "ReportLab library is not installed. PDF generation is not available. Please install it using 'pip install reportlab'.")
             report_text_widget.delete("1.0", tk.END)
             report_text_widget.insert("1.0", "Error: ReportLab not installed for PDF generation.")
             return
 
-        report_text_widget.delete("1.0", tk.END) # Clear previous content
-        report_text_widget.insert("1.0", "Generating report, please wait...") # Show status
+        report_text_widget.delete("1.0", tk.END)  # Clear previous content
+        report_text_widget.insert("1.0", "Generating report, please wait...")  # Show status
 
         start_date, end_date = self._get_report_dates(report_type)
-        if start_date is None: 
-            report_text_widget.delete("1.0", tk.END) # Clear "generating" message
-            return # Date validation failed
+        if start_date is None:
+            report_text_widget.delete("1.0", tk.END)  # Clear "generating" message
+            return  # Date validation failed
 
         try:
             # Fetch detailed sales transactions for the accounting report
             detailed_sales_data = self.db_manager.get_detailed_sales_transactions_for_date_range(start_date, end_date)
-            
+
             pdf_path = self._generate_pdf_report(
                 "Sales Report",
-                {'data': detailed_sales_data}, # Pass detailed data
+                {'data': detailed_sales_data},  # Pass detailed data
                 report_type,
                 start_date,
                 end_date
             )
-            
+
             if pdf_path:
                 SuccessMessage(
                     self,
@@ -2365,13 +2472,14 @@ class SurveyReportsForm(tk.Toplevel):
     # Your existing _generate_sold_properties_report method (copied for reference, will assume it's already there)
     def _generate_sold_properties_report(self, report_type):
         """Generates sold properties report as PDF and shows preview."""
-        report_text_widget = self.sold_properties_report_text # Make sure self.sold_properties_report_text is initialized
+        report_text_widget = self.sold_properties_report_text  # Make sure self.sold_properties_report_text is initialized
         if report_text_widget is None:
             messagebox.showerror("Internal Error", "Sold properties report text widget not initialized.")
             return
 
         if not _REPORTLAB_AVAILABLE:
-            messagebox.showerror("PDF Error", "ReportLab library is not installed. PDF generation is not available. Please install it using 'pip install reportlab'.")
+            messagebox.showerror("PDF Error",
+                                 "ReportLab library is not installed. PDF generation is not available. Please install it using 'pip install reportlab'.")
             report_text_widget.delete("1.0", tk.END)
             report_text_widget.insert("1.0", "Error: ReportLab not installed for PDF generation.")
             return
@@ -2386,15 +2494,15 @@ class SurveyReportsForm(tk.Toplevel):
 
         try:
             sold_properties = self.db_manager.get_sold_properties_for_date_range_detailed(start_date, end_date)
-            
+
             pdf_path = self._generate_pdf_report(
                 "Sold Properties Report",
-                {'data': sold_properties}, # Pass detailed data
+                {'data': sold_properties},  # Pass detailed data
                 report_type,
                 start_date,
                 end_date
             )
-            
+
             if pdf_path:
                 SuccessMessage(
                     self,
@@ -2413,20 +2521,22 @@ class SurveyReportsForm(tk.Toplevel):
                 )
                 self._show_pdf_preview(None, report_text_widget)
         except Exception as e:
-            messagebox.showerror("Report Generation Error", f"An error occurred while generating Sold Properties Report: {e}")
+            messagebox.showerror("Report Generation Error",
+                                 f"An error occurred while generating Sold Properties Report: {e}")
             report_text_widget.delete("1.0", tk.END)
             report_text_widget.insert("1.0", f"Error: {e}")
 
     # Your existing _generate_pending_instalments_report method (copied for reference, will assume it's already there)
     def _generate_pending_instalments_report(self, report_type):
         """Generates pending instalments report as PDF and shows preview."""
-        report_text_widget = self.pending_instalments_report_text # Make sure self.pending_instalments_report_text is initialized
+        report_text_widget = self.pending_instalments_report_text  # Make sure self.pending_instalments_report_text is initialized
         if report_text_widget is None:
             messagebox.showerror("Internal Error", "Pending instalments report text widget not initialized.")
             return
 
         if not _REPORTLAB_AVAILABLE:
-            messagebox.showerror("PDF Error", "ReportLab library is not installed. PDF generation is not available. Please install it using 'pip install reportlab'.")
+            messagebox.showerror("PDF Error",
+                                 "ReportLab library is not installed. PDF generation is not available. Please install it using 'pip install reportlab'.")
             report_text_widget.delete("1.0", tk.END)
             report_text_widget.insert("1.0", "Error: ReportLab not installed for PDF generation.")
             return
@@ -2441,15 +2551,15 @@ class SurveyReportsForm(tk.Toplevel):
 
         try:
             pending_instalments = self.db_manager.get_pending_instalments_for_date_range(start_date, end_date)
-            
+
             pdf_path = self._generate_pdf_report(
                 "Pending Instalments Report",
-                {'data': pending_instalments}, # Pass detailed data
+                {'data': pending_instalments},  # Pass detailed data
                 report_type,
                 start_date,
                 end_date
             )
-            
+
             if pdf_path:
                 SuccessMessage(
                     self,
@@ -2468,7 +2578,8 @@ class SurveyReportsForm(tk.Toplevel):
                 )
                 self._show_pdf_preview(None, report_text_widget)
         except Exception as e:
-            messagebox.showerror("Report Generation Error", f"An error occurred while generating Pending Instalments Report: {e}")
+            messagebox.showerror("Report Generation Error",
+                                 f"An error occurred while generating Pending Instalments Report: {e}")
             report_text_widget.delete("1.0", tk.END)
             report_text_widget.insert("1.0", f"Error: {e}")
 
@@ -2511,7 +2622,7 @@ class SurveyReportsForm(tk.Toplevel):
             if deadlines_data:
                 # Table headers
                 table_headers = ["Job ID", "Client", "Location", "Deadline Date", "Status", "Assigned To", "Priority"]
-                
+
                 # Table data
                 table_rows = [table_headers]
                 for item in deadlines_data:
@@ -2524,27 +2635,27 @@ class SurveyReportsForm(tk.Toplevel):
                         item.get('assigned_to', 'N/A'),
                         item.get('priority', 'N/A')
                     ])
-                
+
                 # Create the table
                 table_style = TableStyle([
-                    ('BACKGROUND', (0,0), (-1,0), colors.grey),
-                    ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
-                    ('ALIGN', (0,0), (-1,-1), 'LEFT'),
-                    ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                    ('BOTTOMPADDING', (0,0), (-1,0), 12),
-                    ('BACKGROUND', (0,1), (-1,-1), colors.beige),
-                    ('GRID', (0,0), (-1,-1), 1, colors.black),
-                    ('BOX', (0,0), (-1,-1), 1, colors.black)
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                    ('BOX', (0, 0), (-1, -1), 1, colors.black)
                 ])
                 # Calculate column widths dynamically based on content or fixed proportions
-                col_widths = [1.0*inch, 1.5*inch, 1.5*inch, 1.2*inch, 0.8*inch, 1.2*inch, 0.8*inch]
-                
+                col_widths = [1.0 * inch, 1.5 * inch, 1.5 * inch, 1.2 * inch, 0.8 * inch, 1.2 * inch, 0.8 * inch]
+
                 table = Table(table_rows, colWidths=col_widths)
                 table.setStyle(table_style)
                 story.append(table)
             else:
                 story.append(Paragraph("No upcoming deadlines found for this period.", styles['Normal']))
-        
+
         elif report_title == "Completed Surveys Report":
             # Assuming 'data' holds the list of dictionaries
             surveys_data = data_dict.get('data', [])
@@ -2552,7 +2663,8 @@ class SurveyReportsForm(tk.Toplevel):
             story.append(Spacer(1, 0.2 * inch))
 
             if surveys_data:
-                table_headers = ["Job ID", "Client", "Location", "Description", "Fee", "Status", "Completion Date", "Added By"]
+                table_headers = ["Job ID", "Client", "Location", "Description", "Fee", "Status", "Completion Date",
+                                 "Added By"]
                 table_rows = [table_headers]
                 for item in surveys_data:
                     table_rows.append([
@@ -2560,34 +2672,36 @@ class SurveyReportsForm(tk.Toplevel):
                         item.get('client_name', 'N/A'),
                         item.get('property_location', 'N/A'),
                         item.get('job_description', 'N/A'),
-                        f"{item.get('fee', 0.0):,.2f}", # Format currency
+                        f"{item.get('fee', 0.0):,.2f}",  # Format currency
                         item.get('status', 'N/A'),
                         item.get('completion_date', 'N/A'),
                         item.get('surveyor_name', 'N/A')
                     ])
-                
-                col_widths = [0.8*inch, 1.2*inch, 1.2*inch, 1.5*inch, 0.8*inch, 0.8*inch, 1.2*inch, 1.0*inch]
+
+                col_widths = [0.8 * inch, 1.2 * inch, 1.2 * inch, 1.5 * inch, 0.8 * inch, 0.8 * inch, 1.2 * inch,
+                              1.0 * inch]
                 table = Table(table_rows, colWidths=col_widths)
                 table.setStyle(TableStyle([
-                    ('BACKGROUND', (0,0), (-1,0), colors.grey),
-                    ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
-                    ('ALIGN', (0,0), (-1,-1), 'LEFT'),
-                    ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                    ('BOTTOMPADDING', (0,0), (-1,0), 12),
-                    ('BACKGROUND', (0,1), (-1,-1), colors.beige),
-                    ('GRID', (0,0), (-1,-1), 1, colors.black),
-                    ('BOX', (0,0), (-1,-1), 1, colors.black)
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                    ('BOX', (0, 0), (-1, -1), 1, colors.black)
                 ]))
                 story.append(table)
             else:
                 story.append(Paragraph("No completed surveys found for this period.", styles['Normal']))
-        
+
         # Add handling for "Sales Report" (your existing logic)
         elif report_title == "Sales Report":
             sales_data = data_dict.get('data', [])
             # Calculate totals for the report summary
             total_revenue = sum(item.get('amount_paid', 0) + item.get('balance', 0) for item in sales_data)
-            total_properties_sold = len(set(item.get('title_deed') for item in sales_data if item.get('title_deed'))) # Count unique properties
+            total_properties_sold = len(
+                set(item.get('title_deed') for item in sales_data if item.get('title_deed')))  # Count unique properties
 
             story.append(Paragraph(f"Total Revenue: KES {total_revenue:,.2f}", styles['Normal']))
             story.append(Paragraph(f"Total Properties Sold: {total_properties_sold}", styles['Normal']))
@@ -2605,17 +2719,17 @@ class SurveyReportsForm(tk.Toplevel):
                         f"{item.get('balance', 0.0):,.2f}"
                     ])
 
-                col_widths = [1.5*inch, 1.0*inch, 1.2*inch, 1.2*inch, 1.2*inch]
+                col_widths = [1.5 * inch, 1.0 * inch, 1.2 * inch, 1.2 * inch, 1.2 * inch]
                 table = Table(table_rows, colWidths=col_widths)
                 table.setStyle(TableStyle([
-                    ('BACKGROUND', (0,0), (-1,0), colors.grey),
-                    ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
-                    ('ALIGN', (0,0), (-1,-1), 'LEFT'),
-                    ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                    ('BOTTOMPADDING', (0,0), (-1,0), 12),
-                    ('BACKGROUND', (0,1), (-1,-1), colors.beige),
-                    ('GRID', (0,0), (-1,-1), 1, colors.black),
-                    ('BOX', (0,0), (-1,-1), 1, colors.black)
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                    ('BOX', (0, 0), (-1, -1), 1, colors.black)
                 ]))
                 story.append(table)
             else:
@@ -2640,17 +2754,17 @@ class SurveyReportsForm(tk.Toplevel):
                         f"{item.get('balance', 0.0):,.2f}",
                         item.get('client_name', 'N/A')
                     ])
-                col_widths = [1.2*inch, 1.5*inch, 0.8*inch, 1.2*inch, 1.2*inch, 0.8*inch, 1.5*inch]
+                col_widths = [1.2 * inch, 1.5 * inch, 0.8 * inch, 1.2 * inch, 1.2 * inch, 0.8 * inch, 1.5 * inch]
                 table = Table(table_rows, colWidths=col_widths)
                 table.setStyle(TableStyle([
-                    ('BACKGROUND', (0,0), (-1,0), colors.grey),
-                    ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
-                    ('ALIGN', (0,0), (-1,-1), 'LEFT'),
-                    ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                    ('BOTTOMPADDING', (0,0), (-1,0), 12),
-                    ('BACKGROUND', (0,1), (-1,-1), colors.beige),
-                    ('GRID', (0,0), (-1,-1), 1, colors.black),
-                    ('BOX', (0,0), (-1,-1), 1, colors.black)
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                    ('BOX', (0, 0), (-1, -1), 1, colors.black)
                 ]))
                 story.append(table)
             else:
@@ -2669,29 +2783,28 @@ class SurveyReportsForm(tk.Toplevel):
                 for item in instalments_data:
                     table_rows.append([
                         item.get('transaction_id', 'N/A'),
-                        item.get('transaction_date', 'N/A').split(' ')[0], # Just date
+                        item.get('transaction_date', 'N/A').split(' ')[0],  # Just date
                         item.get('title_deed_number', 'N/A'),
                         f"{item.get('original_price', 0.0):,.2f}",
                         f"{item.get('total_amount_paid', 0.0):,.2f}",
                         f"{item.get('balance', 0.0):,.2f}",
                         item.get('client_name', 'N/A')
                     ])
-                col_widths = [0.8*inch, 1.0*inch, 1.5*inch, 1.2*inch, 1.0*inch, 0.8*inch, 1.5*inch]
+                col_widths = [0.8 * inch, 1.0 * inch, 1.5 * inch, 1.2 * inch, 1.0 * inch, 0.8 * inch, 1.5 * inch]
                 table = Table(table_rows, colWidths=col_widths)
                 table.setStyle(TableStyle([
-                    ('BACKGROUND', (0,0), (-1,0), colors.grey),
-                    ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
-                    ('ALIGN', (0,0), (-1,-1), 'LEFT'),
-                    ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                    ('BOTTOMPADDING', (0,0), (-1,0), 12),
-                    ('BACKGROUND', (0,1), (-1,-1), colors.beige),
-                    ('GRID', (0,0), (-1,-1), 1, colors.black),
-                    ('BOX', (0,0), (-1,-1), 1, colors.black)
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                    ('BOX', (0, 0), (-1, -1), 1, colors.black)
                 ]))
                 story.append(table)
             else:
                 story.append(Paragraph("No pending instalments found for this period.", styles['Normal']))
-
 
         try:
             doc.build(story)
@@ -2716,8 +2829,6 @@ class SurveyReportsForm(tk.Toplevel):
         else:
             text_widget.insert(tk.END, "\n\nPDF report could not be generated. Check console for errors.\n")
 
-
     def _on_closing(self):
         """Handles window closing."""
         self.destroy()
-

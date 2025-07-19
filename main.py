@@ -781,7 +781,7 @@ class RealEstateApp(tk.Tk):
         """
         Opens the ClientForm window for client management.
         """
-        ClientForm(self, self.db_manager, parent_icon_loader=self._load_icon)
+        ClientForm(self, self.db_manager, self.user_id, parent_icon_loader=self._load_icon)
 
     def _go_to_sales_tab_and_action(self, action):
         self.notebook.select(self.sales_section)

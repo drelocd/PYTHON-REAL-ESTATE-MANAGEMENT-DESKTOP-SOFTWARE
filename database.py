@@ -451,14 +451,26 @@ class DatabaseManager:
         client_data_row = self._execute_query(query, (contact_info,), fetch_one=True)
         return dict(client_data_row) if client_data_row else None # Explicitly convert
 
-    def get_all_clients(self, ):
+    def get_all_clients(self):
         """
-        Retrieves all clients from the database.
+        Retrieves all clients from the database, including the username of the user who added them.
         Returns: A list of dictionaries representing clients.
         """
-        query = "SELECT * FROM clients"
+        query = """
+        SELECT
+            c.client_id,
+            c.name,
+            c.contact_info,
+            c.added_by_user_id,
+            u.username AS added_by_username
+        FROM
+            clients c
+        LEFT JOIN
+            users u ON c.added_by_user_id = u.user_id
+        ORDER BY c.name ASC
+        """
         results_rows = self._execute_query(query, fetch_all=True)
-        return [dict(row) for row in results_rows] if results_rows else [] # Explicitly convert
+        return [dict(row) for row in results_rows] if results_rows else []
 
     def update_client(self, client_id, **kwargs):
         """
