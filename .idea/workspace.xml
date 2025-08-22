@@ -1,0 +1,234 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="ab879b42-ea8e-4a65-bde8-c956ccf687ec" name="Changes" comment="unstaged">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/data/real_estate.db" beforeDir="false" afterPath="$PROJECT_DIR$/data/real_estate.db" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/database.py" beforeDir="false" afterPath="$PROJECT_DIR$/database.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/forms/client_form.py" beforeDir="false" afterPath="$PROJECT_DIR$/forms/client_form.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/forms/survey_forms.py" beforeDir="false" afterPath="$PROJECT_DIR$/forms/survey_forms.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Python Script" />
+      </list>
+    </option>
+  </component>
+  <component name="Git.Rebase.Settings">
+    <option name="NEW_BASE" value="origin/main" />
+  </component>
+  <component name="Git.Settings">
+    <option name="PREVIOUS_COMMIT_AUTHORS">
+      <list>
+        <option value="Xploit1017 &lt;99198707+drelocd@users.noreply.github.com&gt;" />
+      </list>
+    </option>
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+    <option name="RESET_MODE" value="HARD" />
+  </component>
+  <component name="GitHubPullRequestSearchHistory">{
+  &quot;lastFilter&quot;: {
+    &quot;state&quot;: &quot;OPEN&quot;,
+    &quot;assignee&quot;: &quot;osundwacyril&quot;
+  }
+}</component>
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;https://github.com/drelocd/PYTHON-REAL-ESTATE-MANAGEMENT-DESKTOP-SOFTWARE.git&quot;,
+    &quot;accountId&quot;: &quot;7f6f4885-84ed-42c1-ab6a-aa974f2fe395&quot;
+  }
+}</component>
+  <component name="ProjectColorInfo">{
+  &quot;customColor&quot;: &quot;&quot;,
+  &quot;associatedIndex&quot;: 2
+}</component>
+  <component name="ProjectId" id="2ytHAGI5EKDkTfkwDLjQpC8dzAc" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "Python.main.executor": "Run",
+    "Python.property_forms.executor": "Run",
+    "Python.signup_form.executor": "Run",
+    "Python.survey_forms.executor": "Run",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "git-widget-placeholder": "main",
+    "ignore.virus.scanning.warn.message": "true",
+    "last_opened_file_path": "C:/Users/osund/PycharmProjects/PYTHON-REAL-ESTATE-MANAGEMENT-",
+    "settings.editor.selected.configurable": "vcs.Git"
+  }
+}]]></component>
+  <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="C:\Users\osund\PycharmProjects\PYTHON-REAL-ESTATE-MANAGEMENT-\forms" />
+    </key>
+  </component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-python-sdk-4c141bd692a7-e2d783800521-com.jetbrains.pycharm.community.sharedIndexes.bundled-PC-251.26927.90" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="SpellCheckerSettings" RuntimeDictionaries="0" Folders="0" CustomDictionaries="0" DefaultDictionary="application-level" UseSingleDictionary="true" transferred="true" />
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="ab879b42-ea8e-4a65-bde8-c956ccf687ec" name="Changes" comment="" />
+      <created>1750646804329</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1750646804329</updated>
+    </task>
+    <task id="LOCAL-00001" summary="Survey commit">
+      <option name="closed" value="true" />
+      <created>1750761979844</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1750761979844</updated>
+    </task>
+    <task id="LOCAL-00002" summary="commit 1">
+      <option name="closed" value="true" />
+      <created>1750762229479</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1750762229479</updated>
+    </task>
+    <task id="LOCAL-00003" summary="commit 2">
+      <option name="closed" value="true" />
+      <created>1750789591247</created>
+      <option name="number" value="00003" />
+      <option name="presentableId" value="LOCAL-00003" />
+      <option name="project" value="LOCAL" />
+      <updated>1750789591247</updated>
+    </task>
+    <task id="LOCAL-00004" summary="commit 2">
+      <option name="closed" value="true" />
+      <created>1750790179626</created>
+      <option name="number" value="00004" />
+      <option name="presentableId" value="LOCAL-00004" />
+      <option name="project" value="LOCAL" />
+      <updated>1750790179627</updated>
+    </task>
+    <task id="LOCAL-00005" summary="another commit">
+      <option name="closed" value="true" />
+      <created>1750796366242</created>
+      <option name="number" value="00005" />
+      <option name="presentableId" value="LOCAL-00005" />
+      <option name="project" value="LOCAL" />
+      <updated>1750796366243</updated>
+    </task>
+    <task id="LOCAL-00006" summary="admin panel">
+      <option name="closed" value="true" />
+      <created>1751003341817</created>
+      <option name="number" value="00006" />
+      <option name="presentableId" value="LOCAL-00006" />
+      <option name="project" value="LOCAL" />
+      <updated>1751003341817</updated>
+    </task>
+    <task id="LOCAL-00007" summary="signup form">
+      <option name="closed" value="true" />
+      <created>1751085549390</created>
+      <option name="number" value="00007" />
+      <option name="presentableId" value="LOCAL-00007" />
+      <option name="project" value="LOCAL" />
+      <updated>1751085549390</updated>
+    </task>
+    <task id="LOCAL-00008" summary="signup form">
+      <option name="closed" value="true" />
+      <created>1751804630592</created>
+      <option name="number" value="00008" />
+      <option name="presentableId" value="LOCAL-00008" />
+      <option name="project" value="LOCAL" />
+      <updated>1751804630592</updated>
+    </task>
+    <task id="LOCAL-00009" summary="client form">
+      <option name="closed" value="true" />
+      <created>1751855418651</created>
+      <option name="number" value="00009" />
+      <option name="presentableId" value="LOCAL-00009" />
+      <option name="project" value="LOCAL" />
+      <updated>1751855418651</updated>
+    </task>
+    <option name="localTasksCounter" value="10" />
+    <servers />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="RECENT_FILTERS">
+      <map>
+        <entry key="Branch">
+          <value>
+            <list>
+              <RecentGroup>
+                <option name="FILTER_VALUES">
+                  <option value="origin/main" />
+                </option>
+              </RecentGroup>
+              <RecentGroup>
+                <option name="FILTER_VALUES">
+                  <option value="main" />
+                </option>
+              </RecentGroup>
+              <RecentGroup>
+                <option name="FILTER_VALUES">
+                  <option value="HEAD" />
+                </option>
+              </RecentGroup>
+            </list>
+          </value>
+        </entry>
+      </map>
+    </option>
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State>
+              <option name="FILTERS">
+                <map>
+                  <entry key="branch">
+                    <value>
+                      <list>
+                        <option value="origin/main" />
+                      </list>
+                    </value>
+                  </entry>
+                </map>
+              </option>
+            </State>
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="Survey commit" />
+    <MESSAGE value="commit 1" />
+    <MESSAGE value="Merge remote-tracking branch 'origin/main'&#10;&#10;# Conflicts:&#10;#&#9;.idea/workspace.xml&#10;#&#9;forms/survey_forms.py&#10;#&#9;main.py" />
+    <MESSAGE value="commit 2" />
+    <MESSAGE value="commit" />
+    <MESSAGE value="another commit" />
+    <MESSAGE value="commit 3" />
+    <MESSAGE value="admin panel" />
+    <MESSAGE value="signup form" />
+    <MESSAGE value="unstaged" />
+    <MESSAGE value="Add files via upload" />
+    <MESSAGE value="stash1" />
+    <MESSAGE value="client form" />
+    <option name="LAST_COMMIT_MESSAGE" value="client form" />
+  </component>
+</project>

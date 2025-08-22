@@ -14,6 +14,14 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from tkcalendar import DateEntry # Import DateEntry for the date picker
 
+import platform # A more reliable way to get the OS
+try:
+    # Attempt to import ctypes for Windows-specific title bar customization
+    from ctypes import windll, byref, sizeof, c_int
+    HAS_CTYPES = True
+except (ImportError, OSError):
+    HAS_CTYPES = False
+
 try:
     test_date = datetime.now().date()
     print(f"datetime.now().date() works! Today is: {test_date}")
@@ -566,6 +574,8 @@ class subdividelandForm(tk.Toplevel):
             
             if not confirmation:
                 return
+            
+            created_by_username = self.db_manager.get_username_by_id(self.user_id)
 
             # This is where you would call your db_manager to create the new proposed lot record
             proposed_lot_data = {
@@ -573,7 +583,7 @@ class subdividelandForm(tk.Toplevel):
                 'size': new_lot_size,
                 'location': parent_location,
                 'surveyor_name': surveyor_name,
-                'created_by': self.user_id,
+                'created_by': created_by_username if created_by_username else self.user_id, # Use username if found, otherwise fall back to ID
                 'title_deed_number': title_deed_number, 
                 'price': 0, 
                 'status': 'Proposed'
@@ -598,6 +608,7 @@ class subdividelandForm(tk.Toplevel):
             # Refresh the list and potentially the main view
             self._populate_blocks_tree()
             self._populate_proposed_lots_tree()
+            self._populate_update_lots_tree()
             self.refresh_callback()
 
             # Switch to the 'Proposed Lots' tab and show the new entry
@@ -647,7 +658,7 @@ class subdividelandForm(tk.Toplevel):
                 self._populate_update_lots_tree()
                 self._populate_proposed_lots_tree()
                 self.selected_lot_id = None
-                self._filter_lots()
+                self._filter_lots_for_updates()
                 self._populate_blocks_tree() # Refresh the blocks list to show the new size/status
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to reject lot: {e}")
@@ -656,7 +667,8 @@ class subdividelandForm(tk.Toplevel):
 class ConfirmationForm(tk.Toplevel):
     def __init__(self, master, db_manager, lot_id, user_id, refresh_callback, icon_loader=None):
         """
-        Initializes the confirmation form window.
+        Initializes the confirmation form window with a custom-colored title bar,
+        custom icon, and centered position.
         
         Args:
             master (tk.Toplevel): The parent window.
@@ -664,6 +676,7 @@ class ConfirmationForm(tk.Toplevel):
             lot_id (int): The ID of the lot to confirm.
             user_id (str): The ID of the current user.
             refresh_callback (callable): A function to refresh the main view.
+            icon_loader (callable): A function to load a custom icon.
         """
         super().__init__(master)
         self.master = master
@@ -674,7 +687,27 @@ class ConfirmationForm(tk.Toplevel):
         self.icon_loader = icon_loader
 
         self.title("Finalize Lot Details")
-        self.geometry("400x500") # Set a default size for the window
+        
+        # Set a custom icon if the loader is available
+        if self.icon_loader:
+            try:
+                # The icon_loader is a function, so we call it directly
+                self.iconphoto(True, self.icon_loader("confirm.png"))
+            except Exception as e:
+                print(f"Failed to set custom icon: {e}")
+        
+        # Attempt to customize the title bar color
+        self._customize_title_bar()
+
+        # Set default size, then center the window
+        self.geometry("400x500") 
+        self.update_idletasks()
+        width = self.winfo_width()
+        height = self.winfo_height()
+        x = (self.master.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.master.winfo_screenheight() // 2) - (height // 2)
+        self.geometry(f"+{x}+{y}")
+            
         self.grab_set()
         self.transient(master)
 
@@ -688,6 +721,41 @@ class ConfirmationForm(tk.Toplevel):
         self.price_entry = None
 
         self._create_widgets()
+
+    def _customize_title_bar(self):
+        """
+        Applies a custom color to the title bar on Windows systems.
+        This feature is only available on Windows 10/11 and newer.
+        """
+        if platform.system() == 'Windows' and HAS_CTYPES:
+            try:
+                # DWMWA constants for setting the title bar color
+                DWMWA_CAPTION_COLOR = 35
+                DWMWA_TEXT_COLOR = 36
+                
+                # Get the window handle (hwnd)
+                hwnd = windll.user32.GetParent(self.winfo_id())
+                
+                # Set title bar color to a dark blue (RGB: 0, 51, 102)
+                # This color needs to be in BGR format for Windows, so 0x00663300
+                color = c_int(0x00663300) 
+                windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, 
+                    DWMWA_CAPTION_COLOR, 
+                    byref(color), 
+                    sizeof(color)
+                )
+                
+                # Set title text color to white
+                text_color = c_int(0x00FFFFFF) 
+                windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, 
+                    DWMWA_TEXT_COLOR, 
+                    byref(text_color), 
+                    sizeof(text_color)
+                )
+            except Exception as e:
+                print(f"Could not customize title bar: {e}")
 
     def _create_widgets(self):
         """Creates the GUI for the confirmation form."""
@@ -796,7 +864,7 @@ class ConfirmationForm(tk.Toplevel):
             self.master._on_update_lot_select(None)
             if self.refresh_callback:
                 self.refresh_callback()
-            self.master._filter_lots() # Re-filter the list after the action
+            self.master._filter_lots_for_updates() # Re-filter the list after the action
             self.destroy() # Close the confirmation window
 
         except Exception as e:

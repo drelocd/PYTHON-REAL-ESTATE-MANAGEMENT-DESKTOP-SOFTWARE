@@ -14,6 +14,7 @@ try:
     from forms.signup_form import SignupForm
     from forms.admin_manage_agents_form import AdminManageAgentsPanel
     from forms.agents_signup_form import AgentSignupForm
+    from forms.admin_manage_payments_form import ManagePaymentPlansForm
 except ImportError as e:
     messagebox.showerror("Import Error", f"Could not import required modules. "
                                          f"Please ensure admin_panel.py and signup_form.py are in the 'forms' directory. Error: {e}")
@@ -21,6 +22,7 @@ except ImportError as e:
     SignupForm = None
     AdminManageAgentsPanel = None
     AgentSignupForm = None
+
 
 
 class MainMenuForm(tk.Toplevel):
@@ -188,6 +190,7 @@ class MainMenuForm(tk.Toplevel):
         self.settings_icon = self._load_icon_for_button("system_settings.png")
         self.logs_icon = self._load_icon_for_button("activity_logs.png")
         self.admin_menu_icon = self._load_icon_for_button("manage_agents.png") # Assuming a new icon for the main menu
+        self.payment_icon = self._load_icon_for_button("payment.png") # Assuming a new icon for payment plans
 
         # Button 1: Main Admin Panel
         btn_main_admin = ttk.Button(
@@ -244,19 +247,19 @@ class MainMenuForm(tk.Toplevel):
         )
         btn_logs.grid(row=2, column=0, padx=5, pady=5, ipadx=button_padding, ipady=button_padding, sticky=button_sticky)
 
-        # Button 6: (Placeholder)
-        placeholder_icon = Image.new('RGB', (24, 24), color='gray')
-        self.placeholder_icon = ImageTk.PhotoImage(placeholder_icon)
+        # Button 6: (payment)
+        payment_icon = Image.new('RGB', (24, 24), color='gray')
+        self.payment_icon = ImageTk.PhotoImage(payment_icon)
         
-        btn_placeholder = ttk.Button(
+        btn_payment_plans = ttk.Button(
             button_container,
-            text="Placeholder",
-            image=self.placeholder_icon,
+            text="Manage Payment Plans",
+            image=self.payment_icon,
             compound=tk.LEFT,
-            command=lambda: messagebox.showinfo("Info", "This is a placeholder button for future functionality."),
+            command=self._open_manage_payment_plans,
             style=button_style,
         )
-        btn_placeholder.grid(row=2, column=1, padx=5, pady=5, ipadx=button_padding, ipady=button_padding, sticky=button_sticky)
+        btn_payment_plans.grid(row=2, column=1, padx=5, pady=5, ipadx=button_padding, ipady=button_padding, sticky=button_sticky)
     
     def _open_admin_manage_users_panel(self):
         """Opens the AdminPanel window."""
@@ -277,11 +280,17 @@ class MainMenuForm(tk.Toplevel):
             SignupForm(self, self.db_manager, parent_icon_loader=self._load_icon_for_button, refresh_callback=None)
         else:
             messagebox.showerror("Error", "SignupForm module is not available.")
+    
+    def _open_manage_payment_plans(self):
+        if ManagePaymentPlansForm:
+            ManagePaymentPlansForm(self, self.db_manager, self.user_id, parent_icon_loader=self._load_icon_for_button)
+        else:
+            messagebox.showerror("Error", "ManagePaymentPlansForm module is not available.")
 
     def _open_system_settings(self):
-        """Placeholder for opening the System Settings window."""
+        """payment for opening the System Settings window."""
         messagebox.showinfo("System Settings", "This function is not yet implemented.")
 
     def _open_activity_logs(self):
-        """Placeholder for opening the Activity Logs window."""
+        """payment for opening the Activity Logs window."""
         messagebox.showinfo("Activity Logs", "This function is not yet implemented.")
