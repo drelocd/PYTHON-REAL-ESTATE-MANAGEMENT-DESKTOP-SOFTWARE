@@ -174,14 +174,15 @@ class DatabaseManager:
                          timestamp DATETIME NOT NULL
                      )
                 ''')
-   
-# Insert a dummy agent into the 'agents' table.
-# The 'timestamp' uses the current date and time.
                 cursor.execute('''
-                  INSERT INTO agents (name, status, added_by, timestamp)
-    VALUES ('John Doe', 'active', 'Admin', CURRENT_TIMESTAMP)
-''')
-
+                               CREATE TABLE IF NOT EXISTS payment_plans (
+                                      plan_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                      name TEXT NOT NULL,
+                                      duration_months INTEGER NOT NULL,
+                                      interest_rate REAL NOT NULL,
+                                      created_by TEXT NOT NULL
+                                 )
+                                 ''')
 
                 conn.commit()
             print("Database initialized successfully.")
@@ -1520,6 +1521,9 @@ class DatabaseManager:
         except sqlite3.Error as e:
             print(f"Database error fetching agent data: {e}")
             return None
+
+        
+    ############# NEW METHODS FOR PROPOSED LOTS UI ################
         
     def propose_new_lot(self, proposed_lot_data):
         """
@@ -1547,6 +1551,118 @@ class DatabaseManager:
             proposed_lot_data.get('status', 'Proposed')
         ))
         
+        conn.commit()
+        conn.close()
+
+    def create_payment_plan(self, plan_data):
+        """
+        Inserts a new payment plan record into the payment_plans table.
+        
+        Args:
+            plan_data (dict): A dictionary containing the details of the new plan,
+                              including 'name', 'duration_months', 'interest_rate',
+                              and 'created_by'.
+        """
+        sql = """
+        INSERT INTO payment_plans (name, duration_months, interest_rate, created_by)
+        VALUES (?, ?, ?, ?);
+        """
+        conn = self._get_connection()
+        if conn:
+            cursor = conn.cursor()
+            cursor.execute(sql, (
+                plan_data['name'],
+                plan_data['duration_months'],
+                plan_data['interest_rate'],
+                plan_data['created_by']
+            ))
+            conn.commit()
+            conn.close()
+            return cursor.lastrowid
+
+    def get_payment_plans(self):
+        """
+        Retrieves all payment plans from the database.
+        
+        Returns:
+            list: A list of dictionaries, where each dictionary represents a plan.
+        """
+        sql = "SELECT plan_id, name, duration_months, interest_rate, created_by FROM payment_plans;"
+        conn = self._get_connection()
+        plans = []
+        if conn:
+            cursor = conn.cursor()
+            cursor.execute(sql)
+            rows = cursor.fetchall()
+            
+            # Convert list of tuples to list of dictionaries for easier use
+            columns = [desc[0] for desc in cursor.description]
+            for row in rows:
+                plans.append(dict(zip(columns, row)))
+            conn.close()
+        return plans
+    
+    def get_plan_by_id(self, plan_id):
+        """
+        Fetches a single payment plan from the database using its plan_id.
+        
+        Returns:
+            dict: A dictionary of the plan details, or None if not found.
+        """
+        sql = "SELECT plan_id, name, duration_months, interest_rate, created_by FROM payment_plans WHERE plan_id = ?;"
+        conn = self._get_connection()
+        plan_data = None
+        if conn:
+            try:
+                cursor = conn.cursor()
+                cursor.execute(sql, (plan_id,))
+                row = cursor.fetchone()
+                
+                if row:
+                    # Convert the single tuple row to a dictionary
+                    columns = [desc[0] for desc in cursor.description]
+                    plan_data = dict(zip(columns, row))
+            except sqlite3.Error as e:
+                print(f"Database error while fetching plan: {e}")
+            finally:
+                conn.close()
+        return plan_data
+
+    def update_payment_plan(self, plan_id, plan_data):
+        """
+        Updates an existing payment plan using the provided format.
+        
+        Args:
+            plan_id (int): The ID of the plan to update.
+            plan_data (dict): A dictionary with the new plan details.
+                              Can contain 'name', 'duration_months', or 'interest_rate'.
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE payment_plans
+            SET name = ?, duration_months = ?, interest_rate = ?
+            WHERE plan_id = ?
+        ''', (
+            plan_data.get('name'),
+            plan_data.get('duration_months'),
+            plan_data.get('interest_rate'),
+            plan_id
+        ))
+        conn.commit()
+        conn.close()
+    def delete_payment_plan(self, plan_id):
+        """
+        Deletes a payment plan based on its ID using the new, simple format.
+        
+        Args:
+            plan_id (int): The ID of the plan to delete.
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            DELETE FROM payment_plans WHERE plan_id = ?
+        ''', (plan_id,))
         conn.commit()
         conn.close()
 
@@ -1599,31 +1715,7 @@ class DatabaseManager:
             for row in rows
         ]
 
-    def get_proposed_lot_details(self, lot_id):
-        """
-        Retrieves the parent_block_id and size of a specific proposed lot.
-        
-        Args:
-            lot_id (int): The unique ID of the proposed lot.
-
-        Returns:
-            dict or None: A dictionary containing 'parent_block_id' and 'size', or None if not found.
-        """
-        conn = None
-        try:
-            conn = self._get_connection()
-            conn.row_factory = sqlite3.Row  # This allows fetching results as dictionaries
-            cursor = conn.cursor()
-            sql = "SELECT parent_block_id, size FROM proposed_lots WHERE lot_id = ?"
-            cursor.execute(sql, (lot_id,))
-            row = cursor.fetchone()
-            return dict(row) if row else None
-        except sqlite3.Error as e:
-            print(f"Database error occurred: {e}")
-            return None
-        finally:
-            if conn:
-                conn.close()
+    
     def get_lots_for_update(self):
         """
         Retrieves proposed or confirmed lots for potential updates.
