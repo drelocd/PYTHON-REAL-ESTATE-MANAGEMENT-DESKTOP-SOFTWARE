@@ -12,25 +12,13 @@ import json  # Used for parsing JSON responses from GitHub API
 import threading  # Used to run update checks and downloads in the background
 import webbrowser  # Used for opening download links (as a fallback)
 import sys  # Used to get the executable path
-import logging  # For structured logging
-# from packaging.version import parse as parse_version # REMOVED: Causing import issues
 
 # Import your DatabaseManager
 from database import DatabaseManager
 from forms.transfer_form import PropertyTransferForm  # Import the transfer form
 from forms.main_menu_form import MainMenuForm
 from forms.admin_manage_users_form import AdminManageUsersPanel  # Import the admin panel for user management
-# NEW IMPORTS from your file
-from forms.property_forms import AddPropertyForm, SellPropertyLandingForm, TrackPaymentsForm, SoldPropertiesView, \
-    ViewAllPropertiesForm, EditPropertyForm, SalesReportsForm
-from forms.survey_forms import AddSurveyJobForm, PaymentSurveyJobsFrame, TrackSurveyJobsFrame, SurveyReportsForm
-from forms.signup_form import SignupForm
-from forms.client_form import ClientForm
-from forms.system_settings_form import SystemSettingsForm  # NEW
-from forms.activity_log_viewer_form import ActivityLogViewerForm
-from forms.subdivide_lands_form import subdividelandForm  # NEW: Import the subdivide land form
-# Assuming this is the correct import for ViewPropertiesToTransferForm
-#from forms.view_properties_to_transfer_form import ViewPropertiesToTransferForm
+
 
 db_manager = DatabaseManager()
 print("\n--- Checking/Adding Default Users ---")
@@ -58,7 +46,7 @@ pm_password = "pm"
 pm_is_agent = "no"  # This is a flag to indicate the user is a property manager
 if not db_manager.authenticate_user(pm_username, pm_password):
     print(f"'{pm_username}' user not found or password incorrect. Attempting to add...")
-    pm_id = db_manager.add_user(pm_username, pm_password, pm_is_agent, "property_manager")
+    pm_id = db_manager.add_user(pm_username, pm_password, pm_is_agent,"property_manager")
     if pm_id:
         print(f"Property Manager user '{pm_username}' added successfully with ID: {pm_id}")
     else:
@@ -72,7 +60,7 @@ sa_password = "sa"
 sa_is_agent = "no"  # This is a flag to indicate the user is a sales agent
 if not db_manager.authenticate_user(sa_username, sa_password):
     print(f"'{sa_username}' user not found or password incorrect. Attempting to add...")
-    sa_id = db_manager.add_user(sa_username, sa_password, sa_is_agent, "sales_agent")
+    sa_id = db_manager.add_user(sa_username, sa_password, sa_is_agent,"sales_agent")
     if sa_id:
         print(f"Sales Agent user '{sa_username}' added successfully with ID: {sa_id}")
     else:
@@ -95,6 +83,22 @@ else:
     print(f"Accountant user '{acc_username}' already exists.")
 
 print("--- Default User Setup Complete ---")
+
+# Import form classes from your forms directory
+# Assuming property_forms.py now contains AddPropertyForm, SellPropertyForm,
+# TrackPaymentsForm, SoldPropertiesView, ViewAllPropertiesForm, and EditPropertyForm
+from forms.property_forms import AddPropertyForm, SellPropertyLandingForm, TrackPaymentsForm, SoldPropertiesView, \
+    ViewAllPropertiesForm, EditPropertyForm, SalesReportsForm
+from forms.transfer_form import PropertyTransferForm  # NEW IMPORT: The transfer form from transfer_form.py
+from forms.survey_forms import AddSurveyJobForm, PaymentSurveyJobsFrame, TrackSurveyJobsFrame, SurveyReportsForm
+from forms.admin_manage_users_form import AdminManageUsersPanel  # Import the AdminPanel class
+from forms.signup_form import SignupForm
+from forms.client_form import ClientForm
+from forms.system_settings_form import SystemSettingsForm  # NEW
+from forms.activity_log_viewer_form import ActivityLogViewerForm
+from forms.subdivide_lands_form import subdividelandForm  # NEW: Import the subdivide land form
+#from forms.view_properties_to_transfer_form  
+  # NEW
 
 # --- Global Constants ---
 # Define the current application version
@@ -159,10 +163,9 @@ class SalesSectionView(ttk.Frame):
              "roles": ['admin', 'property_manager', 'sales_agent', 'accountant']},
             {"text": "Transfer Property", "icon": "transfer.png", "command": self._open_property_transfer_form,
              "roles": ['admin', 'property_manager']},
-            {"text": "View Properties To Transfer", "icon": "view_transfer_properties.png",
-             "command": self._open_view_property_to_transfer_form,
+             {"text": "View Properties To Transfer", "icon": "view_transfer_properties.png", "command": self._open_view_property_to_transfer_form,
              "roles": ['admin', 'property_manager']},
-            {"text": "Land Division & Records", "icon": "subdivide.png", "command": self._open_land_division_form,
+             {"text": "Land Division & Records", "icon": "subdivide.png", "command": self._open_land_division_form,
              "roles": ['admin', 'property_manager']}
         ]
 
@@ -317,7 +320,7 @@ class SalesSectionView(ttk.Frame):
 
     def _open_sell_property_form(self):
         SellPropertyLandingForm(self.master, self.db_manager, self.populate_system_overview,
-                                parent_icon_loader=self.load_icon_callback, window_icon_name="manage_sales.png")
+                         parent_icon_loader=self.load_icon_callback, window_icon_name="manage_sales.png")
 
     def _open_track_payments_view(self):
         TrackPaymentsForm(self.master, self.db_manager, self.populate_system_overview,
@@ -347,7 +350,6 @@ class SalesSectionView(ttk.Frame):
             parent_icon_loader=self.load_icon_callback,
             window_icon_name="transfer.png"
         )
-
     def _open_view_property_to_transfer_form(self):
         ViewPropertiesToTransferForm(
             self.master,
@@ -358,15 +360,14 @@ class SalesSectionView(ttk.Frame):
             parent_icon_loader=self.load_icon_callback,
             window_icon_name="transfer.png"
         )
-
     def _open_land_division_form(self):
         subdividelandForm(
-            master=self.master,
-            db_manager=self.db_manager,
-            user_id=self.user_id,
-            refresh_callback=self.populate_system_overview,
-            parent_icon_loader=self.load_icon_callback,
-            window_icon_name="subdivide.png"
+           master=self.master,
+           db_manager=self.db_manager,
+           user_id=self.user_id,
+           refresh_callback=self.populate_system_overview,
+           parent_icon_loader=self.load_icon_callback,
+           window_icon_name="subdivide.png"
         )
 
     def generate_report_type(self, action):
@@ -408,10 +409,9 @@ class SurveySectionView(ttk.Frame):
              "command": self._open_manage_survey_payments_view, "roles": ['admin', 'accountant']},
             {"text": "Survey Reports", "icon": "survey_reports.png", "command": self._open_survey_reports_view,
              "roles": ['admin', 'accountant']},
-            {"text": "Transfer Property", "icon": "transfer.png", "command": self._open_property_transfer_form,
+             {"text": "Transfer Property", "icon": "transfer.png", "command": self._open_property_transfer_form,
              "roles": ['admin', 'property_manager']},
-            {"text": "View Properties To Transfer", "icon": "view_transfer_properties.png",
-             "command": self._open_view_property_to_transfer_form,
+             {"text": "View Properties To Transfer", "icon": "view_transfer_properties.png", "command": self._open_view_property_to_transfer_form,
              "roles": ['admin', 'property_manager']}
         ]
 
@@ -497,7 +497,7 @@ class SurveySectionView(ttk.Frame):
                                window_icon_name="manage_payments.png")
 
     def _open_survey_reports_view(self):
-        SurveyReportsForm(self.master, self.db_manager, parent_icon_loader=self.load_icon_callback,
+        SurveyReportsForm(self.master,self.db_manager, parent_icon_loader=self.load_icon_callback,
                           window_icon_name="survey_reports.png")
 
     def generate_report_type(self, action):
@@ -506,7 +506,6 @@ class SurveySectionView(ttk.Frame):
             self._open_survey_reports_view()  # Corrected from self.sales_section
         elif action == "Upcoming Survey Deadlines":
             self._open_survey_reports_view()
-
     def _open_property_transfer_form(self):
         PropertyTransferForm(
             self.master,
@@ -517,7 +516,6 @@ class SurveySectionView(ttk.Frame):
             parent_icon_loader=self.load_icon_callback,
             window_icon_name="transfer.png"
         )
-
     def _open_view_property_to_transfer_form(self):
         ViewPropertiesToTransferForm(
             self.master,
@@ -635,18 +633,6 @@ class RealEstateApp(tk.Tk):
         self.db_manager = DatabaseManager()
         self.icon_images = {}  # Cache for PhotoImage objects
 
-        # Initialize GitHub repository details as class attributes
-        self.github_owner = "drelocd"
-        self.github_repo = "PYTHON-REAL-ESTATE-MANAGEMENT-DESKTOP-SOFTWARE"
-
-        # Initialize logging
-        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-        self.logger = logging.getLogger(__name__)
-
-        # Track last update check time to implement rate limiting
-        self.last_update_check_time = None
-        self.update_check_interval = timedelta(hours=24)  # Check once every 24 hours
-
         # --- Apply Dark Theme ---
         self.style = ttk.Style(self)
         self.style.theme_use('clam')  # 'clam' is a good base for customization
@@ -677,25 +663,19 @@ class RealEstateApp(tk.Tk):
         self.user_type = None
         self.show_login_page()  # Start with the login page
 
-        # Removed the status label at the bottom for update messages
-        # self.update_status_label = ttk.Label(self, text="")
+        # Add a status label for updates (optional, but good for user feedback)
+        self.update_status_label = ttk.Label(self, text="")
+        # Position this label where it makes sense in your UI, e.g., at the bottom
         # self.update_status_label.pack(side=tk.BOTTOM, pady=5) # Example packing
 
-        # Removed the initial update check here. It will now run after login.
-        # self.after(5000, self.check_for_updates)
+        # Check for updates shortly after the app starts
+        self.after(5000, self.check_for_updates)  # Check for updates 5 seconds after startup
 
     def check_for_updates(self):
         """
         Initiates a version update check in a separate thread to avoid freezing the UI.
-        Implements rate limiting to avoid excessive API calls.
         """
-        now = datetime.now()
-        if self.last_update_check_time and (now - self.last_update_check_time) < self.update_check_interval:
-            self.logger.info("Skipping update check: last check was too recent.")
-            # No pop-up for skipping, as it's a silent background check interval.
-            return
-
-        self.logger.info("Starting update check thread.")
+        # Start the update check in a new thread
         threading.Thread(target=self._run_update_check, daemon=True).start()
 
     def _run_update_check(self):
@@ -703,139 +683,149 @@ class RealEstateApp(tk.Tk):
         Performs the actual update check by fetching release information from GitHub.
         This method runs in a separate thread.
         """
-        # Using class attributes for GitHub details
-        github_release_api_url = f"https://api.github.com/repos/{self.github_owner}/{self.github_repo}/releases/latest"
+        # IMPORTANT: Replace 'your-username' and 'your-repository' with your actual GitHub details.
+        # Example: 'google-gemini' and 'real-estate-app'
+        github_owner = "drelocd"  # e.g., "your-github-username"
+        github_repo = "PYTHON-REAL-ESTATE-MANAGEMENT-DESKTOP-SOFTWARE"  # e.g., "MathengeRealEstateApp"
+        github_release_api_url = f"https://github.com/{github_owner}/{github_repo}/releases/latest"
 
         latest_version_clean = None
         download_url = None
         asset_filename = None
 
         try:
-            response = requests.get(github_release_api_url, timeout=10)
-            response.raise_for_status()
+            # Make an HTTP GET request to GitHub's API for the latest release
+            response = requests.get(github_release_api_url, timeout=10)  # 10-second timeout
+            response.raise_for_status()  # Raise an exception for HTTP errors (4xx or 5xx)
 
             release_info = response.json()
-            latest_version_tag = release_info.get("tag_name")
+            latest_version_tag = release_info.get("tag_name")  # e.g., "v1.0.2" or "1.0.2"
 
+            # Find a suitable download URL for your executable/installer
             assets = release_info.get("assets", [])
             for asset in assets:
+                # Look for a specific executable name or zip file. Adjust this logic
+                # to match how you name your release assets on GitHub.
+                # Example: "MathengeRealEstateApp-Setup-1.0.2.exe" or "MathengeRealEstateApp-Win.zip"
                 if "mathengerestatemgmt_setup" in asset["name"].lower() and asset["name"].lower().endswith(".exe"):
                     download_url = asset["browser_download_url"]
                     asset_filename = asset["name"]
                     break
 
+            # Fallback if no specific executable asset is found, use the release page URL
             if not download_url:
-                download_url = release_info.get("html_url")
-                asset_filename = f"MathengeRealEstateApp-Update-{latest_version_tag}.html"
+                download_url = release_info.get("html_url")  # URL to the release page
+                asset_filename = f"MathengeRealEstateApp-Update-{latest_version_tag}.html"  # Dummy name for HTML page
 
             if latest_version_tag and download_url and asset_filename:
+                # Remove 'v' prefix if present for version comparison
                 if latest_version_tag.startswith('v'):
                     latest_version_clean = latest_version_tag[1:]
                 else:
                     latest_version_clean = latest_version_tag
 
                 if self._is_newer_version(latest_version_clean):
-                    self.logger.info(f"Newer version available: {latest_version_clean}. Current: {APP_VERSION}")
+                    # If a newer version is available, initiate download on the main thread
                     self.after(0, lambda lv=latest_version_clean, dl=download_url,
-                                         af=asset_filename: self._prompt_and_download_update(lv, dl, af))
+                                         af=asset_filename: self._prompt_download_and_install(lv, dl, af))
                 else:
-                    self.logger.info(f"Currently using the latest version: {APP_VERSION}")
-                    self.after(0, lambda: messagebox.showinfo("Update Check", "You are using the latest version."))
+                    self.after(0, lambda: self.update_status_label.config(text="You are using the latest version."))
             else:
-                self.logger.warning(
-                    "GitHub API response is missing 'tag_name' or 'download_url'. No update information available.")
+                print("GitHub API response is missing 'tag_name' or 'download_url'.")
                 self.after(0, lambda: messagebox.showinfo("Update Check",
-                                                          "Could not retrieve complete update information from GitHub. No updates available."))
+                                                          "Could not retrieve complete update information from GitHub."))
 
-        except requests.exceptions.RequestException as request_exception:
-            self.logger.error(f"Failed to check for updates from GitHub: {request_exception}")
-            self.after(0, lambda: messagebox.showerror("Update Check Failed",
-                                                       f"Failed to check for updates: {request_exception}. Please check your internet connection or repository details."))
+
+        except requests.exceptions.RequestException as request_exception:  # Renamed 'e' to 'request_exception' for clarity
+            # Handle network-related errors (e.g., connection refused, timeout)
+            print(f"Failed to check for updates from GitHub: {request_exception}")
+            self.after(0, lambda e_val=request_exception: self.update_status_label.config(
+                text=f"Update check failed: {e_val}"))
+            # self.after(0, lambda: messagebox.showinfo("Update Check", "Could not check for updates. Please check your internet connection or GitHub repository details."))
         except json.JSONDecodeError:
-            self.logger.error("Failed to decode update information from GitHub API. Response was not valid JSON.")
-            self.after(0, lambda: messagebox.showerror("Update Check Failed",
-                                                       "Failed to decode update information from GitHub. The response was not valid."))
-        except Exception as general_exception:
-            self.logger.critical(f"An unexpected error occurred during GitHub update check: {general_exception}",
-                                 exc_info=True)
-            self.after(0, lambda: messagebox.showerror("Update Check Failed",
-                                                       f"An unexpected error occurred during update check: {general_exception}"))
-        finally:
-            self.last_update_check_time = datetime.now()
-            self.logger.info(f"Last update check time updated to {self.last_update_check_time}")
+            # Handle cases where the response is not valid JSON
+            print("Failed to decode update information from GitHub API.")
+            self.after(0, lambda: self.update_status_label.config(text="Update check failed (invalid data)."))
+            # self.after(0, lambda: messagebox.showinfo("Update Check", "Error reading update information from GitHub."))
+        except Exception as general_exception:  # Renamed 'e' to 'general_exception'
+            # Catch any other unexpected errors during the update check
+            print(f"An unexpected error occurred during GitHub update check: {general_exception}")
+            self.after(0, lambda e_val=general_exception: self.update_status_label.config(
+                text=f"Update check failed unexpectedly: {e_val}"))
+            # self.after(0, lambda: messagebox.showinfo("Update Check", f"An unexpected error occurred: {e}"))
 
     def _is_newer_version(self, latest_version):
         """
         Compares the current application version with the latest version available online.
-        Versions are expected in 'X.Y.Z' (semantic versioning) format.
+        Versions are expected in 'X.Y.Z' format.
         """
-        try:
-            current_app_version = [int(x) for x in APP_VERSION.split('.')]
-            latest_online_version = [int(x) for x in latest_version.split('.')]
+        current_parts = list(map(int, APP_VERSION.split('.')))
+        latest_parts = list(map(int, latest_version.split('.')))
 
-            max_len = max(len(current_app_version), len(latest_online_version))
-            current_app_version.extend([0] * (max_len - len(current_app_version)))
-            latest_online_version.extend([0] * (max_len - len(latest_online_version)))
+        # Pad shorter version numbers with zeros for correct comparison (e.g., 1.0 vs 1.0.0)
+        max_len = max(len(current_parts), len(latest_parts))
+        current_parts.extend([0] * (max_len - len(current_parts)))
+        latest_parts.extend([0] * (max_len - len(latest_parts)))
 
-            return latest_online_version > current_app_version
-        except ValueError as e:
-            self.logger.error(f"Error parsing version numbers for comparison: {e}")
-            return False
+        return latest_parts > current_parts
 
-    def _prompt_and_download_update(self, latest_version, download_url, asset_filename):
+    def _prompt_download_and_install(self, latest_version, download_url, asset_filename):
         """
         Prompts the user if they want to download the update and then initiates the download.
+        After download, it informs the user about manual installation.
         """
         if messagebox.askyesno(
                 "Update Available",
                 f"A new version ({latest_version}) of Mathenge's Real Estate Management System is available! "
                 f"You are currently using version {APP_VERSION}.\n\n"
-                "Would you like to download the update now?"
+                "Would you like to download the update now? The application will then prompt you to install it manually."
         ):
-            self.logger.info(f"User accepted update to version {latest_version}. Initiating download.")
-            threading.Thread(target=self._download_update, args=(download_url, asset_filename, latest_version),
-                             daemon=True).start()
-        else:
-            self.logger.info("User declined the update.")
-            messagebox.showinfo("Update Declined",
-                                "You declined to download the update. You can check for updates later via the Help menu.")
+            # Start download in a separate thread to keep UI responsive
+            self.update_status_label.config(text="Initiating download...")
+            threading.Thread(target=self._download_update, args=(download_url, asset_filename), daemon=True).start()
+            # No need for an extra info box here, as status label will update.
+            # messagebox.showinfo("Downloading Update", "Downloading update in the background. You will be notified when it's ready to install.")
 
-    def _download_update(self, url, filename, latest_version):
+    def _download_update(self, url, filename):
         """
         Downloads the update file to a temporary directory.
         """
+        # Create a dedicated directory for updates in the user's Downloads folder
         download_dir = os.path.join(os.path.expanduser("~"), "Downloads", "Mathenge_App_Updates")
         os.makedirs(download_dir, exist_ok=True)
         temp_filepath = os.path.join(download_dir, filename)
 
         try:
-            # Use a messagebox to indicate download started
-            self.after(0, lambda: messagebox.showinfo("Downloading Update",
-                                                      f"Downloading {filename} in the background. You will be notified when it's complete."))
-            self.logger.info(f"Starting download of {filename} from {url} to {temp_filepath}")
+            self.after(0, lambda: self.update_status_label.config(text=f"Downloading {filename}..."))
 
             with requests.get(url, stream=True, timeout=30) as r:
-                r.raise_for_status()
-                # Progress is not shown in a pop-up, but the download occurs.
+                r.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
+                total_size = int(r.headers.get('content-length', 0))
+                downloaded_size = 0
+
                 with open(temp_filepath, 'wb') as f:
                     for chunk in r.iter_content(chunk_size=8192):
-                        if chunk:
+                        if chunk:  # filter out keep-alive new chunks
                             f.write(chunk)
+                            downloaded_size += len(chunk)
+                            # Update progress (optional, could implement a ttk.Progressbar)
+                            # progress_percent = (downloaded_size / total_size) * 100 if total_size else 0
+                            # self.after(0, lambda: self.update_status_label.config(text=f"Downloading {filename} ({progress_percent:.1f}%)..."))
 
-            self.logger.info(f"Download of {filename} completed successfully.")
+            self.after(0, lambda: self.update_status_label.config(text="Download complete!"))
             # Inform the user about the downloaded file and how to install it
             self.after(0, lambda: messagebox.showinfo(
                 "Update Downloaded",
-                f"A new version ({latest_version}) has been downloaded to:\n\n{temp_filepath}\n\n"
+                f"Version {filename} has been successfully downloaded to:\n\n{temp_filepath}\n\n"
                 "Please close the application and run this downloaded file to complete the update process."
             ))
 
         except requests.exceptions.RequestException as e:
-            self.logger.error(f"Failed to download update {filename}: {e}")
             self.after(0, lambda: messagebox.showerror("Download Error", f"Failed to download update: {e}"))
+            self.after(0, lambda: self.update_status_label.config(text="Download failed."))
         except Exception as e:
-            self.logger.critical(f"An unexpected error occurred during download of {filename}: {e}", exc_info=True)
             self.after(0, lambda: messagebox.showerror("Error", f"An unexpected error occurred during download: {e}"))
+            self.after(0, lambda: self.update_status_label.config(text="Download failed."))
 
     def show_login_page(self):
         """Displays the login window."""
@@ -856,8 +846,6 @@ class RealEstateApp(tk.Tk):
             self._create_main_frames()
             self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_change)
             self._on_tab_change(None)  # Populate initial tab data
-            # NEW: Check for updates right after successful login
-            self.after(1000, self.check_for_updates)  # Check for updates 1 second after login
         else:
             self.destroy()  # Exit application if login fails or is cancelled
 
@@ -1055,7 +1043,7 @@ class RealEstateApp(tk.Tk):
                                state='normal' if self.user_type in ['admin', 'property_manager',
                                                                     'sales_agent'] else 'disabled')  # Sales Agent might view properties, but filtered
         sales_menu.add_command(label="Track Payments",
-                               command=lambda: self.sales_section._open_track_payments_view(),
+                               command=lambda: self._go_to_sales_tab_and_action("track_payments"),
                                state='normal' if self.user_type in ['admin', 'sales_agent',
                                                                     'accountant'] else 'disabled')
         sales_menu.add_command(label="Sold Properties Records",
@@ -1122,15 +1110,15 @@ class RealEstateApp(tk.Tk):
     def _open_admin_Users_panel(self):
         # Open the AdminManageusersPanel window
         AdminManageUsersPanel(self, self.db_manager, self.user_id, parent_icon_loader=self._load_icon)
-
+    
     def _open_admin_menu(self):
-
+    
         MainMenuForm(self, self.db_manager, self.user_id, parent_icon_loader=self._load_icon)
 
     def _open_client_management_form(self):
         """
         Opens the ClientForm window for client management.
-        """
+        """ 
         ClientForm(self, self.db_manager, self.user_id, parent_icon_loader=self._load_icon)
 
     def _open_system_settings(self):  # NEW METHOD
@@ -1194,3 +1182,4 @@ class RealEstateApp(tk.Tk):
 if __name__ == "__main__":
     app = RealEstateApp()
     app.mainloop()
+
