@@ -643,7 +643,7 @@ class subdividelandForm(tk.Toplevel):
         if confirmation:
             try:
                 # Retrieve the lot's size and its parent block's ID before rejection
-                lot_data = self.db_manager.get_proposed_lot_details(self.selected_lot_id)
+                lot_data = self.db_manager.get_lot_details_for_rejection(self.selected_lot_id)
                 if lot_data:
                     parent_block_id = lot_data['parent_block_id']
                     rejected_size = lot_data['size']

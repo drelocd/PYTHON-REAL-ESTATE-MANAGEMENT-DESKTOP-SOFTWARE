@@ -25,6 +25,7 @@ from forms.property_forms import AddPropertyForm, SellPropertyLandingForm, Track
     ViewAllPropertiesForm, EditPropertyForm, SalesReportsForm
 from forms.survey_forms import AddSurveyJobForm, PaymentSurveyJobsFrame, TrackSurveyJobsFrame, SurveyReportsForm
 from forms.signup_form import SignupForm
+from forms.dashboard_form import DashboardForm
 from forms.client_form import ClientForm
 from forms.system_settings_form import SystemSettingsForm  # NEW
 from forms.activity_log_viewer_form import ActivityLogViewerForm
@@ -195,119 +196,15 @@ class SalesSectionView(ttk.Frame):
                 col = 0
                 row += 1
 
-        self.system_overview_frame = ttk.LabelFrame(self, text="System Overview", padding="10")
-        self.system_overview_frame.pack(pady=10, padx=20, fill="both", expand=True)
-
-        self.stats_frame = ttk.Frame(self.system_overview_frame)
-        self.stats_frame.pack(side="top", fill="x", pady=(5, 10))
-
-        self.lbl_properties_sold = ttk.Label(self.stats_frame, text="Properties Sold: N/A", font=("Arial", 12, "bold"))
-        self.lbl_properties_sold.pack(side="left", padx=10)
-
-        self.lbl_total_properties = ttk.Label(self.stats_frame, text="Total Properties: N/A",
-                                              font=("Arial", 12, "bold"))
-        self.lbl_total_properties.pack(side="left", padx=10)
-
-        self.lbl_pending_payments = ttk.Label(self.stats_frame, text="Pending Sales Payments: N/A",
-                                              font=("Arial", 12, "bold"))
-        self.lbl_pending_payments.pack(side="left", padx=10)
-
-        self.lbl_total_clients = ttk.Label(self.stats_frame, text="Total Clients: N/A", font=("Arial", 12, "bold"))
-        self.lbl_total_clients.pack(side="left", padx=10)
-
-        self.lbl_current_date = ttk.Label(self.stats_frame, text=f"Date: {datetime.now().strftime('%Y-%m-%d')}",
-                                          font=("Arial", 10))
-        self.lbl_current_date.pack(side="right", padx=10)
-
-        self.charts_frame = ttk.Frame(self.system_overview_frame)
-        self.charts_frame.pack(side="bottom", fill="both", expand=True)
+        
 
     def populate_system_overview(self):
         """
         Fetches data from the database and updates the System Overview dashboard
         with key metrics and charts for sales.
         """
-        for widget in self.charts_frame.winfo_children():
-            widget.destroy()
-
-        num_properties_sold = 0
-        num_properties_available = 0
-        num_total_properties = 0
-        total_pending_sales_payments = 0.0
-        total_clients = 0
-
-        display_properties_sold = "N/A"
-        display_total_properties = "N/A"
-        display_pending_sales_payments_str = "N/A"
-        display_total_clients = "N/A"
-
-        try:
-            properties_sold_data = self.db_manager.get_all_properties(status='Sold')
-            properties_available_data = self.db_manager.get_all_properties(status='Available')
-
-            num_properties_sold = len(properties_sold_data) if properties_sold_data else 0
-            num_properties_available = len(properties_available_data) if properties_available_data else 0
-            num_total_properties = num_properties_sold + num_properties_available
-
-            total_pending_sales_payments = self.db_manager.get_total_pending_sales_payments()
-
-            total_clients = self.db_manager.get_total_clients()
-
-            display_properties_sold = str(num_properties_sold)
-            display_total_properties = str(num_total_properties)
-            display_pending_sales_payments_str = f"KES {total_pending_sales_payments:,.2f}"
-            display_total_clients = str(total_clients)
-
-        except Exception as e:
-            messagebox.showerror("Database Error", f"Failed to retrieve sales overview data: {e}")
-
-        self.lbl_properties_sold.config(text=f"Properties Sold: {display_properties_sold}")
-        self.lbl_total_properties.config(text=f"Total Properties: {display_total_properties}")
-        self.lbl_pending_payments.config(text=f"Pending Sales Payments: {display_pending_sales_payments_str}")
-        self.lbl_total_clients.config(text=f"Total Clients: {display_total_clients}")
-        self.lbl_current_date.config(text=f"Date: {datetime.now().strftime('%Y-%m-%d')}")
-
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
-        fig.patch.set_facecolor('lightgray')
-
-        labels = ['Sold', 'Available']
-        sizes = [num_properties_sold, num_properties_available]
-        colors = ['#4CAF50', '#FFC107']
-
-        if sum(sizes) > 0:
-            ax1.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90,
-                    wedgeprops={'edgecolor': 'black'})
-        else:
-            ax1.text(0.5, 0.5, 'No Property Data', horizontalalignment='center',
-                     verticalalignment='center', transform=ax1.transAxes, fontsize=12)
-        ax1.set_title('Property Status Overview')
-        ax1.axis('equal')
-
-        if isinstance(total_pending_sales_payments, (int, float)):
-            payment_status_data = [num_properties_sold, total_pending_sales_payments]
-            payment_labels = ['Sold Count', 'Pending Payments (KES)']
-
-            display_pending_payments = total_pending_sales_payments
-            if total_pending_sales_payments > 100000:
-                display_pending_payments = total_pending_sales_payments / 100000
-
-            ax2.bar(payment_labels, [num_properties_sold, display_pending_payments], color=['skyblue', 'salmon'])
-            ax2.set_title('Sales vs. Pending Payments')
-            ax2.set_ylabel('Count / Value')
-            for i, v in enumerate([num_properties_sold, display_pending_payments]):
-                ax2.text(i, v + 0.1, f'{v:,.0f}', color='black', ha='center', va='bottom')
-        else:
-            ax2.text(0.5, 0.5, 'No Detailed Payment Data', horizontalalignment='center',
-                     verticalalignment='center', transform=ax2.transAxes, fontsize=12)
-
-        plt.tight_layout()
-
-        canvas = FigureCanvasTkAgg(fig, master=self.charts_frame)
-        canvas_widget = canvas.get_tk_widget()
-        canvas_widget.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-
-        # <--- FIX: Close the Matplotlib figure after embedding it in Tkinter
-        plt.close(fig)
+        print("Refreshing UI...")
+        
 
     # --- Methods called by buttons within SalesSection ---
     def _open_add_property_form(self):
@@ -442,45 +339,11 @@ class SurveySectionView(ttk.Frame):
                 col = 0
                 row += 1
 
-        self.survey_overview_frame = ttk.LabelFrame(self, text="Survey Overview", padding="10")
-        self.survey_overview_frame.pack(pady=10, padx=20, fill="both", expand=True)
-
-        self.lbl_total_jobs = ttk.Label(self.survey_overview_frame, text="Total Jobs: N/A", font=("Arial", 12, "bold"))
-        self.lbl_total_jobs.pack(side="left", padx=10)
-
-        self.lbl_completed_jobs = ttk.Label(self.survey_overview_frame, text="Completed Jobs: N/A",
-                                            font=("Arial", 12, "bold"))
-        self.lbl_completed_jobs.pack(side="left", padx=10)
-
-        self.lbl_upcoming_deadlines = ttk.Label(self.survey_overview_frame, text="Upcoming Deadlines (30 days): N/A",
-                                                font=("Arial", 12, "bold"))
-        self.lbl_upcoming_deadlines.pack(side="left", padx=10)
-
-        self.lbl_pending_survey_payments = ttk.Label(self.survey_overview_frame, text="Pending Survey Payments: N/A",
-                                                     font=("Arial", 12, "bold"))
-        self.lbl_pending_survey_payments.pack(side="left", padx=10)
+        
 
     def populate_survey_overview(self):
 
-        # ... (Your existing populate_survey_overview method) ...
-        try:
-            total_jobs = self.db_manager.get_total_survey_jobs()
-            completed_jobs = self.db_manager.get_completed_survey_jobs_count()
-            upcoming_deadlines_count = self.db_manager.get_upcoming_survey_deadlines_count()
-            total_pending_survey_payments = self.db_manager.get_total_pending_survey_payments()
-
-            self.lbl_total_jobs.config(text=f"Total Jobs: {total_jobs}")
-            self.lbl_completed_jobs.config(text=f"Completed Jobs: {completed_jobs}")
-            self.lbl_upcoming_deadlines.config(text=f"Upcoming Deadlines (30 days): {upcoming_deadlines_count}")
-            self.lbl_pending_survey_payments.config(
-                text=f"Pending Survey Payments: KES {total_pending_survey_payments:,.2f}")
-
-        except Exception as e:
-            messagebox.showerror("Database Error", f"Failed to retrieve survey overview data: {e}")
-            self.lbl_total_jobs.config(text="Total Jobs: N/A")
-            self.lbl_completed_jobs.config(text="Completed Jobs: N/A")
-            self.lbl_upcoming_deadlines.config(text="Upcoming Deadlines: N/A")
-            self.lbl_pending_survey_payments.config(text="Pending Survey Payments: N/A")
+        print("Refreshing UI...")
 
     def _open_add_survey_job_form(self):
         AddSurveyJobForm(self.master, self.db_manager, self.populate_survey_overview,
@@ -875,8 +738,9 @@ class RealEstateApp(tk.Tk):
     def _on_tab_change(self, event):
         selected_tab_id = self.notebook.select()
         selected_tab_widget = self.notebook.nametowidget(selected_tab_id)
-
-        if isinstance(selected_tab_widget, SalesSectionView):
+        if isinstance(selected_tab_widget, DashboardForm):
+            selected_tab_widget.populate_dashboard()
+        elif isinstance(selected_tab_widget, SalesSectionView):
             selected_tab_widget.populate_system_overview()
         elif isinstance(selected_tab_widget, SurveySectionView):
             selected_tab_widget.populate_survey_overview()
@@ -1168,6 +1032,10 @@ class RealEstateApp(tk.Tk):
         self.notebook.pack(expand=True, fill="both", padx=10, pady=10)
 
         # Pass user_type to section views
+        self.dashboard_section = DashboardForm(self.notebook, self.db_manager, self._load_icon,
+                                               user_type=self.user_type)
+        self.notebook.add(self.dashboard_section, text="   Dashboard   ")
+
         self.sales_section = SalesSectionView(self.notebook, self.db_manager, self._load_icon, user_id=self.user_id,
                                               user_type=self.user_type)
         self.notebook.add(self.sales_section, text="   Land Sales & Purchases   ")

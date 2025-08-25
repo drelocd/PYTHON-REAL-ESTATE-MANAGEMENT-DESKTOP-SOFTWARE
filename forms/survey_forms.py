@@ -466,8 +466,8 @@ class AddSurveyJobForm(tk.Toplevel):
             story = []
 
             # Company Header
-            story.append(Paragraph("<b>Mathenge's Real Estate Management System</b>", styles['TitleStyle']))
-            story.append(Paragraph("Receipt for New Survey Job Registration", styles['h3']))
+            story.append(Paragraph("<b>NDIRITU MATHENGE & ASSOCIATES</b>", styles['TitleStyle']))
+            story.append(Paragraph("Receipt for New Job Registration", styles['h3']))
             story.append(Spacer(1, 0.2 * inch))
 
             # Receipt Details

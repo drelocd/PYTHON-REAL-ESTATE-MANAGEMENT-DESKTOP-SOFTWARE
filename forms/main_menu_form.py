@@ -248,8 +248,6 @@ class MainMenuForm(tk.Toplevel):
         btn_logs.grid(row=2, column=0, padx=5, pady=5, ipadx=button_padding, ipady=button_padding, sticky=button_sticky)
 
         # Button 6: (payment)
-        payment_icon = Image.new('RGB', (24, 24), color='gray')
-        self.payment_icon = ImageTk.PhotoImage(payment_icon)
         
         btn_payment_plans = ttk.Button(
             button_container,

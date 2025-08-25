@@ -301,15 +301,36 @@ class AddPropertyForm(tk.Toplevel):
         try:
             # Assumes db_manager.get_all_clients() returns a list of dictionaries
             # like [{'name': 'Client A', ...}, {'name': 'Client B', ...}]
-            clients_data = self.db_manager.get_all_clients()
+            self.all_clients_data = self.db_manager.get_all_clients()
+            self.all_clients_data.sort(key=lambda x: x['name'])
             
             # Extract only the 'name' from each dictionary
-            client_names = [client['name'] for client in clients_data]
+            client_names = [client['name'] for client in self.all_clients_data]
             
-            return sorted(client_names)
+            return client_names
         except Exception as e:
             messagebox.showerror("Database Error", f"Failed to fetch client list: {e}")
             return []
+
+    def _on_client_select(self, event):
+        selected_name = self.client_name_var.get()
+        selected_client = next(
+            (client for client in self.all_clients_data if client['name'] == selected_name),
+        )
+        if selected_client:
+            self.entry_contact.delete(0, tk.END)
+            self.entry_contact.insert(0, selected_client['contact_info'])
+
+    def _on_contact_edit(self, event):
+        current_name = self.client_name_var.get()
+        current_contact = self.entry_contact.get()
+        matching_client = next(
+            (client for client in self.all_clients_data if client['name'] == current_name),
+            None
+        )
+        if matching_client and matching_client['contact_info'] != current_contact:
+            self.client_name_var.set('')  # Clear client name if contact info is edited
+
 
     def _update_client_list(self, event=None):
         """Updates the Combobox dropdown based on the user's input."""
@@ -431,6 +452,8 @@ class AddPropertyForm(tk.Toplevel):
 
         main_frame.columnconfigure(0, weight=0)
         main_frame.columnconfigure(1, weight=1)
+        self.all_clients_data = []
+        self.all_clients = self._fetch_clients()
 
         row = 0
 
@@ -447,11 +470,13 @@ class AddPropertyForm(tk.Toplevel):
         self.client_combobox.grid(row=row, column=1, sticky="ew", pady=2, padx=5)
         self.client_combobox['values'] = self.all_clients  # Populate with initial list
         self.client_combobox.bind('<KeyRelease>', self._update_client_list)  # Bind for real-time filtering
+        self.client_combobox.bind('<<ComboboxSelected>>', self._on_client_select)
         row += 1
         
         ttk.Label(main_frame, text="Contact Info:").grid(row=row, column=0, sticky="w", pady=2, padx=5)
         self.entry_contact = ttk.Entry(main_frame, width=40)
         self.entry_contact.grid(row=row, column=1, sticky="ew", pady=2, padx=5)
+        self.entry_contact.bind('<KeyRelease>', self._on_contact_edit)
         row += 1
 
         ttk.Label(main_frame, text="Title Deed Number:").grid(row=row, column=0, sticky="w", pady=2, padx=5)
@@ -868,7 +893,7 @@ class AddPropertyForTransferForm(tk.Toplevel):
         add_btn.pack(side="left", padx=5)
         add_btn.image = self._add_property_icon
 
-        cancel_btn = ttk.Button(button_frame, text="Cancel", image=self._cancel_add_prop_icon, compound=tk.LEFT, command=self.destroy)
+        cancel_btn = ttk.Button(button_frame, text="Cancel", image=self._cancel_add_prop_icon, compound=tk.LEFT, command=self.cancel)
         cancel_btn.pack(side="left", padx=5)
         cancel_btn.image = self._cancel_add_prop_icon
 
@@ -920,6 +945,9 @@ class AddPropertyForTransferForm(tk.Toplevel):
                 return None
 
         return ",".join(saved_paths)
+
+    def cancel(self):
+        self.destroy()
 
     def _add_property(self):
         # Retrieve all data from the form fields
@@ -1569,7 +1597,723 @@ class SellPropertyLandingForm(tk.Toplevel):
             messagebox.showerror("Error", f"An unexpected error occurred: {e}")
             self._show_landing_form()
             
+try:
+    from ctypes import windll, byref, sizeof, c_int
+    has_ctypes = True
+except (ImportError, OSError):
+    has_ctypes = False
 
+class CashPaymentWindow(tk.Toplevel):
+    def __init__(self, master, db_manager, user_id, selected_property, buyer_name, buyer_contact, payment_mode, refresh_callback, icon_loader):
+        super().__init__(master)
+        self.db_manager = db_manager
+        self.user_id = user_id
+        self.selected_property = selected_property
+        self.buyer_name = buyer_name
+        self.buyer_contact = buyer_contact
+        self.payment_mode = payment_mode
+        self.refresh_callback = refresh_callback
+        self.icon_loader = icon_loader
+        self.grab_set()
+        self.transient(master)
+        
+        # New attributes for custom title bar
+        self._start_x = 0
+        self._start_y = 0
+
+        self.price = self.selected_property['price']
+        self._amount_paid_var = tk.StringVar(value=f"{self.price:,.2f}")
+        self._discount_var = tk.StringVar(value="0.00")
+        self._balance_var = tk.StringVar(value="0.00")
+
+        # Call the new customization methods
+        self._set_window_properties(400, 450, "cash.png")
+        self._customize_title_bar()
+        
+        # Note: _create_widgets will now be adjusted to not have its own header frame
+        # as it will be handled by _customize_title_bar
+        self._create_widgets()
+        
+        # You'll need to add _update_receipt_button_state() here if you have it
+        # self._update_receipt_button_state()
+
+    def _set_window_properties(self, width, height, icon_name):
+        """Sets the window size, position, and icon based on the master window."""
+        self.geometry(f"{width}x{height}")
+        self.update_idletasks()
+        master_x = self.master.winfo_x()
+        master_y = self.master.winfo_y()
+        master_width = self.master.winfo_width()
+        master_height = self.master.winfo_height()
+        x = master_x + (master_width // 2) - (width // 2)
+        y = master_y + (master_height // 2) - (height // 2)
+        self.geometry(f"+{x}+{y}")
+        self.title("Cash Payment")
+        if self.icon_loader and icon_name:
+            try:
+                icon_image = self.icon_loader(icon_name, size=(20, 20))
+                self.iconphoto(False, icon_image)
+            except Exception as e:
+                print(f"Failed to set icon for {self.title()}: {e}")
+
+    # Copy these methods directly from your SellPropertyFormLot class
+    def _customize_title_bar(self):
+        """Customizes the title bar appearance."""
+        if has_ctypes and os.name == 'nt':
+            try:
+                # DWMWA_CAPTION_COLOR = 35, DWMWA_TEXT_COLOR = 36
+                DWMWA_CAPTION_COLOR = 35
+                DWMWA_TEXT_COLOR = 36
+                
+                hwnd = windll.user32.GetParent(self.winfo_id())
+
+                # Set title bar color to dark blue (RGB: 0, 51, 102 -> BGR: 102, 51, 0)
+                color = c_int(0x00663300)
+                windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd,
+                    DWMWA_CAPTION_COLOR,
+                    byref(color),
+                    sizeof(color)
+                )
+
+                # Set title text color to white (RGB: 255, 255, 255 -> BGR: 255, 255, 255)
+                text_color = c_int(0x00FFFFFF)
+                windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd,
+                    DWMWA_TEXT_COLOR,
+                    byref(text_color),
+                    sizeof(text_color)
+                )
+            except Exception as e:
+                print(f"Could not customize title bar: {e}")
+                self._create_custom_title_bar()
+        else:
+            self._create_custom_title_bar()
+
+    def _create_custom_title_bar(self):
+        """Creates a custom title bar when native customization isn't available."""
+        self.overrideredirect(True)
+        title_bar = tk.Frame(self, bg='#003366', relief='raised', bd=0, height=30)
+        title_bar.pack(fill=tk.X)
+        title_label = tk.Label(
+            title_bar,
+            text=self.title(),
+            bg='#003366',
+            fg='white',
+            font=('Helvetica', 10)
+        )
+        title_label.pack(side=tk.LEFT, padx=10)
+        close_button = tk.Button(
+            title_bar,
+            text='×',
+            bg='#003366',
+            fg='white',
+            bd=0,
+            activebackground='red',
+            command=self.destroy,
+            font=('Helvetica', 12, 'bold')
+        )
+        close_button.pack(side=tk.RIGHT, padx=5)
+        title_bar.bind('<Button-1>', self._save_drag_start_pos)
+        title_bar.bind('<B1-Motion>', self._move_window)
+        title_label.bind('<Button-1>', self._save_drag_start_pos)
+        title_label.bind('<B1-Motion>', self._move_window)
+
+    def _save_drag_start_pos(self, event):
+        """Saves the initial position for window dragging."""
+        self._start_x = event.x
+        self._start_y = event.y
+
+    def _move_window(self, event):
+        """Handles window movement for custom title bar."""
+        x = self.winfo_pointerx() - self._start_x
+        y = self.winfo_pointery() - self._start_y
+        self.geometry(f'+{x}+{y}')
+
+    def _create_widgets(self):
+        # Remove the old header_frame and its contents, as the title bar is now a custom one
+        # The new title bar is created and packed in _customize_title_bar()
+        
+        main_frame = ttk.Frame(self, padding=10)
+        main_frame.pack(fill="both", expand=True)
+        
+        # Your existing widget creation code goes here...
+        # ... (Buyer Info, Property Details, Payment Details, and Buttons)
+        
+        buyer_info_frame = ttk.LabelFrame(main_frame, text="Buyer Details", padding=5)
+        buyer_info_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(buyer_info_frame, text="Name:").grid(row=0, column=0, sticky="w", pady=2, padx=5)
+        ttk.Label(buyer_info_frame, text=self.buyer_name, font=("Arial", 10, "bold")).grid(row=0, column=1, sticky="w", pady=2, padx=5)
+        ttk.Label(buyer_info_frame, text="Contact:").grid(row=1, column=0, sticky="w", pady=2, padx=5)
+        ttk.Label(buyer_info_frame, text=self.buyer_contact, font=("Arial", 10, "bold")).grid(row=1, column=1, sticky="w", pady=2, padx=5)
+        prop_info_frame = ttk.LabelFrame(main_frame, text="Property Details", padding=5)
+        prop_info_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(prop_info_frame, text="Property Title Deed:").grid(row=0, column=0, sticky="w", pady=2, padx=5)
+        ttk.Label(prop_info_frame, text=self.selected_property['title_deed_number'], font=("Arial", 10, "bold")).grid(row=0, column=1, sticky="w", pady=2, padx=5)
+        ttk.Label(prop_info_frame, text="Property Price (KES):").grid(row=1, column=0, sticky="w", pady=2, padx=5)
+        ttk.Label(prop_info_frame, text=f"{self.price:,.2f}", font=("Arial", 10, "bold")).grid(row=1, column=1, sticky="w", pady=2, padx=5)
+        payment_frame = ttk.LabelFrame(main_frame, text="Payment Details", padding=5)
+        payment_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(payment_frame, text="Amount Paid (KES):").grid(row=0, column=0, sticky="w", pady=5, padx=5)
+        self.entry_amount_paid = ttk.Entry(payment_frame, textvariable=self._amount_paid_var)
+        self.entry_amount_paid.grid(row=0, column=1, sticky="ew", pady=5, padx=5)
+        self.entry_amount_paid.bind("<Double-Button-1>", lambda event: "break")
+        ttk.Label(payment_frame, text="Discount (KES):").grid(row=1, column=0, sticky="w", pady=5, padx=5)
+        self.entry_discount = ttk.Entry(payment_frame, textvariable=self._discount_var)
+        self.entry_discount.grid(row=1, column=1, sticky="ew", pady=5, padx=5)
+        self.entry_discount.bind("<Double-Button-1>", lambda event: "break")
+        button_frame = ttk.Frame(main_frame, padding=5)
+        button_frame.pack(fill="x", pady=10)
+        ttk.Button(button_frame, text="Sell", command=self._sell_property, style='Green.TButton').pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=self.cancel, style='Red.TButton').pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
+
+    
+    def _sell_property(self):
+        if not self.selected_property:
+            messagebox.showwarning("Validation Error", "Please select a property to sell.")
+            return
+
+        buyer_name = self.buyer_name.strip()
+        buyer_contact = self.buyer_contact.strip()
+        payment_mode = self.payment_mode
+        amount_paid_str = self.entry_amount_paid.get().strip()
+        discount_str = self.entry_discount.get().strip()
+        client_status = 'active'
+        added_by_user_id = self.user_id
+
+        if not buyer_name or not buyer_contact or not amount_paid_str:
+            messagebox.showerror("Input Error", "Buyer Name, Contact Info, and Amount Paid are required.")
+            return
+
+        try:
+            amount_paid_input = float(amount_paid_str) # Amount the user intends to pay
+            discount = float(discount_str) if discount_str else 0.0
+            if amount_paid_input < 0 or discount < 0:
+                messagebox.showerror("Input Error", "Amount Paid and Discount cannot be negative.")
+                return
+        except ValueError:
+            messagebox.showerror("Input Error", "Invalid numeric input for Amount Paid or Discount.")
+            return
+
+        try:
+            original_price = self.selected_property['price']
+            
+            # Calculate the price after discount
+            net_price_after_discount = original_price - discount
+            
+            # --- MODIFICATION START ---
+            # Error if discount makes net price negative
+            if net_price_after_discount < 0:
+                messagebox.showerror(
+                    "Input Error", 
+                    f"Discount (KES {discount:,.2f}) cannot make the property's net price negative. "
+                    f"Original Price: KES {original_price:,.2f}. Please adjust the discount."
+                )
+                return # Stop transaction
+
+            # Check for overpayment and refuse to proceed
+            if amount_paid_input > net_price_after_discount:
+                messagebox.showerror(
+                    "Input Error", 
+                    f"Amount paid (KES {amount_paid_input:,.2f}) cannot exceed the property's net price "
+                    f"after discount (KES {net_price_after_discount:,.2f}). Please adjust the amount paid."
+                )
+                return # Stop transaction
+            
+            # If we reach here, input is valid: amount_paid_input is not negative,
+            # discount is not negative, net_price_after_discount is not negative,
+            # and amount_paid_input does not exceed net_price_after_discount.
+            
+            amount_paid_to_record = amount_paid_input # Now, it's safe to record the input amount
+            balance = net_price_after_discount - amount_paid_to_record
+            # --- MODIFICATION END ---
+
+        except Exception as e:
+            messagebox.showerror("Calculation Error", f"Error calculating sale details: {e}")
+            return
+
+        client_data = self.db_manager.get_client_by_contact_info(buyer_contact)
+        if client_data:
+            client_id = client_data['client_id']
+            if client_data['name'] != buyer_name:
+                self.db_manager.update_client(client_id, name=buyer_name)
+        else:
+            client_id = self.db_manager.add_client(buyer_name, buyer_contact,client_status, added_by_user_id)
+            if not client_id:
+                messagebox.showerror("Database Error", "Failed to add new client.")
+                return
+
+
+        transaction_id = self.db_manager.add_transaction(
+            self.selected_property['property_id'],
+            client_id,
+            payment_mode,
+            amount_paid_to_record, # Use the validated and accepted amount here
+            discount,
+            balance,                 # This balance is now calculated from valid inputs
+            None
+        )
+
+        if transaction_id:
+            # Set property status to 'Sold' if the transaction is successful
+            self.db_manager.update_property(self.selected_property['property_id'], status='Sold')
+
+            if messagebox.askyesno("Generate Receipt?", "Transaction recorded. Do you want to generate a receipt now?"):
+                self._generate_receipt_from_id(transaction_id)
+
+            messagebox.showinfo("Success", "Property sold and transaction recorded successfully!")
+            self.refresh_callback() # Call the callback to refresh the main view
+            self.master._clear_property_details_ui() # Clear the property details in the main UI
+            self.destroy() # Close the Sell Property form
+        else:
+            messagebox.showerror("Error", "Failed to record transaction.")
+
+    def _generate_receipt_from_id(self, transaction_id, save_only=False):
+        """
+        Generates a PDF receipt and optionally saves it.
+        If transaction_id is provided, it's assumed this is called after a successful sale.
+        If save_only is True, it will save but not attempt to initiate a print dialog.
+
+        Args:
+            transaction_id (str, optional): The ID of the transaction. Defaults to None.
+            save_only (bool, optional): If True, only saves the receipt, does not
+                                        prompt for printing. Defaults to False.
+
+        Returns:
+            str or None: The relative path to the saved PDF file if successful,
+                         otherwise None.
+        """
+        # 1. Input Validation and Data Extraction
+        # Check if essential fields are filled
+        if not transaction_id:
+            messagebox.showerror("Receipt Error", "Transaction ID is required to generate a receipt.")
+            return None
+
+        #fetch all data from the database using transaction_id
+        transaction_data = self.db_manager.get_transaction(transaction_id)
+        if not transaction_data:
+            messagebox.showerror("Receipt Error", "Transaction data not found.")
+            return None
+        
+        property_data = self.db_manager.get_property(transaction_data.get('property_id'))
+        client_data = self.db_manager.get_client(transaction_data.get('client_id'))
+
+        
+        try:
+            prop_title_deed = property_data.get('title_deed_number', 'N/A')
+            prop_location = property_data.get('location', 'N/A')
+            prop_size = property_data.get('size', 'N/A')
+            prop_price = float(property_data.get('price', 0.0))
+            buyer_name = client_data.get('name', 'N/A')
+            buyer_contact = client_data.get('contact_info', 'N/A')
+            payment_mode = transaction_data.get('payment_mode', 'N/A')
+            amount_paid = float(transaction_data.get('amount_paid', 0.0))
+            discount = float(transaction_data.get('discount', 0.0))
+            balance = float(transaction_data.get('balance', 0.0))
+            transaction_date = transaction_data.get('date', datetime.now().strftime("%Y-%m-%d"))
+        except (KeyError, ValueError) as e:
+            messagebox.showerror("Receipt Error", f"Invalid data format: {e}")
+            return None
+
+
+        # Calculate net price
+        net_price = prop_price - discount
+
+        # 2. PDF Document Generation using ReportLab
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        # Sanitize title deed for filename
+        safe_prop_title_deed = "".join(c for c in prop_title_deed if c.isalnum() or c in (' ', '-', '_')).replace(' ', '_')
+        receipt_filename = f"receipt_{timestamp}_{safe_prop_title_deed}.pdf"
+        receipt_full_path = os.path.join(RECEIPTS_DIR, receipt_filename)
+
+        try:
+            # Create a SimpleDocTemplate which handles page layout
+            doc = SimpleDocTemplate(receipt_full_path, pagesize=letter)
+            # Create a list to hold the document's flowables (paragraphs, spaces, etc.)
+            story = []
+
+            # Get default styles
+            styles = getSampleStyleSheet()
+            normal_style = styles['Normal']
+            h1_style = styles['h1']
+            h2_style = styles['h2']
+
+            # Add content to the story
+            # Header
+            story.append(Paragraph("<font size='16' color='#333333'><b>PROPERTY SALE RECEIPT</b></font>", h1_style))
+            story.append(Paragraph("<font size='14' color='#555555'>MATHENGE REAL ESTATE</font>", h2_style))
+            # Reduced vertical space to help fit content on one page
+            story.append(Spacer(1, 0.2 * letter[1])) # Changed from 0.4 * letter[1]
+
+            # Transaction Details
+            story.append(Paragraph(f"<b>Date:</b> {transaction_date}", normal_style))
+            story.append(Paragraph(f"<b>Transaction ID:</b> {transaction_id if transaction_id else 'N/A'}", normal_style))
+            story.append(Spacer(1, 0.15 * letter[1])) # Slightly reduced
+
+            # Buyer Details
+            story.append(Paragraph("<font size='12' color='#444444'><b>BUYER DETAILS:</b></font>", h2_style))
+            story.append(Paragraph(f"<b>Name:</b> {buyer_name}", normal_style))
+            story.append(Paragraph(f"<b>Contact:</b> {buyer_contact}", normal_style))
+            story.append(Spacer(1, 0.15 * letter[1])) # Slightly reduced
+
+            # Property Details
+            story.append(Paragraph("<font size='12' color='#444444'><b>PROPERTY DETAILS:</b></font>", h2_style))
+            story.append(Paragraph(f"<b>Title Deed:</b> {prop_title_deed}", normal_style))
+            story.append(Paragraph(f"<b>Location:</b> {prop_location}", normal_style))
+            story.append(Paragraph(f"<b>Size:</b> {prop_size}", normal_style))
+            story.append(Spacer(1, 0.15 * letter[1])) # Slightly reduced
+
+            # Financial Summary
+            story.append(Paragraph("<font size='12' color='#444444'><b>FINANCIAL SUMMARY:</b></font>", h2_style))
+            story.append(Paragraph(f"<b>Original Price:</b> KES {prop_price:,.2f}", normal_style))
+            # Using non-breaking space &nbsp; for alignment where precise control is needed
+            story.append(Paragraph(f"<b>Discount:</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; KES {discount:,.2f}", normal_style))
+            story.append(Paragraph(f"<b>Net Price:</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; KES {net_price:,.2f}", normal_style))
+            story.append(Paragraph(f"<b>Amount Paid:</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; KES {amount_paid:,.2f}", normal_style))
+            story.append(Paragraph(f"<b>Balance Due:</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; KES {balance:,.2f}", normal_style))
+            story.append(Paragraph(f"<b>Payment Mode:</b> {payment_mode}", normal_style))
+            story.append(Spacer(1, 0.2 * letter[1])) # Changed from 0.4 * letter[1]
+
+            # Footer
+            story.append(Paragraph("<center>Thank you for your business!</center>", normal_style))
+            story.append(Paragraph("<center><font size='8' color='#888888'>Generated on " + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "</font></center>", normal_style))
+
+            # Build the PDF document from the story
+            doc.build(story)
+
+            messagebox.showinfo("Receipt Generated", f"Receipt saved successfully to:\n{receipt_full_path}")
+
+            # 3. Optional Printing Prompt
+            if not save_only:
+                if messagebox.askyesno("Print Receipt", "Do you want to print this receipt now?"):
+                    try:
+                        # Placeholder for actual printing logic
+                        # Printing PDFs directly from Python is OS-dependent and often
+                        # involves calling external commands or specialized libraries.
+                        # Examples (highly platform-specific, not universally guaranteed to work):
+                        # On Windows: os.startfile(receipt_full_path, "print")
+                        # On macOS: subprocess.run(["open", "-a", "Preview", "-p", receipt_full_path])
+                        # On Linux (requires 'lp' or 'lpr'): subprocess.run(["lp", receipt_full_path])
+                        messagebox.showinfo("Print Status",
+                                            "Printing functionality is highly OS-dependent and requires specific setup.\n"
+                                            "The receipt has been saved. Please open and print it manually from:\n"
+                                            f"{receipt_full_path}")
+                    except Exception as e:
+                        messagebox.showerror("Print Error", f"Failed to initiate print job. Please print manually. Error: {e}")
+
+            # Return the relative path, useful for storing in a database or displaying
+            return os.path.relpath(receipt_full_path, DATA_DIR).replace("\\", "/")
+
+        except Exception as e:
+            messagebox.showerror("PDF Generation Error", f"An error occurred while generating or saving the receipt PDF: {e}")
+            return None
+        
+    def cancel(self):
+        self.destroy()
+
+class InstallmentPaymentWindow(tk.Toplevel):
+    def __init__(self, master, db_manager, user_id, selected_property, buyer_name, buyer_contact, payment_mode, refresh_callback, icon_loader):
+        super().__init__(master)
+        self.db_manager = db_manager
+        self.user_id = user_id
+        self.selected_property = selected_property
+        self.buyer_name = buyer_name
+        self.buyer_contact = buyer_contact
+        self.payment_mode = payment_mode
+        self.refresh_callback = refresh_callback
+        self.icon_loader = icon_loader
+        self.grab_set()
+        self.transient(master)
+
+        self._all_payment_plans = {}
+        self._required_deposit_var = tk.StringVar(value="0.00")
+        self._amount_paid_var = tk.StringVar(value="")
+        self._total_amount_paid_var = tk.StringVar(value="0.00")
+
+        self._set_window_properties(400, 450, "installment.png")
+        self._customize_title_bar()
+        self._create_widgets()
+        self._load_payment_plans()
+
+    def _set_window_properties(self, width, height, icon_name):
+        """Sets the window size, position, and icon based on the master window."""
+        self.geometry(f"{width}x{height}")
+        self.update_idletasks()
+        master_x = self.master.winfo_x()
+        master_y = self.master.winfo_y()
+        master_width = self.master.winfo_width()
+        master_height = self.master.winfo_height()
+        x = master_x + (master_width // 2) - (width // 2)
+        y = master_y + (master_height // 2) - (height // 2)
+        self.geometry(f"+{x}+{y}")
+        self.title("Instalments Payment")
+        if self.icon_loader and icon_name:
+            try:
+                icon_image = self.icon_loader(icon_name, size=(20, 20))
+                self.iconphoto(False, icon_image)
+            except Exception as e:
+                print(f"Failed to set icon for {self.title()}: {e}")
+
+    def _customize_title_bar(self):
+        """Customizes the title bar appearance."""
+        if has_ctypes and os.name == 'nt':
+            try:
+                # DWMWA_CAPTION_COLOR = 35, DWMWA_TEXT_COLOR = 36
+                DWMWA_CAPTION_COLOR = 35
+                DWMWA_TEXT_COLOR = 36
+                
+                hwnd = windll.user32.GetParent(self.winfo_id())
+
+                # Set title bar color to dark blue (RGB: 0, 51, 102 -> BGR: 102, 51, 0)
+                color = c_int(0x00663300)
+                windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd,
+                    DWMWA_CAPTION_COLOR,
+                    byref(color),
+                    sizeof(color)
+                )
+
+                # Set title text color to white (RGB: 255, 255, 255 -> BGR: 255, 255, 255)
+                text_color = c_int(0x00FFFFFF)
+                windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd,
+                    DWMWA_TEXT_COLOR,
+                    byref(text_color),
+                    sizeof(text_color)
+                )
+            except Exception as e:
+                print(f"Could not customize title bar: {e}")
+                self._create_custom_title_bar()
+        else:
+            self._create_custom_title_bar()
+
+    def _create_custom_title_bar(self):
+        """Creates a custom title bar when native customization isn't available."""
+        self.overrideredirect(True)
+        title_bar = tk.Frame(self, bg='#003366', relief='raised', bd=0, height=30)
+        title_bar.pack(fill=tk.X)
+        title_label = tk.Label(
+            title_bar,
+            text=self.title(),
+            bg='#003366',
+            fg='white',
+            font=('Helvetica', 10)
+        )
+        title_label.pack(side=tk.LEFT, padx=10)
+        close_button = tk.Button(
+            title_bar,
+            text='×',
+            bg='#003366',
+            fg='white',
+            bd=0,
+            activebackground='red',
+            command=self.destroy,
+            font=('Helvetica', 12, 'bold')
+        )
+        close_button.pack(side=tk.RIGHT, padx=5)
+        title_bar.bind('<Button-1>', self._save_drag_start_pos)
+        title_bar.bind('<B1-Motion>', self._move_window)
+        title_label.bind('<Button-1>', self._save_drag_start_pos)
+        title_label.bind('<B1-Motion>', self._move_window)
+    
+    def _save_drag_start_pos(self, event):
+        """Saves the initial position for window dragging."""
+        self._start_x = event.x
+        self._start_y = event.y
+
+    def _move_window(self, event):
+        """Handles window movement for custom title bar."""
+        x = self.winfo_pointerx() - self._start_x
+        y = self.winfo_pointery() - self._start_y
+        self.geometry(f'+{x}+{y}')
+
+    def _create_widgets(self):
+        # Header Frame with Custom Title Bar elements
+        
+        
+        main_frame = ttk.Frame(self, padding=10)
+        main_frame.pack(fill="both", expand=True)
+
+        # Buyer Information
+        buyer_info_frame = ttk.LabelFrame(main_frame, text="Buyer Details", padding=5)
+        buyer_info_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(buyer_info_frame, text="Name:").grid(row=0, column=0, sticky="w", pady=2, padx=5)
+        ttk.Label(buyer_info_frame, text=self.buyer_name, font=("Arial", 10, "bold")).grid(row=0, column=1, sticky="w", pady=2, padx=5)
+        ttk.Label(buyer_info_frame, text="Contact:").grid(row=1, column=0, sticky="w", pady=2, padx=5)
+        ttk.Label(buyer_info_frame, text=self.buyer_contact, font=("Arial", 10, "bold")).grid(row=1, column=1, sticky="w", pady=2, padx=5)
+
+        # Property Details
+        prop_info_frame = ttk.LabelFrame(main_frame, text="Property Details", padding=5)
+        prop_info_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(prop_info_frame, text="Property Title Deed:").grid(row=0, column=0, sticky="w", pady=2, padx=5)
+        ttk.Label(prop_info_frame, text=self.selected_property['title_deed_number'], font=("Arial", 10, "bold")).grid(row=0, column=1, sticky="w", pady=2, padx=5)
+        ttk.Label(prop_info_frame, text="Property Price (KES):").grid(row=1, column=0, sticky="w", pady=2, padx=5)
+        ttk.Label(prop_info_frame, text=f"{self.selected_property['price']:,.2f}", font=("Arial", 10, "bold")).grid(row=1, column=1, sticky="w", pady=2, padx=5)
+
+        # Payment details
+        payment_frame = ttk.LabelFrame(main_frame, text="Payment Details", padding=5)
+        payment_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Label(payment_frame, text="Payment Plan:").grid(row=0, column=0, sticky="w", pady=5, padx=5)
+        self.payment_plan_combobox = ttk.Combobox(payment_frame, state="readonly")
+        self.payment_plan_combobox.grid(row=0, column=1, sticky="ew", pady=5, padx=5)
+        self.payment_plan_combobox.bind("<<ComboboxSelected>>", self._on_payment_plan_select)
+        
+        ttk.Label(payment_frame, text="Required Deposit (KES):").grid(row=1, column=0, sticky="w", pady=5, padx=5)
+        ttk.Label(payment_frame, textvariable=self._required_deposit_var, font=("Arial", 10, "bold")).grid(row=1, column=1, sticky="ew", pady=5, padx=5)
+        
+        ttk.Label(payment_frame, text="Total Amount to be Paid:").grid(row=2, column=0, sticky="w", pady=5, padx=5)
+        ttk.Label(payment_frame, textvariable=self._total_amount_paid_var, font=("Arial", 10, "bold")).grid(row=2, column=1, sticky="ew", pady=5, padx=5)
+
+        ttk.Label(payment_frame, text="Initial Payment (KES):").grid(row=3, column=0, sticky="w", pady=5, padx=5)
+        self.entry_amount_paid = ttk.Entry(payment_frame, textvariable=self._amount_paid_var)
+        self.entry_amount_paid.grid(row=3, column=1, sticky="ew", pady=5, padx=5)
+
+        # Action Buttons
+        button_frame = ttk.Frame(main_frame, padding=5)
+        button_frame.pack(fill="x", pady=10)
+        
+        ttk.Button(button_frame, text="Sell", command=self._sell_property, style='Green.TButton').pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
+        
+        ttk.Button(button_frame, text="Cancel", command=self.cancel, style='Red.TButton').pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
+
+    def _load_payment_plans(self):
+        try:
+            plans = self.db_manager.get_payment_plans()
+            self._all_payment_plans = {plan['name']: plan for plan in plans}
+            formatted_plans = [f"{plan['name']} (Interest: {plan['interest_rate']}%, Deposit: {plan['deposit_percentage']}%, Duration: {plan['duration_months']} months)" for plan in plans]
+            self.payment_plan_combobox['values'] = formatted_plans
+        except Exception as e:
+            messagebox.showerror("Database Error", f"Failed to load payment plans: {e}", parent=self)
+            
+    def _on_payment_plan_select(self, event=None):
+        selected_plan_str = self.payment_plan_combobox.get()
+        if not selected_plan_str:
+            return
+        
+        plan_name = selected_plan_str.split(' (')[0]
+        selected_plan = self._all_payment_plans.get(plan_name)
+        if not selected_plan:
+            return
+
+        property_price = self.selected_property.get('price', 0)
+        deposit_percent = selected_plan.get('deposit_percentage', 0)
+        required_deposit = property_price * (deposit_percent / 100)
+        self._required_deposit_var.set(f"{required_deposit:,.2f}")
+        
+        principal = property_price
+        interest_rate = selected_plan.get('interest_rate', 0) / 100
+        duration = selected_plan.get('duration_months', 0)
+        time_in_years = duration / 12
+        total_payable_amount = principal * (1 + (interest_rate * time_in_years))
+        self._total_amount_paid_var.set(f"{total_payable_amount:,.2f}")
+        self._amount_paid_var.set(f"{required_deposit:.2f}")
+
+    def _sell_property(self):
+        """Handles the validation and database transaction for an installment sale."""
+        # 1. Basic validation from the UI
+        if not self.payment_plan_combobox.get():
+            messagebox.showerror("Error", "Please select a payment plan.", parent=self)
+            return
+        
+        amount_paid_str = self._amount_paid_var.get().strip().replace(',', '')
+        
+        # 2. Get required data
+        buyer_name = self.buyer_name.strip()
+        buyer_contact = self.buyer_contact.strip()
+        payment_mode = "Installments"
+        client_status = 'active'
+        added_by_user_id = self.user_id
+        
+        if not buyer_name or not buyer_contact or not amount_paid_str:
+            messagebox.showerror("Input Error", "Buyer Name, Contact Info, and Initial Payment are required.", parent=self)
+            return
+        
+        # 3. Numeric input validation
+        try:
+            amount_paid = float(amount_paid_str)
+            required_deposit = float(self._required_deposit_var.get().strip().replace(',', ''))
+            
+            if amount_paid < 0:
+                messagebox.showerror("Input Error", "Initial payment cannot be negative.", parent=self)
+                return
+        except ValueError:
+            messagebox.showerror("Input Error", "Invalid numeric input for initial payment.", parent=self)
+            return
+
+        # 4. Business logic validation
+        if amount_paid < required_deposit:
+            messagebox.showerror("Validation Error", "Initial payment cannot be less than the required deposit.", parent=self)
+            return
+        
+        # 5. Get or add client
+        client_data = self.db_manager.get_client_by_contact_info(buyer_contact)
+        if client_data:
+            client_id = client_data['client_id']
+            if client_data['name'] != buyer_name:
+                self.db_manager.update_client(client_id, name=buyer_name)
+        else:
+            client_id = self.db_manager.add_client(buyer_name, buyer_contact, client_status, added_by_user_id)
+            if not client_id:
+                messagebox.showerror("Database Error", "Failed to add new client.", parent=self)
+                return
+        
+        # 6. Prepare sale details for database transaction
+        # The balance is the total payable minus the amount paid initially.
+        total_payable = float(self._total_amount_paid_var.get().strip().replace(',', ''))
+        balance = total_payable - amount_paid
+        discount = 0.0 # Assumes no discount for installments for now
+        
+        transaction_data = {
+            'property_id': self.selected_property['property_id'],
+            'client_id': client_id,
+            'payment_mode': payment_mode,
+            'amount_paid': amount_paid,
+            'discount': 0.0, # Assumes no discount for installments for now
+            'balance': balance,
+            'payment_plan': self.payment_plan_combobox.get()
+        }
+        
+        # 7. Record the sale in the database
+        transaction_id = self.db_manager.add_transaction(
+            self.selected_property['property_id'],
+            client_id,
+            payment_mode,
+            amount_paid,
+            discount,
+            balance,
+            None
+
+        )
+
+        if transaction_id:
+            # 8. Update property status
+            self.db_manager.update_property(self.selected_property['property_id'], status='Sold')
+            
+            # 9. Generate receipt and provide confirmation
+            if messagebox.askyesno("Generate Receipt?", "Installment plan recorded. Do you want to generate a receipt for the initial payment?"):
+                # You'll need to pass the transaction_id to your receipt generator
+                # self._generate_receipt_from_id(transaction_id)
+                pass # Placeholder for your receipt generation call
+
+            messagebox.showinfo("Success", "Installment sale recorded successfully!", parent=self)
+            self.refresh_callback()
+            self.master._clear_property_details_ui()
+            self.destroy()
+        else:
+            messagebox.showerror("Error", "Failed to record installment transaction.", parent=self)
+
+    def _generate_receipt(self):
+        messagebox.showinfo("Receipt", "Receipt generation is not yet implemented.", parent=self)
+        
+    def cancel(self):
+        self.destroy()
+
+try:
+    from ctypes import windll, byref, sizeof, c_int
+    has_ctypes = True
+except (ImportError, OSError):
+    has_ctypes = False
 
 class SellPropertyFormLot(tk.Toplevel):
     def __init__(self, master, db_manager, user_id, refresh_callback, on_close_callback, parent_icon_loader=None, window_icon_name="sell_property.png"):
@@ -1585,16 +2329,10 @@ class SellPropertyFormLot(tk.Toplevel):
         self.refresh_callback = refresh_callback
         self.selected_property = None
         self.title_deed_images = []
-        self.current_title_image_label = None
-        self._window_icon_ref = None # <--- Added for icon persistence
-        self.master_icon_loader_ref = parent_icon_loader # Keep reference to the main app's loader for sub-windows
-
-        # References for internal button icons
-        self._sell_button_icon = None
-        self._generate_receipt_icon = None
-        self._cancel_sell_icon = None
-        self._apply_filter_icon = None
-
+        self._window_icon_ref = None
+        self.master_icon_loader_ref = parent_icon_loader
+        
+        self.available_properties_data = []
 
         self.style = ttk.Style()
         self.style.configure('Green.TButton', background='green', foreground='white', font=('Arial', 10, 'bold'))
@@ -1603,31 +2341,218 @@ class SellPropertyFormLot(tk.Toplevel):
         self.style.map('Yellow.TButton', background=[('active', 'goldenrod')], foreground=[('disabled', 'gray')])
         self.style.configure('Red.TButton', background='red', foreground='white', font=('Arial', 10, 'bold'))
         self.style.map('Red.TButton', background=[('active', 'darkred')])
+        
+        self.style.configure('TEntry', bordercolor='lightgrey', relief='solid', borderwidth=1)
+        self.style.map('TEntry', bordercolor=[('focus', '#0099C2')])
 
-        # Set window properties (size, position, icon)
-        self._set_window_properties(1000, 680, window_icon_name, parent_icon_loader)
-        self._customize_title_bar()
-
-        self._create_widgets(parent_icon_loader) # Pass loader to _create_widgets
+        self._set_window_properties(1000, 520, window_icon_name, parent_icon_loader)
+        self._customize_title_bar()  # Call the new method
+        
+        self._create_widgets(parent_icon_loader)
         self.protocol("WM_DELETE_WINDOW", self._on_closing)
         self._populate_property_list()
-        self._update_receipt_button_state()
+        
+    def _create_widgets(self, parent_icon_loader):
+        main_frame = ttk.Frame(self, padding="10")
+        main_frame.pack(fill="both", expand=True)
 
+        property_selection_frame = ttk.LabelFrame(main_frame, text="Select Property", padding="5")
+        property_selection_frame.pack(fill="x", pady=5)
+        property_selection_frame.columnconfigure(0, weight=1)
 
+        search_frame = ttk.Frame(property_selection_frame)
+        search_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=2)
+        search_frame.columnconfigure(0, weight=1)
+
+        self.search_var = tk.StringVar()
+        self.search_var.trace_add("write", self._filter_properties)
+        self.entry_search = ttk.Entry(search_frame, textvariable=self.search_var, width=50)
+        self.entry_search.pack(side="left", fill="x", expand=True)
+        ttk.Label(search_frame, text="Search (Title/Location):").pack(side="left", padx=(5, 2))
+
+        filter_frame = ttk.Frame(property_selection_frame)
+        filter_frame.grid(row=0, column=1, sticky="e", padx=5, pady=2)
+        ttk.Label(filter_frame, text="Size (Acres): Min").pack(side="left")
+        self.entry_min_size = ttk.Entry(filter_frame, width=8)
+        self.entry_min_size.pack(side="left", padx=1)
+        ttk.Label(filter_frame, text="Max").pack(side="left")
+        self.entry_max_size = ttk.Entry(filter_frame, width=8)
+        self.entry_max_size.pack(side="left", padx=1)
+        
+        if parent_icon_loader:
+            self._apply_filter_icon = parent_icon_loader("filter.png", size=(20, 20))
+            apply_btn = ttk.Button(filter_frame, text="Apply Filter", image=self._apply_filter_icon, compound=tk.LEFT, command=self._filter_properties, style='TButton')
+            apply_btn.pack(side="left", padx=2)
+            apply_btn.image = self._apply_filter_icon
+
+        self.property_listbox = tk.Listbox(property_selection_frame, height=6, width=70)
+        self.property_listbox.grid(row=1, column=0, columnspan=2, sticky="ew", padx=5, pady=2)
+        self.property_listbox.bind("<<ListboxSelect>>", self._on_property_select)
+
+        listbox_scrollbar = ttk.Scrollbar(property_selection_frame, orient="vertical", command=self.property_listbox.yview)
+        listbox_scrollbar.grid(row=1, column=2, sticky="ns", pady=2)
+        self.property_listbox.config(yscrollcommand=listbox_scrollbar.set)
+
+        details_frame = ttk.LabelFrame(main_frame, text="Property Details", padding="5")
+        details_frame.pack(fill="x", pady=5)
+        details_frame.columnconfigure(1, weight=1)
+        details_frame.columnconfigure(2, weight=0)
+
+        self.lbl_prop_title_deed = ttk.Label(details_frame, text="Title Deed Number:")
+        self.lbl_prop_title_deed.grid(row=0, column=0, sticky="w", pady=1, padx=5)
+        self.val_prop_title_deed = ttk.Label(details_frame, text="", font=('Arial', 10, 'bold'))
+        self.val_prop_title_deed.grid(row=0, column=1, sticky="ew", pady=1, padx=5)
+
+        self.lbl_prop_location = ttk.Label(details_frame, text="Location:")
+        self.lbl_prop_location.grid(row=1, column=0, sticky="w", pady=1, padx=5)
+        self.val_prop_location = ttk.Label(details_frame, text="", font=('Arial', 10, 'bold'))
+        self.val_prop_location.grid(row=1, column=1, sticky="ew", pady=1, padx=5)
+
+        self.lbl_prop_size = ttk.Label(details_frame, text="Size (Acres):")
+        self.lbl_prop_size.grid(row=2, column=0, sticky="w", pady=1, padx=5)
+        self.val_prop_size = ttk.Label(details_frame, text="", font=('Arial', 10, 'bold'))
+        self.val_prop_size.grid(row=2, column=1, sticky="ew", pady=1, padx=5)
+
+        self.lbl_prop_price = ttk.Label(details_frame, text="Asking Price (KES):")
+        self.lbl_prop_price.grid(row=3, column=0, sticky="w", pady=1, padx=5)
+        self.val_prop_price = ttk.Label(details_frame, text="", font=('Arial', 10, 'bold'))
+        self.val_prop_price.grid(row=3, column=1, sticky="ew", pady=1, padx=5)
+
+        self.title_deed_image_frame = ttk.LabelFrame(details_frame, text="Title Deed Image", padding=2)
+        self.title_deed_image_frame.grid(row=0, column=2, rowspan=4, sticky="nsew", padx=5, pady=2)
+        self.title_deed_image_frame.columnconfigure(0, weight=1)
+
+        self.current_title_image_label = ttk.Label(self.title_deed_image_frame)
+        self.current_title_image_label.pack(fill="both", expand=True, padx=5, pady=5)
+        self.current_title_image_label.bind("<Button-1>", lambda e: self._open_image_gallery())
+
+        buyer_info_frame = ttk.LabelFrame(main_frame, text="Buyer Information", padding="5")
+        buyer_info_frame.pack(fill="x", pady=5)
+        buyer_info_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(buyer_info_frame, text="Buyer Name:").grid(row=0, column=0, sticky="w", pady=2, padx=5)
+        self.entry_buyer_name = ttk.Entry(buyer_info_frame)
+        self.entry_buyer_name.grid(row=0, column=1, sticky="ew", pady=2, padx=5)
+        self.entry_buyer_name.bind("<Double-Button-1>", lambda event: "break")
+
+        ttk.Label(buyer_info_frame, text="Buyer Contact Info:").grid(row=1, column=0, sticky="w", pady=2, padx=5)
+        self.entry_buyer_contact = ttk.Entry(buyer_info_frame)
+        self.entry_buyer_contact.grid(row=1, column=1, sticky="ew", pady=2, padx=5)
+        self.entry_buyer_contact.bind("<Double-Button-1>", lambda event: "break")
+
+        payment_options_frame = ttk.LabelFrame(main_frame, text="Payment Options", padding="5")
+        payment_options_frame.pack(fill="x", pady=5)
+
+        self.btn_cash = ttk.Button(payment_options_frame, text="Cash", command=self._open_cash_payment_window, style='Green.TButton')
+        self.btn_cash.pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
+
+        self.btn_installments = ttk.Button(payment_options_frame, text="Instalments", command=self._open_installment_payment_window, style='Yellow.TButton')
+        self.btn_installments.pack(side=tk.RIGHT, padx=5, expand=True, fill=tk.X)
+        
+    def _open_cash_payment_window(self):
+        if not self.selected_property:
+            messagebox.showwarning("No Property Selected", "Please select a property first.", parent=self)
+            return
+
+        buyer_name = self.entry_buyer_name.get().strip()
+        buyer_contact = self.entry_buyer_contact.get().strip()
+
+        if not buyer_name or not buyer_contact:
+            messagebox.showwarning("Buyer Information Required", "Please enter the buyer's name and contact information.", parent=self)
+            return
+
+        CashPaymentWindow(self, self.db_manager, self.user_id, self.selected_property, buyer_name, buyer_contact, "Cash", self._populate_property_list, self.master_icon_loader_ref)
+        
+    def _open_installment_payment_window(self):
+        if not self.selected_property:
+            messagebox.showwarning("No Property Selected", "Please select a property first.", parent=self)
+            return
+
+        buyer_name = self.entry_buyer_name.get().strip()
+        buyer_contact = self.entry_buyer_contact.get().strip()
+
+        if not buyer_name or not buyer_contact:
+            messagebox.showwarning("Buyer Information Required", "Please enter the buyer's name and contact information.", parent=self)
+            return
+
+        InstallmentPaymentWindow(self, self.db_manager, self.user_id, self.selected_property, buyer_name, buyer_contact,"installment",self._populate_property_list, self.master_icon_loader_ref)
+    
+    def _on_property_select(self, event):
+        selected_index = self.property_listbox.curselection()
+        if selected_index:
+            try:
+                index = selected_index[0]
+                self.selected_property = self.available_properties_data[index]
+
+                title_deed = self.selected_property['title_deed_number']
+                location = self.selected_property['location']
+                size = self.selected_property['size']
+                price = self.selected_property['price']
+                title_images_str = self.selected_property['title_image_paths']
+                
+                self.val_prop_title_deed.config(text=title_deed.upper())
+                self.val_prop_location.config(text=location.upper())
+                self.val_prop_size.config(text=f"{size:.2f} ACRES")
+                self.val_prop_price.config(text=f"KES {price:,.2f}")
+
+                self._display_single_title_deed_thumbnail(title_images_str)
+                
+            except IndexError:
+                self.selected_property = None
+                self._clear_property_details_ui()
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to select property: {e}", parent=self)
+                self.selected_property = None
+                self._clear_property_details_ui()
+        else:
+            self.selected_property = None
+            self._clear_property_details_ui()
+
+    def _clear_property_details_ui(self):
+        self.val_prop_title_deed.config(text="")
+        self.val_prop_location.config(text="")
+        self.val_prop_size.config(text="")
+        self.val_prop_price.config(text="")
+        self.current_title_image_label.config(image='')
+        self.current_title_image_label._image_ref = None
+        self.entry_buyer_name.delete(0, tk.END)
+        self.entry_buyer_contact.delete(0, tk.END)
+        self.property_listbox.selection_clear(0, tk.END)
+        self.selected_property = None
+
+    def _on_closing(self):
+        self.grab_release()
+        self.destroy()
+        if self.on_close_callback:
+            self.on_close_callback()
+            
+    def _set_window_properties(self, width, height, icon_name, parent_icon_loader):
+        self.geometry(f"{width}x{height}")
+        self.update_idletasks()
+        screen_width = self.winfo_screenwidth()
+        x = (screen_width - width) // 2
+        y = 100
+        self.geometry(f"+{x}+{y}")
+        if parent_icon_loader and icon_name:
+            try:
+                icon_image = parent_icon_loader(icon_name, size=(32, 32))
+                self.iconphoto(False, icon_image)
+                self._window_icon_ref = icon_image
+            except Exception as e:
+                print(f"Failed to set icon for {self.title()}: {e}")
+    
     def _customize_title_bar(self):
         """Customizes the title bar appearance."""
-        try:
-            # Windows-specific title bar customization
-            if os.name == 'nt':
-                from ctypes import windll, byref, sizeof, c_int
-
+        if has_ctypes and os.name == 'nt':
+            try:
+                # DWMWA_CAPTION_COLOR = 35, DWMWA_TEXT_COLOR = 36
                 DWMWA_CAPTION_COLOR = 35
                 DWMWA_TEXT_COLOR = 36
-
+                
                 hwnd = windll.user32.GetParent(self.winfo_id())
 
-                # Set title bar color to dark blue (RGB: 0, 51, 102)
-                color = c_int(0x00663300)  # BGR format for Windows
+                # Set title bar color to dark blue (RGB: 0, 51, 102 -> BGR: 102, 51, 0)
+                color = c_int(0x00663300)
                 windll.dwmapi.DwmSetWindowAttribute(
                     hwnd,
                     DWMWA_CAPTION_COLOR,
@@ -1635,19 +2560,18 @@ class SellPropertyFormLot(tk.Toplevel):
                     sizeof(color)
                 )
 
-                # Set title text color to white
-                text_color = c_int(0x00FFFFFF)  # White in BGR
+                # Set title text color to white (RGB: 255, 255, 255 -> BGR: 255, 255, 255)
+                text_color = c_int(0x00FFFFFF)
                 windll.dwmapi.DwmSetWindowAttribute(
                     hwnd,
                     DWMWA_TEXT_COLOR,
                     byref(text_color),
                     sizeof(text_color)
                 )
-            else:
-                # Fallback for non-Windows systems
+            except Exception as e:
+                print(f"Could not customize title bar: {e}")
                 self._create_custom_title_bar()
-        except Exception as e:
-            print(f"Could not customize title bar: {e}")
+        else:
             self._create_custom_title_bar()
 
     def _create_custom_title_bar(self):
@@ -1698,173 +2622,6 @@ class SellPropertyFormLot(tk.Toplevel):
         x = self.winfo_pointerx() - self._start_x
         y = self.winfo_pointery() - self._start_y
         self.geometry(f'+{x}+{y}')
-
-    def _set_window_properties(self, width, height, icon_name, parent_icon_loader):
-        """Sets the window size, position, and icon."""
-        self.geometry(f"{width}x{height}")
-        self.update_idletasks()
-        screen_width = self.winfo_screenwidth()
-        x = (screen_width - width) // 2
-        y = 100
-        self.geometry(f"+{x}+{y}")
-        if parent_icon_loader and icon_name:
-            try:
-                icon_image = parent_icon_loader(icon_name, size=(32, 32))
-                self.iconphoto(False, icon_image)
-                self._window_icon_ref = icon_image # <--- Keep a strong reference
-            except Exception as e:
-                print(f"Failed to set icon for {self.title()}: {e}")
-
-    def _on_closing(self):
-        """Handle window closing, release grab, and call callback."""
-        self.grab_release()
-        self.destroy()
-        if self.on_close_callback:
-            self.on_close_callback()
-
-    def _create_widgets(self, parent_icon_loader):
-        """Creates and packs all widgets for the form."""
-        main_frame = ttk.Frame(self, padding="10")
-        main_frame.pack(fill="both", expand=True)
-
-        property_selection_frame = ttk.LabelFrame(main_frame, text="Select Property", padding="5")
-        property_selection_frame.pack(fill="x", pady=5)
-        property_selection_frame.columnconfigure(0, weight=1)
-
-        search_frame = ttk.Frame(property_selection_frame)
-        search_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=2)
-        search_frame.columnconfigure(0, weight=1)
-
-        self.search_var = tk.StringVar()
-        self.search_var.trace_add("write", self._filter_properties)
-        self.entry_search = ttk.Entry(search_frame, textvariable=self.search_var, width=50)
-        self.entry_search.pack(side="left", fill="x", expand=True)
-        ttk.Label(search_frame, text="Search (Title/Location):").pack(side="left", padx=(5, 2))
-
-        filter_frame = ttk.Frame(property_selection_frame)
-        filter_frame.grid(row=0, column=1, sticky="e", padx=5, pady=2)
-        ttk.Label(filter_frame, text="Size (Acres): Min").pack(side="left")
-        self.entry_min_size = ttk.Entry(filter_frame, width=8)
-        self.entry_min_size.pack(side="left", padx=1)
-        ttk.Label(filter_frame, text="Max").pack(side="left")
-        self.entry_max_size = ttk.Entry(filter_frame, width=8)
-        self.entry_max_size.pack(side="left", padx=1)
-        
-        # Load icon for Apply Filter button and store reference
-        if parent_icon_loader:
-            self._apply_filter_icon = parent_icon_loader("filter.png", size=(20, 20)) 
-            apply_btn = ttk.Button(filter_frame, text="Apply Filter", image=self._apply_filter_icon, compound=tk.LEFT, command=self._filter_properties, style='TButton')
-            apply_btn.pack(side="left", padx=2)
-            apply_btn.image = self._apply_filter_icon # Store reference for this button
-
-        self.property_listbox = tk.Listbox(property_selection_frame, height=6, width=70)
-        self.property_listbox.grid(row=1, column=0, columnspan=2, sticky="ew", padx=5, pady=2)
-        self.property_listbox.bind("<<ListboxSelect>>", self._on_property_select)
-
-        listbox_scrollbar = ttk.Scrollbar(property_selection_frame, orient="vertical", command=self.property_listbox.yview)
-        listbox_scrollbar.grid(row=1, column=2, sticky="ns", pady=2)
-        self.property_listbox.config(yscrollcommand=listbox_scrollbar.set)
-
-        details_frame = ttk.LabelFrame(main_frame, text="Property Details", padding="5")
-        details_frame.pack(fill="x", pady=5)
-        details_frame.columnconfigure(1, weight=1)
-        details_frame.columnconfigure(2, weight=0)
-
-        self.lbl_prop_title_deed = ttk.Label(details_frame, text="Title Deed Number:")
-        self.lbl_prop_title_deed.grid(row=0, column=0, sticky="w", pady=1, padx=5)
-        self.val_prop_title_deed = ttk.Label(details_frame, text="", font=('Arial', 10, 'bold'))
-        self.val_prop_title_deed.grid(row=0, column=1, sticky="ew", pady=1, padx=5)
-
-        self.lbl_prop_location = ttk.Label(details_frame, text="Location:")
-        self.lbl_prop_location.grid(row=1, column=0, sticky="w", pady=1, padx=5)
-        self.val_prop_location = ttk.Label(details_frame, text="", font=('Arial', 10, 'bold'))
-        self.val_prop_location.grid(row=1, column=1, sticky="ew", pady=1, padx=5)
-
-        self.lbl_prop_size = ttk.Label(details_frame, text="Size (Acres):")
-        self.lbl_prop_size.grid(row=2, column=0, sticky="w", pady=1, padx=5)
-        self.val_prop_size = ttk.Label(details_frame, text="", font=('Arial', 10, 'bold'))
-        self.val_prop_size.grid(row=2, column=1, sticky="ew", pady=1, padx=5)
-
-        self.lbl_prop_price = ttk.Label(details_frame, text="Asking Price (KES):")
-        self.lbl_prop_price.grid(row=3, column=0, sticky="w", pady=1, padx=5)
-        self.val_prop_price = ttk.Label(details_frame, text="", font=('Arial', 10, 'bold'))
-        self.val_prop_price.grid(row=3, column=1, sticky="ew", pady=1, padx=5)
-
-        self.title_deed_image_frame = ttk.LabelFrame(details_frame, text="Title Deed Image", padding=2)
-        self.title_deed_image_frame.grid(row=0, column=2, rowspan=4, sticky="nsew", padx=5, pady=2)
-        self.title_deed_image_frame.columnconfigure(0, weight=1)
-
-        self.current_title_image_label = ttk.Label(self.title_deed_image_frame)
-        self.current_title_image_label.pack(fill="both", expand=True, padx=5, pady=5)
-        # Modified lambda to just call _open_image_gallery without arguments
-        self.current_title_image_label.bind("<Button-1>", lambda e: self._open_image_gallery())
-
-
-        buyer_info_frame = ttk.LabelFrame(main_frame, text="Buyer Information", padding="5")
-        buyer_info_frame.pack(fill="x", pady=5)
-        buyer_info_frame.columnconfigure(1, weight=1)
-
-        ttk.Label(buyer_info_frame, text="Buyer Name:").grid(row=0, column=0, sticky="w", pady=2, padx=5)
-        self.entry_buyer_name = ttk.Entry(buyer_info_frame)
-        self.entry_buyer_name.grid(row=0, column=1, sticky="ew", pady=2, padx=5)
-        self.entry_buyer_name.bind("<KeyRelease>", self._update_receipt_button_state)
-
-        ttk.Label(buyer_info_frame, text="Buyer Contact Info:").grid(row=1, column=0, sticky="w", pady=2, padx=5)
-        self.entry_buyer_contact = ttk.Entry(buyer_info_frame)
-        self.entry_buyer_contact.grid(row=1, column=1, sticky="ew", pady=2, padx=5)
-        self.entry_buyer_contact.bind("<KeyRelease>", self._update_receipt_button_state)
-
-        payment_details_frame = ttk.LabelFrame(main_frame, text="Payment Details", padding="5")
-        payment_details_frame.pack(fill="x", pady=5)
-        payment_details_frame.columnconfigure(1, weight=1)
-
-        ttk.Label(payment_details_frame, text="Mode of Payment:").grid(row=0, column=0, sticky="w", pady=2, padx=5)
-        self.payment_mode_combobox = ttk.Combobox(payment_details_frame, values=["Cash", "Instalments"], state="readonly")
-        self.payment_mode_combobox.set("Cash")
-        self.payment_mode_combobox.grid(row=0, column=1, sticky="ew", pady=2, padx=5)
-
-        ttk.Label(payment_details_frame, text="Amount Paid (KES):").grid(row=1, column=0, sticky="w", pady=2, padx=5)
-        self.entry_amount_paid = ttk.Entry(payment_details_frame)
-        self.entry_amount_paid.grid(row=1, column=1, sticky="ew", pady=2, padx=5)
-        self.entry_amount_paid.bind("<KeyRelease>", self._calculate_balance)
-
-        ttk.Label(payment_details_frame, text="Discount (KES):").grid(row=2, column=0, sticky="w", pady=2, padx=5)
-        self.entry_discount = ttk.Entry(payment_details_frame)
-        self.entry_discount.grid(row=2, column=1, sticky="ew", pady=2, padx=5)
-        self.entry_discount.bind("<KeyRelease>", self._calculate_balance)
-
-        ttk.Label(payment_details_frame, text="Balance (KES):").grid(row=3, column=0, sticky="w", pady=2, padx=5)
-        self.lbl_balance = ttk.Label(payment_details_frame, text="0.00", font=("Arial", 10, "bold"))
-        self.lbl_balance.grid(row=3, column=1, sticky="ew", pady=2, padx=5)
-
-        ttk.Label(payment_details_frame, text="Date of Transaction:").grid(row=4, column=0, sticky="w", pady=2, padx=5)
-        self.entry_transaction_date = ttk.Entry(payment_details_frame)
-        self.entry_transaction_date.grid(row=4, column=1, sticky="ew", pady=2, padx=5)
-        self.entry_transaction_date.insert(0, datetime.now().strftime("%Y-%m-%d"))
-
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(pady=10)
-
-        # Load icons for buttons in this form
-        if parent_icon_loader:
-            self._sell_button_icon = parent_icon_loader("sell_property.png", size=(20, 20)) 
-            self._generate_receipt_icon = parent_icon_loader("receipt.png", size=(20, 20)) 
-            self._cancel_sell_icon = parent_icon_loader("cancel.png", size=(20, 20))
-
-        self.sell_button = ttk.Button(button_frame, text="Sell Property", image=self._sell_button_icon, compound=tk.LEFT, command=self._sell_property, style='Green.TButton')
-        self.sell_button.pack(side="left", padx=5)
-        self.sell_button.image = self._sell_button_icon # Store reference for this button
-
-        self.generate_receipt_button = ttk.Button(button_frame, text="Generate Receipt", image=self._generate_receipt_icon, compound=tk.LEFT, command=self._generate_receipt, style='Yellow.TButton')
-        self.generate_receipt_button.pack(side="left", padx=5)
-        self.generate_receipt_button.image = self._generate_receipt_icon # Store reference for this button
-
-        self.cancel_button = ttk.Button(button_frame, text="Cancel", image=self._cancel_sell_icon, compound=tk.LEFT, command=self.destroy, style='Red.TButton')
-        self.cancel_button.pack(side="left", padx=5)
-        self.cancel_button.image = self._cancel_sell_icon # Store reference for this button
-
-        self._calculate_balance()
-        self._update_receipt_button_state()
 
     def _populate_property_list(self, search_query="", min_size=None, max_size=None):
         self.property_listbox.delete(0, tk.END)
@@ -1903,7 +2660,7 @@ class SellPropertyFormLot(tk.Toplevel):
         for prop in filtered_properties:
             self.property_listbox.insert(tk.END, f"{prop['title_deed_number'].upper()} - {prop['location'].upper()} ({prop['size']:.2f} ACRES) - KES {prop['price']:,.2f}")
 
-        self.filtered_properties_data = filtered_properties
+        self.available_properties_data = filtered_properties
 
     def _filter_properties(self, *args):
         search_query = self.search_var.get().strip()
@@ -1943,49 +2700,23 @@ class SellPropertyFormLot(tk.Toplevel):
 
         self._populate_property_list(search_query, min_size, max_size)
 
-    def _on_property_select(self, event):
-        selected_index = self.property_listbox.curselection()
-        if selected_index:
-            index = selected_index[0]
-            self.selected_property = self.available_properties_data[index]
-
-            prop_id = self.selected_property['property_id']
-            title_deed = self.selected_property['title_deed_number']
-            location = self.selected_property['location']
-            size = self.selected_property['size']
-            description = self.selected_property['description']
-            price = self.selected_property['price']
-            prop_images_str = self.selected_property['image_paths']
-            title_images_str = self.selected_property['title_image_paths']
-            status = self.selected_property['status']
-
-            self.val_prop_title_deed.config(text=title_deed.upper())
-            self.val_prop_location.config(text=location.upper())
-            self.val_prop_size.config(text=f"{size:.2f} ACRES")
-            self.val_prop_price.config(text=f"KES {price:,.2f}")
-
-            self.entry_amount_paid.delete(0, tk.END)
-            self.entry_amount_paid.insert(0, str(price))
-
-            if not self.entry_discount.get().strip():
-                self.entry_discount.insert(0, "0.00")
-
-            self._calculate_balance()
-            self._update_receipt_button_state()
-
-            self._display_single_title_deed_thumbnail(title_images_str)
-
-        else:
-            self.selected_property = None
-            self.val_prop_title_deed.config(text="")
-            self.val_prop_location.config(text="")
-            self.val_prop_size.config(text="")
-            self.val_prop_price.config(text="")
-            self.entry_amount_paid.delete(0, tk.END)
-            self.entry_discount.delete(0, tk.END)
-            self.lbl_balance.config(text="0.00")
-            self._update_receipt_button_state()
-            self._clear_single_title_deed_thumbnail()
+    def _update_receipt_button_state(self):
+        """Enables or disables the receipt button based on selected property and buyer info."""
+        is_selected = self.selected_property is not None
+        has_buyer_name = bool(self.entry_buyer_name.get().strip())
+        has_buyer_contact = bool(self.entry_buyer_contact.get().strip())
+        
+        # Check if amount paid is not empty and is a valid number
+        try:
+            amount_paid = float(self._amount_paid_var.get())
+            is_amount_valid = True
+        except (ValueError, tk.TclError):
+            is_amount_valid = False
+            
+        enable_buttons = is_selected and has_buyer_name and has_buyer_contact and is_amount_valid
+        
+        self.generate_receipt_button['state'] = 'normal' if enable_buttons else 'disabled'
+        self.sell_button['state'] = 'normal' if enable_buttons else 'disabled'
 
     def _display_single_title_deed_thumbnail(self, title_images_str):
         self._clear_single_title_deed_thumbnail()
@@ -2159,298 +2890,9 @@ class SellPropertyFormLot(tk.Toplevel):
             gallery_window.gallery_image_label.image = None
 
 
-    def _calculate_balance(self, *args):
-        """Calculates and updates the balance based on property price, amount paid, and discount."""
-        if not self.selected_property:
-            self.lbl_balance.config(text="0.00")
-            return
+    
 
-        try:
-            total_price = self.selected_property['price']
-            amount_paid_str = self.entry_amount_paid.get().strip()
-            discount_str = self.entry_discount.get().strip()
-
-            amount_paid = float(amount_paid_str) if amount_paid_str else 0.0
-            discount = float(discount_str) if discount_str else 0.0
-
-            if amount_paid < 0 or discount < 0:
-                messagebox.showwarning("Input Error", "Amount paid and discount cannot be negative.")
-                if amount_paid < 0: self.entry_amount_paid.delete(0, tk.END); self.entry_amount_paid.insert(0, "0.00")
-                if discount < 0: self.entry_discount.delete(0, tk.END); self.entry_discount.insert(0, "0.00")
-                self.lbl_balance.config(text=f"{total_price:,.2f}")
-                return
-
-            net_price = total_price - discount
-            balance = net_price - amount_paid
-
-            self.lbl_balance.config(text=f"{balance:,.2f}")
-            self._update_receipt_button_state()
-
-        except ValueError:
-            self.lbl_balance.config(text="Invalid Input")
-            self._update_receipt_button_state()
-
-    def _update_receipt_button_state(self, *args):
-        """
-        Enables the 'Generate Receipt' button only if a property is selected
-        and buyer information and amount paid are provided, and balance is not 'Invalid Input'.
-        """
-        is_property_selected = self.selected_property is not None
-        buyer_name_present = bool(self.entry_buyer_name.get().strip())
-        buyer_contact_present = bool(self.entry_buyer_contact.get().strip())
-        
-        balance_text = self.lbl_balance.cget("text")
-        is_balance_valid = balance_text != "Invalid Input" and balance_text.replace(',', '.').replace('KES ', '').replace('KSh ', '').strip() not in ["", "-"]
-
-        can_generate_receipt = is_property_selected and buyer_name_present and buyer_contact_present and is_balance_valid
-
-        if can_generate_receipt:
-            self.generate_receipt_button.config(state="normal")
-        else:
-            self.generate_receipt_button.config(state="disabled")
-
-    def _sell_property(self):
-        if not self.selected_property:
-            messagebox.showwarning("Validation Error", "Please select a property to sell.")
-            return
-
-        buyer_name = self.entry_buyer_name.get().strip()
-        buyer_contact = self.entry_buyer_contact.get().strip()
-        payment_mode = self.payment_mode_combobox.get()
-        amount_paid_str = self.entry_amount_paid.get().strip()
-        discount_str = self.entry_discount.get().strip()
-
-        if not buyer_name or not buyer_contact or not amount_paid_str:
-            messagebox.showerror("Input Error", "Buyer Name, Contact Info, and Amount Paid are required.")
-            return
-
-        try:
-            amount_paid_input = float(amount_paid_str) # Amount the user intends to pay
-            discount = float(discount_str) if discount_str else 0.0
-            if amount_paid_input < 0 or discount < 0:
-                messagebox.showerror("Input Error", "Amount Paid and Discount cannot be negative.")
-                return
-        except ValueError:
-            messagebox.showerror("Input Error", "Invalid numeric input for Amount Paid or Discount.")
-            return
-
-        try:
-            original_price = self.selected_property['price']
-            
-            # Calculate the price after discount
-            net_price_after_discount = original_price - discount
-            
-            # --- MODIFICATION START ---
-            # Error if discount makes net price negative
-            if net_price_after_discount < 0:
-                messagebox.showerror(
-                    "Input Error", 
-                    f"Discount (KES {discount:,.2f}) cannot make the property's net price negative. "
-                    f"Original Price: KES {original_price:,.2f}. Please adjust the discount."
-                )
-                return # Stop transaction
-
-            # Check for overpayment and refuse to proceed
-            if amount_paid_input > net_price_after_discount:
-                messagebox.showerror(
-                    "Input Error", 
-                    f"Amount paid (KES {amount_paid_input:,.2f}) cannot exceed the property's net price "
-                    f"after discount (KES {net_price_after_discount:,.2f}). Please adjust the amount paid."
-                )
-                return # Stop transaction
-            
-            # If we reach here, input is valid: amount_paid_input is not negative,
-            # discount is not negative, net_price_after_discount is not negative,
-            # and amount_paid_input does not exceed net_price_after_discount.
-            
-            amount_paid_to_record = amount_paid_input # Now, it's safe to record the input amount
-            balance = net_price_after_discount - amount_paid_to_record
-            # --- MODIFICATION END ---
-
-        except Exception as e:
-            messagebox.showerror("Calculation Error", f"Error calculating sale details: {e}")
-            return
-
-        client_data = self.db_manager.get_client_by_contact_info(buyer_contact)
-        if client_data:
-            client_id = client_data['client_id']
-            if client_data['name'] != buyer_name:
-                self.db_manager.update_client(client_id, name=buyer_name)
-        else:
-            client_id = self.db_manager.add_client(buyer_name, buyer_contact)
-            if not client_id:
-                messagebox.showerror("Database Error", "Failed to add new client.")
-                return
-
-        receipt_path = None # Will be updated after PDF generation if successful
-
-        transaction_id = self.db_manager.add_transaction(
-            self.selected_property['property_id'],
-            client_id,
-            payment_mode,
-            amount_paid_to_record, # Use the validated and accepted amount here
-            discount,
-            balance,                 # This balance is now calculated from valid inputs
-            receipt_path
-        )
-
-        if transaction_id:
-            # Set property status to 'Sold' if the transaction is successful
-            self.db_manager.update_property(self.selected_property['property_id'], status='Sold')
-
-            if messagebox.askyesno("Generate Receipt?", "Transaction recorded. Do you want to generate a receipt now?"):
-                generated_receipt_path = self._generate_receipt(transaction_id=transaction_id, save_only=True)
-                if generated_receipt_path:
-                    # Update the transaction record with the receipt path
-                    self.db_manager.update_transaction(transaction_id, receipt_path=generated_receipt_path)
-
-            messagebox.showinfo("Success", "Property sold and transaction recorded successfully!")
-            self.refresh_callback() # Call the callback to refresh the main view
-            self.destroy() # Close the Sell Property form
-        else:
-            messagebox.showerror("Error", "Failed to record transaction.")
-
-    def _generate_receipt(self, transaction_id=None, save_only=False):
-        """
-        Generates a PDF receipt and optionally saves it.
-        If transaction_id is provided, it's assumed this is called after a successful sale.
-        If save_only is True, it will save but not attempt to initiate a print dialog.
-
-        Args:
-            transaction_id (str, optional): The ID of the transaction. Defaults to None.
-            save_only (bool, optional): If True, only saves the receipt, does not
-                                        prompt for printing. Defaults to False.
-
-        Returns:
-            str or None: The relative path to the saved PDF file if successful,
-                         otherwise None.
-        """
-        # 1. Input Validation and Data Extraction
-        # Check if essential fields are filled
-        if not self.selected_property or not self.entry_buyer_name.get().strip() or not self.entry_buyer_contact.get().strip():
-            messagebox.showwarning("Missing Information", "Please select a property and fill in buyer details to generate a receipt.")
-            return None
-
-        # Extract property details safely
-        try:
-            prop_title_deed = self.val_prop_title_deed.cget("text")
-            prop_location = self.val_prop_location.cget("text")
-            prop_size = self.val_prop_size.cget("text")
-            prop_price = float(self.selected_property.get('price', 0.0)) # Use .get() with default for safety
-        except (KeyError, ValueError) as e:
-            messagebox.showerror("Data Error", f"Property details are missing or invalid: {e}")
-            return None
-
-        # Extract buyer and payment details
-        buyer_name = self.entry_buyer_name.get().strip()
-        buyer_contact = self.entry_buyer_contact.get().strip()
-        payment_mode = self.payment_mode_combobox.get()
-        transaction_date = self.entry_transaction_date.get().strip()
-
-        # Safely convert numeric inputs
-        amount_paid_str = self.entry_amount_paid.get().strip()
-        discount_str = self.entry_discount.get().strip()
-        balance_text = self.lbl_balance.cget("text").replace(',', '') # Remove commas for float conversion
-
-        try:
-            amount_paid = float(amount_paid_str) if amount_paid_str else 0.0
-            discount = float(discount_str) if discount_str else 0.0
-            balance = float(balance_text) if balance_text else 0.0
-        except ValueError:
-            messagebox.showerror("Receipt Error", "Invalid numeric data detected for amount paid, discount, or balance. Please check your inputs.")
-            return None
-
-        # Calculate net price
-        net_price = prop_price - discount
-
-        # 2. PDF Document Generation using ReportLab
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        # Sanitize title deed for filename
-        safe_prop_title_deed = "".join(c for c in prop_title_deed if c.isalnum() or c in (' ', '-', '_')).replace(' ', '_')
-        receipt_filename = f"receipt_{timestamp}_{safe_prop_title_deed}.pdf"
-        receipt_full_path = os.path.join(RECEIPTS_DIR, receipt_filename)
-
-        try:
-            # Create a SimpleDocTemplate which handles page layout
-            doc = SimpleDocTemplate(receipt_full_path, pagesize=letter)
-            # Create a list to hold the document's flowables (paragraphs, spaces, etc.)
-            story = []
-
-            # Get default styles
-            styles = getSampleStyleSheet()
-            normal_style = styles['Normal']
-            h1_style = styles['h1']
-            h2_style = styles['h2']
-
-            # Add content to the story
-            # Header
-            story.append(Paragraph("<font size='16' color='#333333'><b>PROPERTY SALE RECEIPT</b></font>", h1_style))
-            story.append(Paragraph("<font size='14' color='#555555'>MATHENGE REAL ESTATE</font>", h2_style))
-            # Reduced vertical space to help fit content on one page
-            story.append(Spacer(1, 0.2 * letter[1])) # Changed from 0.4 * letter[1]
-
-            # Transaction Details
-            story.append(Paragraph(f"<b>Date:</b> {transaction_date}", normal_style))
-            story.append(Paragraph(f"<b>Transaction ID:</b> {transaction_id if transaction_id else 'N/A'}", normal_style))
-            story.append(Spacer(1, 0.15 * letter[1])) # Slightly reduced
-
-            # Buyer Details
-            story.append(Paragraph("<font size='12' color='#444444'><b>BUYER DETAILS:</b></font>", h2_style))
-            story.append(Paragraph(f"<b>Name:</b> {buyer_name}", normal_style))
-            story.append(Paragraph(f"<b>Contact:</b> {buyer_contact}", normal_style))
-            story.append(Spacer(1, 0.15 * letter[1])) # Slightly reduced
-
-            # Property Details
-            story.append(Paragraph("<font size='12' color='#444444'><b>PROPERTY DETAILS:</b></font>", h2_style))
-            story.append(Paragraph(f"<b>Title Deed:</b> {prop_title_deed}", normal_style))
-            story.append(Paragraph(f"<b>Location:</b> {prop_location}", normal_style))
-            story.append(Paragraph(f"<b>Size:</b> {prop_size}", normal_style))
-            story.append(Spacer(1, 0.15 * letter[1])) # Slightly reduced
-
-            # Financial Summary
-            story.append(Paragraph("<font size='12' color='#444444'><b>FINANCIAL SUMMARY:</b></font>", h2_style))
-            story.append(Paragraph(f"<b>Original Price:</b> KES {prop_price:,.2f}", normal_style))
-            # Using non-breaking space &nbsp; for alignment where precise control is needed
-            story.append(Paragraph(f"<b>Discount:</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; KES {discount:,.2f}", normal_style))
-            story.append(Paragraph(f"<b>Net Price:</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; KES {net_price:,.2f}", normal_style))
-            story.append(Paragraph(f"<b>Amount Paid:</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; KES {amount_paid:,.2f}", normal_style))
-            story.append(Paragraph(f"<b>Balance Due:</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; KES {balance:,.2f}", normal_style))
-            story.append(Paragraph(f"<b>Payment Mode:</b> {payment_mode}", normal_style))
-            story.append(Spacer(1, 0.2 * letter[1])) # Changed from 0.4 * letter[1]
-
-            # Footer
-            story.append(Paragraph("<center>Thank you for your business!</center>", normal_style))
-            story.append(Paragraph("<center><font size='8' color='#888888'>Generated on " + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "</font></center>", normal_style))
-
-            # Build the PDF document from the story
-            doc.build(story)
-
-            messagebox.showinfo("Receipt Generated", f"Receipt saved successfully to:\n{receipt_full_path}")
-
-            # 3. Optional Printing Prompt
-            if not save_only:
-                if messagebox.askyesno("Print Receipt", "Do you want to print this receipt now?"):
-                    try:
-                        # Placeholder for actual printing logic
-                        # Printing PDFs directly from Python is OS-dependent and often
-                        # involves calling external commands or specialized libraries.
-                        # Examples (highly platform-specific, not universally guaranteed to work):
-                        # On Windows: os.startfile(receipt_full_path, "print")
-                        # On macOS: subprocess.run(["open", "-a", "Preview", "-p", receipt_full_path])
-                        # On Linux (requires 'lp' or 'lpr'): subprocess.run(["lp", receipt_full_path])
-                        messagebox.showinfo("Print Status",
-                                            "Printing functionality is highly OS-dependent and requires specific setup.\n"
-                                            "The receipt has been saved. Please open and print it manually from:\n"
-                                            f"{receipt_full_path}")
-                    except Exception as e:
-                        messagebox.showerror("Print Error", f"Failed to initiate print job. Please print manually. Error: {e}")
-
-            # Return the relative path, useful for storing in a database or displaying
-            return os.path.relpath(receipt_full_path, DATA_DIR).replace("\\", "/")
-
-        except Exception as e:
-            messagebox.showerror("PDF Generation Error", f"An error occurred while generating or saving the receipt PDF: {e}")
-            return None
+    
 
 class SellPropertyFormBlock(tk.Toplevel):
     def __init__(self, master, db_manager, user_id, refresh_callback, on_close_callback, parent_icon_loader=None, window_icon_name="sell_property.png"):
@@ -2466,16 +2908,10 @@ class SellPropertyFormBlock(tk.Toplevel):
         self.refresh_callback = refresh_callback
         self.selected_property = None
         self.title_deed_images = []
-        self.current_title_image_label = None
-        self._window_icon_ref = None # <--- Added for icon persistence
-        self.master_icon_loader_ref = parent_icon_loader # Keep reference to the main app's loader for sub-windows
-
-        # References for internal button icons
-        self._sell_button_icon = None
-        self._generate_receipt_icon = None
-        self._cancel_sell_icon = None
-        self._apply_filter_icon = None
-
+        self._window_icon_ref = None
+        self.master_icon_loader_ref = parent_icon_loader
+        
+        self.available_properties_data = []
 
         self.style = ttk.Style()
         self.style.configure('Green.TButton', background='green', foreground='white', font=('Arial', 10, 'bold'))
@@ -2484,31 +2920,218 @@ class SellPropertyFormBlock(tk.Toplevel):
         self.style.map('Yellow.TButton', background=[('active', 'goldenrod')], foreground=[('disabled', 'gray')])
         self.style.configure('Red.TButton', background='red', foreground='white', font=('Arial', 10, 'bold'))
         self.style.map('Red.TButton', background=[('active', 'darkred')])
+        
+        self.style.configure('TEntry', bordercolor='lightgrey', relief='solid', borderwidth=1)
+        self.style.map('TEntry', bordercolor=[('focus', '#0099C2')])
 
-        # Set window properties (size, position, icon)
-        self._set_window_properties(1000, 680, window_icon_name, parent_icon_loader)
-        self._customize_title_bar()
-
-        self._create_widgets(parent_icon_loader) # Pass loader to _create_widgets
+        self._set_window_properties(1000, 520, window_icon_name, parent_icon_loader)
+        self._customize_title_bar()  # Call the new method
+        
+        self._create_widgets(parent_icon_loader)
         self.protocol("WM_DELETE_WINDOW", self._on_closing)
         self._populate_property_list()
-        self._update_receipt_button_state()
+        
+    def _create_widgets(self, parent_icon_loader):
+        main_frame = ttk.Frame(self, padding="10")
+        main_frame.pack(fill="both", expand=True)
 
+        property_selection_frame = ttk.LabelFrame(main_frame, text="Select Property", padding="5")
+        property_selection_frame.pack(fill="x", pady=5)
+        property_selection_frame.columnconfigure(0, weight=1)
 
+        search_frame = ttk.Frame(property_selection_frame)
+        search_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=2)
+        search_frame.columnconfigure(0, weight=1)
+
+        self.search_var = tk.StringVar()
+        self.search_var.trace_add("write", self._filter_properties)
+        self.entry_search = ttk.Entry(search_frame, textvariable=self.search_var, width=50)
+        self.entry_search.pack(side="left", fill="x", expand=True)
+        ttk.Label(search_frame, text="Search (Title/Location):").pack(side="left", padx=(5, 2))
+
+        filter_frame = ttk.Frame(property_selection_frame)
+        filter_frame.grid(row=0, column=1, sticky="e", padx=5, pady=2)
+        ttk.Label(filter_frame, text="Size (Acres): Min").pack(side="left")
+        self.entry_min_size = ttk.Entry(filter_frame, width=8)
+        self.entry_min_size.pack(side="left", padx=1)
+        ttk.Label(filter_frame, text="Max").pack(side="left")
+        self.entry_max_size = ttk.Entry(filter_frame, width=8)
+        self.entry_max_size.pack(side="left", padx=1)
+        
+        if parent_icon_loader:
+            self._apply_filter_icon = parent_icon_loader("filter.png", size=(20, 20))
+            apply_btn = ttk.Button(filter_frame, text="Apply Filter", image=self._apply_filter_icon, compound=tk.LEFT, command=self._filter_properties, style='TButton')
+            apply_btn.pack(side="left", padx=2)
+            apply_btn.image = self._apply_filter_icon
+
+        self.property_listbox = tk.Listbox(property_selection_frame, height=6, width=70)
+        self.property_listbox.grid(row=1, column=0, columnspan=2, sticky="ew", padx=5, pady=2)
+        self.property_listbox.bind("<<ListboxSelect>>", self._on_property_select)
+
+        listbox_scrollbar = ttk.Scrollbar(property_selection_frame, orient="vertical", command=self.property_listbox.yview)
+        listbox_scrollbar.grid(row=1, column=2, sticky="ns", pady=2)
+        self.property_listbox.config(yscrollcommand=listbox_scrollbar.set)
+
+        details_frame = ttk.LabelFrame(main_frame, text="Property Details", padding="5")
+        details_frame.pack(fill="x", pady=5)
+        details_frame.columnconfigure(1, weight=1)
+        details_frame.columnconfigure(2, weight=0)
+
+        self.lbl_prop_title_deed = ttk.Label(details_frame, text="Title Deed Number:")
+        self.lbl_prop_title_deed.grid(row=0, column=0, sticky="w", pady=1, padx=5)
+        self.val_prop_title_deed = ttk.Label(details_frame, text="", font=('Arial', 10, 'bold'))
+        self.val_prop_title_deed.grid(row=0, column=1, sticky="ew", pady=1, padx=5)
+
+        self.lbl_prop_location = ttk.Label(details_frame, text="Location:")
+        self.lbl_prop_location.grid(row=1, column=0, sticky="w", pady=1, padx=5)
+        self.val_prop_location = ttk.Label(details_frame, text="", font=('Arial', 10, 'bold'))
+        self.val_prop_location.grid(row=1, column=1, sticky="ew", pady=1, padx=5)
+
+        self.lbl_prop_size = ttk.Label(details_frame, text="Size (Acres):")
+        self.lbl_prop_size.grid(row=2, column=0, sticky="w", pady=1, padx=5)
+        self.val_prop_size = ttk.Label(details_frame, text="", font=('Arial', 10, 'bold'))
+        self.val_prop_size.grid(row=2, column=1, sticky="ew", pady=1, padx=5)
+
+        self.lbl_prop_price = ttk.Label(details_frame, text="Asking Price (KES):")
+        self.lbl_prop_price.grid(row=3, column=0, sticky="w", pady=1, padx=5)
+        self.val_prop_price = ttk.Label(details_frame, text="", font=('Arial', 10, 'bold'))
+        self.val_prop_price.grid(row=3, column=1, sticky="ew", pady=1, padx=5)
+
+        self.title_deed_image_frame = ttk.LabelFrame(details_frame, text="Title Deed Image", padding=2)
+        self.title_deed_image_frame.grid(row=0, column=2, rowspan=4, sticky="nsew", padx=5, pady=2)
+        self.title_deed_image_frame.columnconfigure(0, weight=1)
+
+        self.current_title_image_label = ttk.Label(self.title_deed_image_frame)
+        self.current_title_image_label.pack(fill="both", expand=True, padx=5, pady=5)
+        self.current_title_image_label.bind("<Button-1>", lambda e: self._open_image_gallery())
+
+        buyer_info_frame = ttk.LabelFrame(main_frame, text="Buyer Information", padding="5")
+        buyer_info_frame.pack(fill="x", pady=5)
+        buyer_info_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(buyer_info_frame, text="Buyer Name:").grid(row=0, column=0, sticky="w", pady=2, padx=5)
+        self.entry_buyer_name = ttk.Entry(buyer_info_frame)
+        self.entry_buyer_name.grid(row=0, column=1, sticky="ew", pady=2, padx=5)
+        self.entry_buyer_name.bind("<Double-Button-1>", lambda event: "break")
+
+        ttk.Label(buyer_info_frame, text="Buyer Contact Info:").grid(row=1, column=0, sticky="w", pady=2, padx=5)
+        self.entry_buyer_contact = ttk.Entry(buyer_info_frame)
+        self.entry_buyer_contact.grid(row=1, column=1, sticky="ew", pady=2, padx=5)
+        self.entry_buyer_contact.bind("<Double-Button-1>", lambda event: "break")
+
+        payment_options_frame = ttk.LabelFrame(main_frame, text="Payment Options", padding="5")
+        payment_options_frame.pack(fill="x", pady=5)
+
+        self.btn_cash = ttk.Button(payment_options_frame, text="Cash", command=self._open_cash_payment_window, style='Green.TButton')
+        self.btn_cash.pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
+
+        self.btn_installments = ttk.Button(payment_options_frame, text="Instalments", command=self._open_installment_payment_window, style='Yellow.TButton')
+        self.btn_installments.pack(side=tk.RIGHT, padx=5, expand=True, fill=tk.X)
+        
+    def _open_cash_payment_window(self):
+        if not self.selected_property:
+            messagebox.showwarning("No Property Selected", "Please select a property first.", parent=self)
+            return
+
+        buyer_name = self.entry_buyer_name.get().strip()
+        buyer_contact = self.entry_buyer_contact.get().strip()
+
+        if not buyer_name or not buyer_contact:
+            messagebox.showwarning("Buyer Information Required", "Please enter the buyer's name and contact information.", parent=self)
+            return
+
+        CashPaymentWindow(self, self.db_manager, self.user_id, self.selected_property, buyer_name, buyer_contact, "Cash", self._populate_property_list, self.master_icon_loader_ref)
+        
+    def _open_installment_payment_window(self):
+        if not self.selected_property:
+            messagebox.showwarning("No Property Selected", "Please select a property first.", parent=self)
+            return
+
+        buyer_name = self.entry_buyer_name.get().strip()
+        buyer_contact = self.entry_buyer_contact.get().strip()
+
+        if not buyer_name or not buyer_contact:
+            messagebox.showwarning("Buyer Information Required", "Please enter the buyer's name and contact information.", parent=self)
+            return
+
+        InstallmentPaymentWindow(self, self.db_manager, self.user_id, self.selected_property, buyer_name, buyer_contact,"installment",self._populate_property_list, self.master_icon_loader_ref)
+    
+    def _on_property_select(self, event):
+        selected_index = self.property_listbox.curselection()
+        if selected_index:
+            try:
+                index = selected_index[0]
+                self.selected_property = self.available_properties_data[index]
+
+                title_deed = self.selected_property['title_deed_number']
+                location = self.selected_property['location']
+                size = self.selected_property['size']
+                price = self.selected_property['price']
+                title_images_str = self.selected_property['title_image_paths']
+                
+                self.val_prop_title_deed.config(text=title_deed.upper())
+                self.val_prop_location.config(text=location.upper())
+                self.val_prop_size.config(text=f"{size:.2f} ACRES")
+                self.val_prop_price.config(text=f"KES {price:,.2f}")
+
+                self._display_single_title_deed_thumbnail(title_images_str)
+                
+            except IndexError:
+                self.selected_property = None
+                self._clear_property_details_ui()
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to select property: {e}", parent=self)
+                self.selected_property = None
+                self._clear_property_details_ui()
+        else:
+            self.selected_property = None
+            self._clear_property_details_ui()
+
+    def _clear_property_details_ui(self):
+        self.val_prop_title_deed.config(text="")
+        self.val_prop_location.config(text="")
+        self.val_prop_size.config(text="")
+        self.val_prop_price.config(text="")
+        self.current_title_image_label.config(image='')
+        self.current_title_image_label._image_ref = None
+        self.entry_buyer_name.delete(0, tk.END)
+        self.entry_buyer_contact.delete(0, tk.END)
+        self.property_listbox.selection_clear(0, tk.END)
+        self.selected_property = None
+
+    def _on_closing(self):
+        self.grab_release()
+        self.destroy()
+        if self.on_close_callback:
+            self.on_close_callback()
+            
+    def _set_window_properties(self, width, height, icon_name, parent_icon_loader):
+        self.geometry(f"{width}x{height}")
+        self.update_idletasks()
+        screen_width = self.winfo_screenwidth()
+        x = (screen_width - width) // 2
+        y = 100
+        self.geometry(f"+{x}+{y}")
+        if parent_icon_loader and icon_name:
+            try:
+                icon_image = parent_icon_loader(icon_name, size=(32, 32))
+                self.iconphoto(False, icon_image)
+                self._window_icon_ref = icon_image
+            except Exception as e:
+                print(f"Failed to set icon for {self.title()}: {e}")
+    
     def _customize_title_bar(self):
         """Customizes the title bar appearance."""
-        try:
-            # Windows-specific title bar customization
-            if os.name == 'nt':
-                from ctypes import windll, byref, sizeof, c_int
-
+        if has_ctypes and os.name == 'nt':
+            try:
+                # DWMWA_CAPTION_COLOR = 35, DWMWA_TEXT_COLOR = 36
                 DWMWA_CAPTION_COLOR = 35
                 DWMWA_TEXT_COLOR = 36
-
+                
                 hwnd = windll.user32.GetParent(self.winfo_id())
 
-                # Set title bar color to dark blue (RGB: 0, 51, 102)
-                color = c_int(0x00663300)  # BGR format for Windows
+                # Set title bar color to dark blue (RGB: 0, 51, 102 -> BGR: 102, 51, 0)
+                color = c_int(0x00663300)
                 windll.dwmapi.DwmSetWindowAttribute(
                     hwnd,
                     DWMWA_CAPTION_COLOR,
@@ -2516,19 +3139,18 @@ class SellPropertyFormBlock(tk.Toplevel):
                     sizeof(color)
                 )
 
-                # Set title text color to white
-                text_color = c_int(0x00FFFFFF)  # White in BGR
+                # Set title text color to white (RGB: 255, 255, 255 -> BGR: 255, 255, 255)
+                text_color = c_int(0x00FFFFFF)
                 windll.dwmapi.DwmSetWindowAttribute(
                     hwnd,
                     DWMWA_TEXT_COLOR,
                     byref(text_color),
                     sizeof(text_color)
                 )
-            else:
-                # Fallback for non-Windows systems
+            except Exception as e:
+                print(f"Could not customize title bar: {e}")
                 self._create_custom_title_bar()
-        except Exception as e:
-            print(f"Could not customize title bar: {e}")
+        else:
             self._create_custom_title_bar()
 
     def _create_custom_title_bar(self):
@@ -2580,175 +3202,9 @@ class SellPropertyFormBlock(tk.Toplevel):
         y = self.winfo_pointery() - self._start_y
         self.geometry(f'+{x}+{y}')
 
-    def _set_window_properties(self, width, height, icon_name, parent_icon_loader):
-        """Sets the window size, position, and icon."""
-        self.geometry(f"{width}x{height}")
-        self.update_idletasks()
-        screen_width = self.winfo_screenwidth()
-        x = (screen_width - width) // 2
-        y = 100
-        self.geometry(f"+{x}+{y}")
-        if parent_icon_loader and icon_name:
-            try:
-                icon_image = parent_icon_loader(icon_name, size=(32, 32))
-                self.iconphoto(False, icon_image)
-                self._window_icon_ref = icon_image # <--- Keep a strong reference
-            except Exception as e:
-                print(f"Failed to set icon for {self.title()}: {e}")
-    def _on_closing(self):
-        """Handle window closing, release grab, and call callback."""
-        self.grab_release()
-        self.destroy()
-        if self.on_close_callback:
-            self.on_close_callback()
-
-    def _create_widgets(self, parent_icon_loader): # Added parent_icon_loader argument
-        main_frame = ttk.Frame(self, padding="10")
-        main_frame.pack(fill="both", expand=True)
-
-        property_selection_frame = ttk.LabelFrame(main_frame, text="Select Property", padding="5")
-        property_selection_frame.pack(fill="x", pady=5)
-        property_selection_frame.columnconfigure(0, weight=1)
-
-        search_frame = ttk.Frame(property_selection_frame)
-        search_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=2)
-        search_frame.columnconfigure(0, weight=1)
-
-        self.search_var = tk.StringVar()
-        self.search_var.trace_add("write", self._filter_properties)
-        self.entry_search = ttk.Entry(search_frame, textvariable=self.search_var, width=50)
-        self.entry_search.pack(side="left", fill="x", expand=True)
-        ttk.Label(search_frame, text="Search (Title/Location):").pack(side="left", padx=(5, 2))
-
-        filter_frame = ttk.Frame(property_selection_frame)
-        filter_frame.grid(row=0, column=1, sticky="e", padx=5, pady=2)
-        ttk.Label(filter_frame, text="Size (Acres): Min").pack(side="left")
-        self.entry_min_size = ttk.Entry(filter_frame, width=8)
-        self.entry_min_size.pack(side="left", padx=1)
-        ttk.Label(filter_frame, text="Max").pack(side="left")
-        self.entry_max_size = ttk.Entry(filter_frame, width=8)
-        self.entry_max_size.pack(side="left", padx=1)
-        
-        # Load icon for Apply Filter button and store reference
-        if parent_icon_loader:
-            self._apply_filter_icon = parent_icon_loader("filter.png", size=(20, 20)) 
-        apply_btn = ttk.Button(filter_frame, text="Apply Filter", image=self._apply_filter_icon, compound=tk.LEFT, command=self._filter_properties, style='TButton')
-        apply_btn.pack(side="left", padx=2)
-        apply_btn.image = self._apply_filter_icon # Store reference for this button
-
-
-        self.property_listbox = tk.Listbox(property_selection_frame, height=6, width=70)
-        self.property_listbox.grid(row=1, column=0, columnspan=2, sticky="ew", padx=5, pady=2)
-        self.property_listbox.bind("<<ListboxSelect>>", self._on_property_select)
-
-        listbox_scrollbar = ttk.Scrollbar(property_selection_frame, orient="vertical", command=self.property_listbox.yview)
-        listbox_scrollbar.grid(row=1, column=2, sticky="ns", pady=2)
-        self.property_listbox.config(yscrollcommand=listbox_scrollbar.set)
-
-        details_frame = ttk.LabelFrame(main_frame, text="Property Details", padding="5")
-        details_frame.pack(fill="x", pady=5)
-        details_frame.columnconfigure(1, weight=1)
-        details_frame.columnconfigure(2, weight=0)
-
-        self.lbl_prop_title_deed = ttk.Label(details_frame, text="Title Deed Number:")
-        self.lbl_prop_title_deed.grid(row=0, column=0, sticky="w", pady=1, padx=5)
-        self.val_prop_title_deed = ttk.Label(details_frame, text="", font=('Arial', 10, 'bold'))
-        self.val_prop_title_deed.grid(row=0, column=1, sticky="ew", pady=1, padx=5)
-
-        self.lbl_prop_location = ttk.Label(details_frame, text="Location:")
-        self.lbl_prop_location.grid(row=1, column=0, sticky="w", pady=1, padx=5)
-        self.val_prop_location = ttk.Label(details_frame, text="", font=('Arial', 10, 'bold'))
-        self.val_prop_location.grid(row=1, column=1, sticky="ew", pady=1, padx=5)
-
-        self.lbl_prop_size = ttk.Label(details_frame, text="Size (Acres):")
-        self.lbl_prop_size.grid(row=2, column=0, sticky="w", pady=1, padx=5)
-        self.val_prop_size = ttk.Label(details_frame, text="", font=('Arial', 10, 'bold'))
-        self.val_prop_size.grid(row=2, column=1, sticky="ew", pady=1, padx=5)
-
-        self.lbl_prop_price = ttk.Label(details_frame, text="Asking Price (KES):")
-        self.lbl_prop_price.grid(row=3, column=0, sticky="w", pady=1, padx=5)
-        self.val_prop_price = ttk.Label(details_frame, text="", font=('Arial', 10, 'bold'))
-        self.val_prop_price.grid(row=3, column=1, sticky="ew", pady=1, padx=5)
-
-        self.title_deed_image_frame = ttk.LabelFrame(details_frame, text="Title Deed Image", padding=2)
-        self.title_deed_image_frame.grid(row=0, column=2, rowspan=4, sticky="nsew", padx=5, pady=2)
-        self.title_deed_image_frame.columnconfigure(0, weight=1)
-
-        self.current_title_image_label = ttk.Label(self.title_deed_image_frame)
-        self.current_title_image_label.pack(fill="both", expand=True, padx=5, pady=5)
-        # Modified lambda to just call _open_image_gallery without arguments
-        self.current_title_image_label.bind("<Button-1>", lambda e: self._open_image_gallery())
-
-
-        buyer_info_frame = ttk.LabelFrame(main_frame, text="Buyer Information", padding="5")
-        buyer_info_frame.pack(fill="x", pady=5)
-        buyer_info_frame.columnconfigure(1, weight=1)
-
-        ttk.Label(buyer_info_frame, text="Buyer Name:").grid(row=0, column=0, sticky="w", pady=2, padx=5)
-        self.entry_buyer_name = ttk.Entry(buyer_info_frame)
-        self.entry_buyer_name.grid(row=0, column=1, sticky="ew", pady=2, padx=5)
-        self.entry_buyer_name.bind("<KeyRelease>", self._update_receipt_button_state)
-
-        ttk.Label(buyer_info_frame, text="Buyer Contact Info:").grid(row=1, column=0, sticky="w", pady=2, padx=5)
-        self.entry_buyer_contact = ttk.Entry(buyer_info_frame)
-        self.entry_buyer_contact.grid(row=1, column=1, sticky="ew", pady=2, padx=5)
-        self.entry_buyer_contact.bind("<KeyRelease>", self._update_receipt_button_state)
-
-        payment_details_frame = ttk.LabelFrame(main_frame, text="Payment Details", padding="5")
-        payment_details_frame.pack(fill="x", pady=5)
-        payment_details_frame.columnconfigure(1, weight=1)
-
-        ttk.Label(payment_details_frame, text="Mode of Payment:").grid(row=0, column=0, sticky="w", pady=2, padx=5)
-        self.payment_mode_combobox = ttk.Combobox(payment_details_frame, values=["Cash", "Instalments"], state="readonly")
-        self.payment_mode_combobox.set("Cash")
-        self.payment_mode_combobox.grid(row=0, column=1, sticky="ew", pady=2, padx=5)
-
-        ttk.Label(payment_details_frame, text="Amount Paid (KES):").grid(row=1, column=0, sticky="w", pady=2, padx=5)
-        self.entry_amount_paid = ttk.Entry(payment_details_frame)
-        self.entry_amount_paid.grid(row=1, column=1, sticky="ew", pady=2, padx=5)
-        self.entry_amount_paid.bind("<KeyRelease>", self._calculate_balance)
-
-        ttk.Label(payment_details_frame, text="Discount (KES):").grid(row=2, column=0, sticky="w", pady=2, padx=5)
-        self.entry_discount = ttk.Entry(payment_details_frame)
-        self.entry_discount.grid(row=2, column=1, sticky="ew", pady=2, padx=5)
-        self.entry_discount.bind("<KeyRelease>", self._calculate_balance)
-
-        ttk.Label(payment_details_frame, text="Balance (KES):").grid(row=3, column=0, sticky="w", pady=2, padx=5)
-        self.lbl_balance = ttk.Label(payment_details_frame, text="0.00", font=("Arial", 10, "bold"))
-        self.lbl_balance.grid(row=3, column=1, sticky="ew", pady=2, padx=5)
-
-        ttk.Label(payment_details_frame, text="Date of Transaction:").grid(row=4, column=0, sticky="w", pady=2, padx=5)
-        self.entry_transaction_date = ttk.Entry(payment_details_frame)
-        self.entry_transaction_date.grid(row=4, column=1, sticky="ew", pady=2, padx=5)
-        self.entry_transaction_date.insert(0, datetime.now().strftime("%Y-%m-%d"))
-
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(pady=10)
-
-        # Load icons for buttons in this form
-        if parent_icon_loader:
-            self._sell_button_icon = parent_icon_loader("sell_property.png", size=(20, 20)) 
-            self._generate_receipt_icon = parent_icon_loader("receipt.png", size=(20, 20)) 
-            self._cancel_sell_icon = parent_icon_loader("cancel.png", size=(20, 20))
-
-        self.sell_button = ttk.Button(button_frame, text="Sell Property", image=self._sell_button_icon, compound=tk.LEFT, command=self._sell_property, style='Green.TButton')
-        self.sell_button.pack(side="left", padx=5)
-        self.sell_button.image = self._sell_button_icon # Store reference for this button
-
-        self.generate_receipt_button = ttk.Button(button_frame, text="Generate Receipt", image=self._generate_receipt_icon, compound=tk.LEFT, command=self._generate_receipt, style='Yellow.TButton')
-        self.generate_receipt_button.pack(side="left", padx=5)
-        self.generate_receipt_button.image = self._generate_receipt_icon # Store reference for this button
-
-        self.cancel_button = ttk.Button(button_frame, text="Cancel", image=self._cancel_sell_icon, compound=tk.LEFT, command=self.destroy, style='Red.TButton')
-        self.cancel_button.pack(side="left", padx=5)
-        self.cancel_button.image = self._cancel_sell_icon # Store reference for this button
-
-        self._calculate_balance()
-        self._update_receipt_button_state()
-
     def _populate_property_list(self, search_query="", min_size=None, max_size=None):
         self.property_listbox.delete(0, tk.END)
-        self.available_properties_data = self.db_manager.get_all_properties_blocks(status='Available',property_type='Block')
+        self.available_properties_data = self.db_manager.get_all_properties_lots(status='Available',property_type='Block')
 
         if not self.available_properties_data:
             self.property_listbox.insert(tk.END, "NO AVAILABLE PROPERTIES FOUND.")
@@ -2783,7 +3239,7 @@ class SellPropertyFormBlock(tk.Toplevel):
         for prop in filtered_properties:
             self.property_listbox.insert(tk.END, f"{prop['title_deed_number'].upper()} - {prop['location'].upper()} ({prop['size']:.2f} ACRES) - KES {prop['price']:,.2f}")
 
-        self.filtered_properties_data = filtered_properties
+        self.available_properties_data = filtered_properties
 
     def _filter_properties(self, *args):
         search_query = self.search_var.get().strip()
@@ -2823,49 +3279,7 @@ class SellPropertyFormBlock(tk.Toplevel):
 
         self._populate_property_list(search_query, min_size, max_size)
 
-    def _on_property_select(self, event):
-        selected_index = self.property_listbox.curselection()
-        if selected_index:
-            index = selected_index[0]
-            self.selected_property = self.available_properties_data[index]
-
-            prop_id = self.selected_property['property_id']
-            title_deed = self.selected_property['title_deed_number']
-            location = self.selected_property['location']
-            size = self.selected_property['size']
-            description = self.selected_property['description']
-            price = self.selected_property['price']
-            prop_images_str = self.selected_property['image_paths']
-            title_images_str = self.selected_property['title_image_paths']
-            status = self.selected_property['status']
-
-            self.val_prop_title_deed.config(text=title_deed.upper())
-            self.val_prop_location.config(text=location.upper())
-            self.val_prop_size.config(text=f"{size:.2f} ACRES")
-            self.val_prop_price.config(text=f"KES {price:,.2f}")
-
-            self.entry_amount_paid.delete(0, tk.END)
-            self.entry_amount_paid.insert(0, str(price))
-
-            if not self.entry_discount.get().strip():
-                self.entry_discount.insert(0, "0.00")
-
-            self._calculate_balance()
-            self._update_receipt_button_state()
-
-            self._display_single_title_deed_thumbnail(title_images_str)
-
-        else:
-            self.selected_property = None
-            self.val_prop_title_deed.config(text="")
-            self.val_prop_location.config(text="")
-            self.val_prop_size.config(text="")
-            self.val_prop_price.config(text="")
-            self.entry_amount_paid.delete(0, tk.END)
-            self.entry_discount.delete(0, tk.END)
-            self.lbl_balance.config(text="0.00")
-            self._update_receipt_button_state()
-            self._clear_single_title_deed_thumbnail()
+    
 
     def _display_single_title_deed_thumbnail(self, title_images_str):
         self._clear_single_title_deed_thumbnail()
@@ -3034,303 +3448,7 @@ class SellPropertyFormBlock(tk.Toplevel):
                 messagebox.showerror("Image Error", f"Could not load image: {e}")
                 gallery_window.gallery_image_label.config(image='', text="Error loading image.")
                 gallery_window.gallery_image_label.image = None
-        else:
-            gallery_window.gallery_image_label.config(image='', text="No image to display.")
-            gallery_window.gallery_image_label.image = None
-
-
-    def _calculate_balance(self, *args):
-        """Calculates and updates the balance based on property price, amount paid, and discount."""
-        if not self.selected_property:
-            self.lbl_balance.config(text="0.00")
-            return
-
-        try:
-            total_price = self.selected_property['price']
-            amount_paid_str = self.entry_amount_paid.get().strip()
-            discount_str = self.entry_discount.get().strip()
-
-            amount_paid = float(amount_paid_str) if amount_paid_str else 0.0
-            discount = float(discount_str) if discount_str else 0.0
-
-            if amount_paid < 0 or discount < 0:
-                messagebox.showwarning("Input Error", "Amount paid and discount cannot be negative.")
-                if amount_paid < 0: self.entry_amount_paid.delete(0, tk.END); self.entry_amount_paid.insert(0, "0.00")
-                if discount < 0: self.entry_discount.delete(0, tk.END); self.entry_discount.insert(0, "0.00")
-                self.lbl_balance.config(text=f"{total_price:,.2f}")
-                return
-
-            net_price = total_price - discount
-            balance = net_price - amount_paid
-
-            self.lbl_balance.config(text=f"{balance:,.2f}")
-            self._update_receipt_button_state()
-
-        except ValueError:
-            self.lbl_balance.config(text="Invalid Input")
-            self._update_receipt_button_state()
-
-    def _update_receipt_button_state(self, *args):
-        """
-        Enables the 'Generate Receipt' button only if a property is selected
-        and buyer information and amount paid are provided, and balance is not 'Invalid Input'.
-        """
-        is_property_selected = self.selected_property is not None
-        buyer_name_present = bool(self.entry_buyer_name.get().strip())
-        buyer_contact_present = bool(self.entry_buyer_contact.get().strip())
         
-        balance_text = self.lbl_balance.cget("text")
-        is_balance_valid = balance_text != "Invalid Input" and balance_text.replace(',', '.').replace('KES ', '').replace('KSh ', '').strip() not in ["", "-"]
-
-        can_generate_receipt = is_property_selected and buyer_name_present and buyer_contact_present and is_balance_valid
-
-        if can_generate_receipt:
-            self.generate_receipt_button.config(state="normal")
-        else:
-            self.generate_receipt_button.config(state="disabled")
-
-    def _sell_property(self):
-        if not self.selected_property:
-            messagebox.showwarning("Validation Error", "Please select a property to sell.")
-            return
-
-        buyer_name = self.entry_buyer_name.get().strip()
-        buyer_contact = self.entry_buyer_contact.get().strip()
-        payment_mode = self.payment_mode_combobox.get()
-        amount_paid_str = self.entry_amount_paid.get().strip()
-        discount_str = self.entry_discount.get().strip()
-
-        if not buyer_name or not buyer_contact or not amount_paid_str:
-            messagebox.showerror("Input Error", "Buyer Name, Contact Info, and Amount Paid are required.")
-            return
-
-        try:
-            amount_paid_input = float(amount_paid_str) # Amount the user intends to pay
-            discount = float(discount_str) if discount_str else 0.0
-            if amount_paid_input < 0 or discount < 0:
-                messagebox.showerror("Input Error", "Amount Paid and Discount cannot be negative.")
-                return
-        except ValueError:
-            messagebox.showerror("Input Error", "Invalid numeric input for Amount Paid or Discount.")
-            return
-
-        try:
-            original_price = self.selected_property['price']
-            
-            # Calculate the price after discount
-            net_price_after_discount = original_price - discount
-            
-            # --- MODIFICATION START ---
-            # Error if discount makes net price negative
-            if net_price_after_discount < 0:
-                messagebox.showerror(
-                    "Input Error", 
-                    f"Discount (KES {discount:,.2f}) cannot make the property's net price negative. "
-                    f"Original Price: KES {original_price:,.2f}. Please adjust the discount."
-                )
-                return # Stop transaction
-
-            # Check for overpayment and refuse to proceed
-            if amount_paid_input > net_price_after_discount:
-                messagebox.showerror(
-                    "Input Error", 
-                    f"Amount paid (KES {amount_paid_input:,.2f}) cannot exceed the property's net price "
-                    f"after discount (KES {net_price_after_discount:,.2f}). Please adjust the amount paid."
-                )
-                return # Stop transaction
-            
-            # If we reach here, input is valid: amount_paid_input is not negative,
-            # discount is not negative, net_price_after_discount is not negative,
-            # and amount_paid_input does not exceed net_price_after_discount.
-            
-            amount_paid_to_record = amount_paid_input # Now, it's safe to record the input amount
-            balance = net_price_after_discount - amount_paid_to_record
-            # --- MODIFICATION END ---
-
-        except Exception as e:
-            messagebox.showerror("Calculation Error", f"Error calculating sale details: {e}")
-            return
-
-        client_data = self.db_manager.get_client_by_contact_info(buyer_contact)
-        if client_data:
-            client_id = client_data['client_id']
-            if client_data['name'] != buyer_name:
-                self.db_manager.update_client(client_id, name=buyer_name)
-        else:
-            client_id = self.db_manager.add_client(buyer_name, buyer_contact)
-            if not client_id:
-                messagebox.showerror("Database Error", "Failed to add new client.")
-                return
-
-        receipt_path = None # Will be updated after PDF generation if successful
-
-        transaction_id = self.db_manager.add_transaction(
-            self.selected_property['property_id'],
-            client_id,
-            payment_mode,
-            amount_paid_to_record, # Use the validated and accepted amount here
-            discount,
-            balance,                 # This balance is now calculated from valid inputs
-            receipt_path
-        )
-
-        if transaction_id:
-            # Set property status to 'Sold' if the transaction is successful
-            self.db_manager.update_property(self.selected_property['property_id'], status='Sold')
-
-            if messagebox.askyesno("Generate Receipt?", "Transaction recorded. Do you want to generate a receipt now?"):
-                generated_receipt_path = self._generate_receipt(transaction_id=transaction_id, save_only=True)
-                if generated_receipt_path:
-                    # Update the transaction record with the receipt path
-                    self.db_manager.update_transaction(transaction_id, receipt_path=generated_receipt_path)
-
-            messagebox.showinfo("Success", "Property sold and transaction recorded successfully!")
-            self.refresh_callback() # Call the callback to refresh the main view
-            self.destroy() # Close the Sell Property form
-        else:
-            messagebox.showerror("Error", "Failed to record transaction.")
-
-    def _generate_receipt(self, transaction_id=None, save_only=False):
-        """
-        Generates a PDF receipt and optionally saves it.
-        If transaction_id is provided, it's assumed this is called after a successful sale.
-        If save_only is True, it will save but not attempt to initiate a print dialog.
-
-        Args:
-            transaction_id (str, optional): The ID of the transaction. Defaults to None.
-            save_only (bool, optional): If True, only saves the receipt, does not
-                                        prompt for printing. Defaults to False.
-
-        Returns:
-            str or None: The relative path to the saved PDF file if successful,
-                         otherwise None.
-        """
-        # 1. Input Validation and Data Extraction
-        # Check if essential fields are filled
-        if not self.selected_property or not self.entry_buyer_name.get().strip() or not self.entry_buyer_contact.get().strip():
-            messagebox.showwarning("Missing Information", "Please select a property and fill in buyer details to generate a receipt.")
-            return None
-
-        # Extract property details safely
-        try:
-            prop_title_deed = self.val_prop_title_deed.cget("text")
-            prop_location = self.val_prop_location.cget("text")
-            prop_size = self.val_prop_size.cget("text")
-            prop_price = float(self.selected_property.get('price', 0.0)) # Use .get() with default for safety
-        except (KeyError, ValueError) as e:
-            messagebox.showerror("Data Error", f"Property details are missing or invalid: {e}")
-            return None
-
-        # Extract buyer and payment details
-        buyer_name = self.entry_buyer_name.get().strip()
-        buyer_contact = self.entry_buyer_contact.get().strip()
-        payment_mode = self.payment_mode_combobox.get()
-        transaction_date = self.entry_transaction_date.get().strip()
-
-        # Safely convert numeric inputs
-        amount_paid_str = self.entry_amount_paid.get().strip()
-        discount_str = self.entry_discount.get().strip()
-        balance_text = self.lbl_balance.cget("text").replace(',', '') # Remove commas for float conversion
-
-        try:
-            amount_paid = float(amount_paid_str) if amount_paid_str else 0.0
-            discount = float(discount_str) if discount_str else 0.0
-            balance = float(balance_text) if balance_text else 0.0
-        except ValueError:
-            messagebox.showerror("Receipt Error", "Invalid numeric data detected for amount paid, discount, or balance. Please check your inputs.")
-            return None
-
-        # Calculate net price
-        net_price = prop_price - discount
-
-        # 2. PDF Document Generation using ReportLab
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        # Sanitize title deed for filename
-        safe_prop_title_deed = "".join(c for c in prop_title_deed if c.isalnum() or c in (' ', '-', '_')).replace(' ', '_')
-        receipt_filename = f"receipt_{timestamp}_{safe_prop_title_deed}.pdf"
-        receipt_full_path = os.path.join(RECEIPTS_DIR, receipt_filename)
-
-        try:
-            # Create a SimpleDocTemplate which handles page layout
-            doc = SimpleDocTemplate(receipt_full_path, pagesize=letter)
-            # Create a list to hold the document's flowables (paragraphs, spaces, etc.)
-            story = []
-
-            # Get default styles
-            styles = getSampleStyleSheet()
-            normal_style = styles['Normal']
-            h1_style = styles['h1']
-            h2_style = styles['h2']
-
-            # Add content to the story
-            # Header
-            story.append(Paragraph("<font size='16' color='#333333'><b>PROPERTY SALE RECEIPT</b></font>", h1_style))
-            story.append(Paragraph("<font size='14' color='#555555'>MATHENGE REAL ESTATE</font>", h2_style))
-            # Reduced vertical space to help fit content on one page
-            story.append(Spacer(1, 0.2 * letter[1])) # Changed from 0.4 * letter[1]
-
-            # Transaction Details
-            story.append(Paragraph(f"<b>Date:</b> {transaction_date}", normal_style))
-            story.append(Paragraph(f"<b>Transaction ID:</b> {transaction_id if transaction_id else 'N/A'}", normal_style))
-            story.append(Spacer(1, 0.15 * letter[1])) # Slightly reduced
-
-            # Buyer Details
-            story.append(Paragraph("<font size='12' color='#444444'><b>BUYER DETAILS:</b></font>", h2_style))
-            story.append(Paragraph(f"<b>Name:</b> {buyer_name}", normal_style))
-            story.append(Paragraph(f"<b>Contact:</b> {buyer_contact}", normal_style))
-            story.append(Spacer(1, 0.15 * letter[1])) # Slightly reduced
-
-            # Property Details
-            story.append(Paragraph("<font size='12' color='#444444'><b>PROPERTY DETAILS:</b></font>", h2_style))
-            story.append(Paragraph(f"<b>Title Deed:</b> {prop_title_deed}", normal_style))
-            story.append(Paragraph(f"<b>Location:</b> {prop_location}", normal_style))
-            story.append(Paragraph(f"<b>Size:</b> {prop_size}", normal_style))
-            story.append(Spacer(1, 0.15 * letter[1])) # Slightly reduced
-
-            # Financial Summary
-            story.append(Paragraph("<font size='12' color='#444444'><b>FINANCIAL SUMMARY:</b></font>", h2_style))
-            story.append(Paragraph(f"<b>Original Price:</b> KES {prop_price:,.2f}", normal_style))
-            # Using non-breaking space &nbsp; for alignment where precise control is needed
-            story.append(Paragraph(f"<b>Discount:</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; KES {discount:,.2f}", normal_style))
-            story.append(Paragraph(f"<b>Net Price:</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; KES {net_price:,.2f}", normal_style))
-            story.append(Paragraph(f"<b>Amount Paid:</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; KES {amount_paid:,.2f}", normal_style))
-            story.append(Paragraph(f"<b>Balance Due:</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; KES {balance:,.2f}", normal_style))
-            story.append(Paragraph(f"<b>Payment Mode:</b> {payment_mode}", normal_style))
-            story.append(Spacer(1, 0.2 * letter[1])) # Changed from 0.4 * letter[1]
-
-            # Footer
-            story.append(Paragraph("<center>Thank you for your business!</center>", normal_style))
-            story.append(Paragraph("<center><font size='8' color='#888888'>Generated on " + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "</font></center>", normal_style))
-
-            # Build the PDF document from the story
-            doc.build(story)
-
-            messagebox.showinfo("Receipt Generated", f"Receipt saved successfully to:\n{receipt_full_path}")
-
-            # 3. Optional Printing Prompt
-            if not save_only:
-                if messagebox.askyesno("Print Receipt", "Do you want to print this receipt now?"):
-                    try:
-                        # Placeholder for actual printing logic
-                        # Printing PDFs directly from Python is OS-dependent and often
-                        # involves calling external commands or specialized libraries.
-                        # Examples (highly platform-specific, not universally guaranteed to work):
-                        # On Windows: os.startfile(receipt_full_path, "print")
-                        # On macOS: subprocess.run(["open", "-a", "Preview", "-p", receipt_full_path])
-                        # On Linux (requires 'lp' or 'lpr'): subprocess.run(["lp", receipt_full_path])
-                        messagebox.showinfo("Print Status",
-                                            "Printing functionality is highly OS-dependent and requires specific setup.\n"
-                                            "The receipt has been saved. Please open and print it manually from:\n"
-                                            f"{receipt_full_path}")
-                    except Exception as e:
-                        messagebox.showerror("Print Error", f"Failed to initiate print job. Please print manually. Error: {e}")
-
-            # Return the relative path, useful for storing in a database or displaying
-            return os.path.relpath(receipt_full_path, DATA_DIR).replace("\\", "/")
-
-        except Exception as e:
-            messagebox.showerror("PDF Generation Error", f"An error occurred while generating or saving the receipt PDF: {e}")
-            return None
 
 class RecordSinglePaymentForm(tk.Toplevel):
     def __init__(self, master, db_manager, refresh_callback, parent_icon_loader=None,
@@ -3454,10 +3572,10 @@ class RecordSinglePaymentForm(tk.Toplevel):
                 self.lbl_amount_paid.config(text=f"KES {job_info['total_amount_paid']:,.2f}")
                 
                 # Calculate and display current balance
-                balance = property_info['price'] - job_info['total_amount_paid']
-                self.lbl_current_balance.config(text=f"KES {balance:,.2f}")
+                current_balance = job_info.get('balance',0.0)
+                self.lbl_current_balance.config(text=f"KES {current_balance:,.2f}")
                 
-                if balance <= 0:
+                if current_balance <= 0:
                     self.lbl_current_balance.config(foreground='green')
                     self.entry_payment_amount.config(state='disabled')
                 else:
@@ -3482,19 +3600,13 @@ class RecordSinglePaymentForm(tk.Toplevel):
             messagebox.showerror("Invalid Input", "Please enter a valid number for the payment amount.")
             return
         
-        job_info = self.db_manager.get_transaction(self.job_id_to_pay)
-        if not job_info:
+        latest_job_info = self.db_manager.get_transaction(self.job_id_to_pay)
+        if not latest_job_info:
             messagebox.showerror("Error", "Job information could not be retrieved.")
             return
         
-        job_info = self.db_manager.get_transaction(self.job_id_to_pay)
-        if job_info:
-                property_info = self.db_manager.get_property(job_info['property_id'])
-                self.lbl_fee.config(text=f"KES {property_info['price']:,.2f}")
-
-
-            
-        current_balance = property_info['price'] - job_info['total_amount_paid']
+        current_balance = latest_job_info.get('balance', 0.0)
+        current_total_paid = latest_job_info.get('total_amount_paid', 0.0)
         
         if payment_amount > current_balance:
             messagebox.showerror(
@@ -3503,15 +3615,14 @@ class RecordSinglePaymentForm(tk.Toplevel):
                 "Please enter a lower amount that doesn't exceed the outstanding balance."
             )
             return
-        
-        # Calculate new amount_paid (add to existing amount)
-        new_amount_paid = job_info['total_amount_paid'] + payment_amount
-        
+        new_amount_paid = current_total_paid + payment_amount
+        new_balance = current_balance - payment_amount
+
         # Update the database
         success = self.db_manager.update_transaction(
             self.job_id_to_pay, 
             total_amount_paid=new_amount_paid,
-            balance=property_info['price'] - new_amount_paid
+            balance=new_balance
         )
         
         if success:
@@ -3549,7 +3660,7 @@ class TrackPaymentsForm(tk.Toplevel):
 
         # Pagination variables for TrackPaymentsForm (NEW/MOVED)
         self.current_page = 1
-        self.items_per_page = 10 # You can adjust this as needed
+        self.items_per_page = 12 # You can adjust this as needed
         self.total_pages = 1
         self.current_transactions_data = [] # To store filtered data for pagination
 
@@ -4075,7 +4186,7 @@ class SoldPropertiesView(tk.Toplevel):
         self.transient(master)
 
         self.current_page = 1
-        self.items_per_page = 10
+        self.items_per_page = 20
         self.total_pages = 1
 
         self.current_filter_start_date = None
@@ -4425,7 +4536,7 @@ class ViewAllPropertiesForm(tk.Toplevel):
         self._window_icon_ref = None
 
         self.current_page = 1
-        self.items_per_page = 10 # Display first 10 newest properties (determined by id)
+        self.items_per_page = 20 # Display first 10 newest properties (determined by id)
         self.total_pages = 1
         self.all_properties_data = [] # To store all filtered properties for pagination
 

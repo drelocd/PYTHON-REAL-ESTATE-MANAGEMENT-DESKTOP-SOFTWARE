@@ -55,7 +55,7 @@ class PropertyTransferForm(tk.Toplevel):
         self._customize_title_bar()
 
         # Load data needed for dropdowns and real-time search
-        self.all_clients = self.db_manager.get_all_clients()
+        self.all_clients = self.db_manager.get_all_clients_fortransferform()
         self.all_agents = self.db_manager.get_all_agents()
         
         # New attributes to hold entry and combobox widgets

@@ -1,19 +1,109 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import os
-from database import DatabaseManager  # Assuming database.py is in the same directory
-from PIL import Image, ImageTk  # Required for loading images, even if for dummy icons
+import platform
+from database import DatabaseManager
+from PIL import Image, ImageTk, ImageDraw
 
-# Define paths relative to the project root for icon loading (if needed, simplified for this example)
+try:
+    from ctypes import windll, c_int, byref, sizeof
+    HAS_CTYPES = True
+except (ImportError, OSError):
+    HAS_CTYPES = False
+
+# Define paths relative to the project root for icon loading
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ASSETS_DIR = os.path.join(BASE_DIR, 'assets')
 ICONS_DIR = os.path.join(ASSETS_DIR, 'icons')
 
 
-class ClientForm(tk.Toplevel):
+class BaseForm(tk.Toplevel):
     """
-    A Toplevel window for managing client information (Add, Update, View)
-    and displaying their associated land purchases and survey jobs.
+    Base class for all forms with common functionality:
+    - Custom title bar color on Windows
+    - Custom icon
+    - Centered positioning
+    - Modal behavior
+    """
+    
+    def __init__(self, parent, title, width, height, icon_name=None, icon_loader=None):
+        """Initialize the base form with common properties."""
+        super().__init__(parent)
+        self.parent = parent
+        self.title(title)
+        self.geometry(f"{width}x{height}")
+        
+        # Prevent resizing but keep standard window buttons
+        self.resizable(False, False)
+        self.transient(parent)
+        
+        # Set window attributes for Windows
+        if platform.system() == 'Windows' and HAS_CTYPES:
+            self._customize_title_bar()
+        
+        # Center the window
+        self._center_window(width, height)
+        
+        # Set custom icon if provided
+        if icon_name and icon_loader:
+            self._set_icon(icon_name, icon_loader)
+        
+        # Make window modal
+        self.grab_set()
+        self.focus_set()
+        
+        # Handle window closing
+        self.protocol("WM_DELETE_WINDOW", self._on_closing)
+    
+    def _customize_title_bar(self):
+        """Applies a custom color to the title bar on Windows systems."""
+        try:
+            DWMWA_CAPTION_COLOR = 35
+            DWMWA_TEXT_COLOR = 36
+            hwnd = windll.user32.GetParent(self.winfo_id())
+            
+            # Use the same blue color as your payment plan forms (0x00663300 - dark blue in BGR format)
+            color = c_int(0x00663300)
+            windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, DWMWA_CAPTION_COLOR, byref(color), sizeof(color)
+            )
+            
+            # Set white text
+            text_color = c_int(0x00FFFFFF)  # White in BGR
+            windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, DWMWA_TEXT_COLOR, byref(text_color), sizeof(text_color)
+            )
+        except Exception as e:
+            print(f"Could not customize title bar: {e}")
+    
+    def _center_window(self, width, height):
+        """Center the window on the screen."""
+        self.update_idletasks()
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        x = (screen_width - width) // 2
+        y = (screen_height - height) // 2
+        self.geometry(f"+{x}+{y}")
+    
+    def _set_icon(self, icon_name, icon_loader):
+        """Set the window icon using the provided icon loader."""
+        try:
+            icon_image = icon_loader(icon_name, size=(32, 32))
+            self.iconphoto(False, icon_image)
+            self._window_icon_ref = icon_image
+        except Exception as e:
+            print(f"Failed to set icon for {self.title()}: {e}")
+    
+    def _on_closing(self):
+        """Handle window closing."""
+        self.grab_release()
+        self.destroy()
+
+
+class ClientForm(BaseForm):
+    """
+    A Toplevel window for managing client information and displaying their
+    associated land purchases and survey jobs.
     """
 
     def __init__(self, parent, db_manager, user_id=None, parent_icon_loader=None):
@@ -23,86 +113,116 @@ class ClientForm(tk.Toplevel):
         Args:
             parent: The parent Tkinter window.
             db_manager: An instance of DatabaseManager for database interactions.
-            user_id: The ID of the currently logged-in user (optional, for 'added_by_user_id').
-            parent_icon_loader: A callable to load icons, typically from the main app.
+            user_id: The ID of the currently logged-in user.
+            parent_icon_loader: A callable to load icons from the parent app.
         """
-        super().__init__(parent)
-        self.parent = parent
+        super().__init__(parent, "Client Management", 1300, 780, "client.png", parent_icon_loader)
+        
         self.db_manager = db_manager
         self.user_id = user_id
-        self.parent_icon_loader = parent_icon_loader  # For consistent icon loading
+        self.parent_icon_loader = parent_icon_loader
 
-        self.title("Client Management & Activity Overview")
-        self.geometry("1000x800")  # Increased size to accommodate new sections
-        self.resizable(True, True)
-
+        self._load_button_icons()
         self._create_widgets()
         self._load_clients()
 
+    def _load_button_icons(self):
+        """Load icons for buttons."""
+        try:
+            # Load add icon
+            self.add_icon_img = self.parent_icon_loader("add.png", size=(16, 16))
+            # Load update icon
+            self.update_icon_img = self.parent_icon_loader("update.png", size=(16, 16))
+            # Load delete icon
+            self.delete_icon_img = self.parent_icon_loader("delete.png", size=(16, 16))
+        except Exception as e:
+            print(f"Failed to load button icons: {e}")
+            self.add_icon_img = None
+            self.update_icon_img = None
+            self.delete_icon_img = None
+        
     def _create_widgets(self):
+        """Creates and packs all the widgets for the UI."""
+        
         main_frame = ttk.Frame(self, padding="15")
         main_frame.pack(fill="both", expand=True)
 
+        # --- Top Pane: Search Bar & Add Button ---
+        top_controls_frame = ttk.Frame(main_frame, padding="5")
+        top_controls_frame.pack(fill=tk.X, pady=(0, 10))
+
+        # Search bar
+        search_frame = ttk.Frame(top_controls_frame)
+        search_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Label(search_frame, text="Search:").pack(side=tk.LEFT, padx=(0, 5))
+        self.search_var = tk.StringVar()
+        self.search_entry = ttk.Entry(search_frame, textvariable=self.search_var)
+        self.search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.search_entry.bind("<KeyRelease>", self._filter_clients)
+        
+        # Add New Client Button
+        self.add_client_button = ttk.Button(top_controls_frame, text="Add New Client", 
+                                            image=self.add_icon_img, compound=tk.LEFT, 
+                                            style="Green.TButton", command=self._open_add_client_form)
+        self.add_client_button.pack(side=tk.RIGHT, padx=(10, 0))
+
+        style = ttk.Style()
+        style.configure('Green.TButton', foreground='black',background='green', font=('Helvetica', 10, 'bold'))
+        style.map('Green.TButton', background=[('active', 'light green')])
+
+        # --- Paned Window for Client List and Associated Data ---
         paned_window = ttk.PanedWindow(main_frame, orient=tk.VERTICAL)
-        paned_window.pack(fill="both", expand=True, pady=10)
+        paned_window.pack(fill="both", expand=True, pady=1)
+        paned_window.bind("<B1-Motion>", "break")
 
-        # --- Top Pane: Client Details & List ---
-        top_pane = ttk.Frame(paned_window)
-        paned_window.add(top_pane, weight=1)
+        # Top Pane: Client List View
+        client_list_pane = ttk.Frame(paned_window)
+        paned_window.add(client_list_pane, weight=1)
 
-        # Input Frame for Adding/Updating Clients
-        input_frame = ttk.LabelFrame(top_pane, text="Client Details", padding="15")
-        input_frame.pack(fill="x", pady=10)
+        # New frame to hold the Treeview and the buttons below it
+        tree_and_buttons_frame = ttk.Frame(client_list_pane, padding="10")
+        tree_and_buttons_frame.pack(fill="both", expand=True)
 
-        ttk.Label(input_frame, text="Client Name:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        self.client_name_entry = ttk.Entry(input_frame, width=40)
-        self.client_name_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
-
-        ttk.Label(input_frame, text="Contact Info (Email/Phone):").grid(row=1, column=0, padx=5, pady=5, sticky="w")
-        self.contact_info_entry = ttk.Entry(input_frame, width=40)
-        self.contact_info_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
-
-        # Buttons for actions
-        button_frame = ttk.Frame(input_frame)
-        button_frame.grid(row=2, column=0, columnspan=2, pady=10)
-
-        self.add_button = ttk.Button(button_frame, text="Add New Client", command=self._add_client)
-        self.add_button.pack(side="left", padx=5)
-
-        self.update_button = ttk.Button(button_frame, text="Update Selected Client", command=self._update_client)
-        self.update_button.pack(side="left", padx=5)
-        self.update_button.config(state="disabled")
-
-        self.clear_button = ttk.Button(button_frame, text="Clear Form", command=self._clear_form)
-        self.clear_button.pack(side="left", padx=5)
-
-        # Keep this single definition of the delete button
-        self.delete_button = ttk.Button(button_frame, text="Delete Selected Client", command=self._delete_client)
-        self.delete_button.pack(side="right", padx=5)
-        self.delete_button.config(state="disabled")
-
-        # Client List View
-        list_frame = ttk.LabelFrame(top_pane, text="Existing Clients", padding="10")
-        list_frame.pack(fill="both", expand=True, pady=10)
-
+        list_frame = ttk.LabelFrame(tree_and_buttons_frame, text="Existing Clients")
+        list_frame.pack(fill="both", expand=True, pady=(0, 5))
+        
         self.tree = ttk.Treeview(list_frame, columns=("ID", "Name", "Contact Info", "Added By User"), show="headings")
         self.tree.heading("ID", text="ID")
         self.tree.heading("Name", text="Client Name")
         self.tree.heading("Contact Info", text="Contact Info")
         self.tree.heading("Added By User", text="Added By User ID")
-
         self.tree.column("ID", width=50, anchor="center")
         self.tree.column("Name", width=200)
         self.tree.column("Contact Info", width=250)
         self.tree.column("Added By User", width=100, anchor="center")
-
-        self.tree.pack(fill="both", expand=True)
-        self.tree.bind("<<TreeviewSelect>>", self._on_client_select)
-
+        self.tree.pack(side="left", fill="both", expand=True)
+        
         # Scrollbar for the Treeview
         scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
+
+        self.tree.bind("<<TreeviewSelect>>", self._on_client_select)
+
+        # --- Buttons below the table ---
+        button_frame = ttk.Frame(tree_and_buttons_frame)
+        button_frame.pack(fill=tk.X, pady=(5, 0))
+
+        # Re-ordered and re-packed the buttons
+        self.update_button = ttk.Button(button_frame, text="Update Selected Client", 
+                                        image=self.update_icon_img, compound=tk.LEFT,
+                                        style="Yellow.TButton", command=self._open_update_client_form, state="disabled")
+        self.update_button.pack(side=tk.LEFT, padx=(0, 5))
+        
+        self.delete_button = ttk.Button(button_frame, text="Delete Selected Client", 
+                                        image=self.delete_icon_img, compound=tk.LEFT, 
+                                        style="Red.TButton", command=self._delete_client, state="disabled")
+        self.delete_button.pack(side=tk.RIGHT, padx=(5, 0))
+        
+        style.configure('Red.TButton', foreground='black',background='red', font=('Helvetica', 10, 'bold'))
+        style.map('Red.TButton', background=[('active', 'salmon')])
+        style.configure('Yellow.TButton', foreground='black',background='yellow', font=('Helvetica', 10, 'bold'))
+        style.map('Yellow.TButton', background=[('active', 'gold')])
 
         # --- Bottom Pane: Associated Activities ---
         bottom_pane = ttk.Frame(paned_window)
@@ -110,13 +230,11 @@ class ClientForm(tk.Toplevel):
 
         notebook_activities = ttk.Notebook(bottom_pane)
         notebook_activities.pack(fill="both", expand=True, padx=5, pady=5)
-
+        
         # Land Purchases Tab
-        land_frame = ttk.Frame(notebook_activities, padding="10")
-        notebook_activities.add(land_frame, text="   Associated Land Purchases   ")
-
-        self.land_tree = ttk.Treeview(land_frame, columns=(
-        "Prop ID", "Title Deed", "Location", "Size", "Price", "Status", "Purchase Date"), show="headings")
+        land_frame = ttk.Frame(notebook_activities, padding="2")
+        notebook_activities.add(land_frame, text="Associated Land Purchases")
+        self.land_tree = ttk.Treeview(land_frame, columns=("Prop ID", "Title Deed", "Location", "Size", "Price", "Status", "Purchase Date"), show="headings")
         self.land_tree.heading("Prop ID", text="Property ID")
         self.land_tree.heading("Title Deed", text="Title Deed No.")
         self.land_tree.heading("Location", text="Location")
@@ -124,26 +242,12 @@ class ClientForm(tk.Toplevel):
         self.land_tree.heading("Price", text="Price")
         self.land_tree.heading("Status", text="Status")
         self.land_tree.heading("Purchase Date", text="Purchase Date")
-
-        self.land_tree.column("Prop ID", width=70, anchor="center")
-        self.land_tree.column("Title Deed", width=120)
-        self.land_tree.column("Location", width=120)
-        self.land_tree.column("Size", width=80)
-        self.land_tree.column("Price", width=100)
-        self.land_tree.column("Status", width=80)
-        self.land_tree.column("Purchase Date", width=100)
-
         self.land_tree.pack(fill="both", expand=True)
-        land_scrollbar = ttk.Scrollbar(land_frame, orient="vertical", command=self.land_tree.yview)
-        self.land_tree.configure(yscrollcommand=land_scrollbar.set)
-        land_scrollbar.pack(side="right", fill="y")
-
+        
         # Survey Jobs Tab
-        survey_frame = ttk.Frame(notebook_activities, padding="10")
-        notebook_activities.add(survey_frame, text="   Associated Survey Jobs   ")
-
-        self.survey_tree = ttk.Treeview(survey_frame, columns=(
-        "Job ID", "Location", "Job Type", "Fee", "Status", "Deadline", "Created At"), show="headings")
+        survey_frame = ttk.Frame(notebook_activities, padding="2")
+        notebook_activities.add(survey_frame, text="Associated Survey Jobs")
+        self.survey_tree = ttk.Treeview(survey_frame, columns=("Job ID", "Location", "Job Type", "Fee", "Status", "Deadline", "Created At"), show="headings")
         self.survey_tree.heading("Job ID", text="Job ID")
         self.survey_tree.heading("Location", text="Location")
         self.survey_tree.heading("Job Type", text="Job Type")
@@ -151,66 +255,218 @@ class ClientForm(tk.Toplevel):
         self.survey_tree.heading("Status", text="Status")
         self.survey_tree.heading("Deadline", text="Deadline")
         self.survey_tree.heading("Created At", text="Created At")
-
-        self.survey_tree.column("Job ID", width=70, anchor="center")
-        self.survey_tree.column("Location", width=120)
-        self.survey_tree.column("Job Type", width=100)
-        self.survey_tree.column("Fee", width=80)
-        self.survey_tree.column("Status", width=80)
-        self.survey_tree.column("Deadline", width=100)
-        self.survey_tree.column("Created At", width=100)
-
         self.survey_tree.pack(fill="both", expand=True)
-        survey_scrollbar = ttk.Scrollbar(survey_frame, orient="vertical", command=self.survey_tree.yview)
-        self.survey_tree.configure(yscrollcommand=survey_scrollbar.set)
-        survey_scrollbar.pack(side="right", fill="y")
 
     def _load_clients(self):
+        """Clears and re-populates the client Treeview."""
         for item in self.tree.get_children():
             self.tree.delete(item)
-
         clients = self.db_manager.get_all_clients()
         if clients:
             for client in clients:
-                self.tree.insert("", "end", values=(
-                client['client_id'], client['name'], client['contact_info'], client['added_by_username']))
-        self._clear_associated_data()  # Clear associated data when loading all clients
+                self.tree.insert("", "end", values=(client['client_id'], client['name'], client['contact_info'], client['added_by_username']))
+        self._clear_associated_data()
 
-    def _add_client(self):
-        name = self.client_name_entry.get().strip()
-        contact_info = self.contact_info_entry.get().strip()
+    def _filter_clients(self, event):
+        """Filters the client list in real-time based on search input."""
+        search_term = self.search_var.get().lower()
+        self.tree.delete(*self.tree.get_children())
+        clients = self.db_manager.get_all_clients()
+        
+        if clients:
+            for client in clients:
+                client_id, name, contact_info, user_id = client['client_id'], client['name'], client['contact_info'], client['added_by_username']
+                if search_term in str(client_id).lower() or search_term in name.lower() or search_term in contact_info.lower() or search_term in user_id.lower():
+                    self.tree.insert("", "end", values=(client_id, name, contact_info, user_id))
 
-        if not name or not contact_info:
-            messagebox.showerror("Input Error", "Client Name and Contact Info cannot be empty.")
-            return
+    def _open_add_client_form(self):
+        """Opens a new modal window for adding a client."""
+        AddClientForm(self, self.db_manager, self.user_id, self.refresh_view, self.parent_icon_loader)
 
-        try:
-            client_id = self.db_manager.add_client(name, contact_info, self.user_id)
-            if client_id:
-                messagebox.showinfo("Success", f"Client '{name}' added successfully with ID: {client_id}")
-                self._clear_form()
-                self._load_clients()
-            else:
-                messagebox.showerror("Error", "Failed to add client. Contact info might already exist.")
-        except Exception as e:
-            messagebox.showerror("Database Error", f"An error occurred: {e}")
-
-    def _update_client(self):
+    def _open_update_client_form(self):
+        """Opens a new modal window for updating a client."""
         selected_item = self.tree.focus()
         if not selected_item:
-            messagebox.showwarning("No Selection", "Please select a client from the list to update.")
+            messagebox.showwarning("No Selection", "Please select a client to update.")
+            return
+
+        values = self.tree.item(selected_item, "values")
+        client_data = {
+            'client_id': values[0],
+            'name': values[1],
+            'contact_info': values[2]
+        }
+        UpdateClientForm(self, self.db_manager, self.user_id, client_data, self.refresh_view, self.parent_icon_loader)
+
+    def refresh_view(self):
+        """Refreshes the client list and clears selections."""
+        self._load_clients()
+        self.tree.selection_remove(self.tree.focus())
+        self.update_button.config(state="disabled")
+        self.delete_button.config(state="disabled")
+
+    def _delete_client(self):
+        """Deletes a selected client after confirmation."""
+        selected_item = self.tree.focus()
+        if not selected_item:
+            messagebox.showwarning("No Selection", "Please select a client from the list to delete.")
             return
 
         client_id = self.tree.item(selected_item, "values")[0]
-        new_name = self.client_name_entry.get().strip()
-        new_contact_info = self.contact_info_entry.get().strip()
+        client_name = self.tree.item(selected_item, "values")[1]
 
-        if not new_name or not new_contact_info:
-            messagebox.showerror("Input Error", "Client Name and Contact Info cannot be empty for update.")
+
+        confirm_msg = (
+            f"Are you sure you want to delete client '{client_name}' (ID: {client_id})?\n\n"
+        )
+        if messagebox.askyesno("Confirm Delete", confirm_msg):
+            try:
+                deleted = self.db_manager.delete_client(client_id)
+                if deleted:
+                    messagebox.showinfo("Success", f"Client '{client_name}' deleted successfully.")
+                    self.refresh_view()
+                else:
+                    messagebox.showerror("Error", "Failed to delete client. Client not found.")
+            except Exception as e:
+                messagebox.showerror("Database Error", f"An error occurred during deletion: {e}")
+        self.refresh_view()
+
+    def _on_client_select(self, event):
+        """Handles a client selection from the Treeview."""
+        selected_item = self.tree.focus()
+        if selected_item:
+            values = self.tree.item(selected_item, "values")
+            client_id = values[0]
+            self.update_button.config(state="normal")
+            self.delete_button.config(state="normal")
+            self._load_associated_data(client_id)
+        else:
+            self.update_button.config(state="disabled")
+            self.delete_button.config(state="disabled")
+            self._clear_associated_data()
+
+    def _clear_associated_data(self):
+        """Clears the associated data Treeviews."""
+        for item in self.land_tree.get_children():
+            self.land_tree.delete(item)
+        for item in self.survey_tree.get_children():
+            self.survey_tree.delete(item)
+
+    def _load_associated_data(self, client_id):
+        """Loads and populates associated data for a given client ID."""
+        self._clear_associated_data()
+        properties = self.db_manager.get_client_properties(client_id)
+        if properties:
+            for prop in properties:
+                self.land_tree.insert("", "end", values=(prop['property_id'], prop['title_deed_number'], prop['location'], prop['size'], prop['price'], prop['status'], prop['transaction_date']))
+        survey_jobs = self.db_manager.get_client_survey_jobs(client_id)
+        if survey_jobs:
+            for job in survey_jobs:
+                self.survey_tree.insert("", "end", values=(job['job_id'], job['property_location'], job['job_description'], job['fee'], job['status'], job['deadline'], job['created_at']))
+
+
+class AddClientForm(BaseForm):
+    """A modal form for adding a new client."""
+    def __init__(self, parent, db_manager, user_id, refresh_callback, icon_loader):
+        super().__init__(parent, "Add New Client", 400, 200, "client.png", icon_loader)
+        
+        self.db_manager = db_manager
+        self.user_id = user_id
+        self.refresh_callback = refresh_callback
+        
+        self._create_widgets()
+
+    def _create_widgets(self):
+        frame = ttk.Frame(self, padding="15")
+        frame.pack(fill="both", expand=True)
+
+        ttk.Label(frame, text="Client Name:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        self.name_entry = ttk.Entry(frame, width=30)
+        self.name_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+
+        ttk.Label(frame, text="Contact Info (Email/Phone):").grid(row=1, column=0, padx=5, pady=5, sticky="w")
+        self.contact_entry = ttk.Entry(frame, width=30)
+        self.contact_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+
+        button_frame = ttk.Frame(frame)
+        button_frame.grid(row=2, column=0, columnspan=2, pady=10)
+
+        self.save_button = ttk.Button(button_frame, text="Save Client", command=self._save_client)
+        self.save_button.pack(side=tk.LEFT, padx=5)
+
+        self.cancel_button = ttk.Button(button_frame, text="Cancel", command=self.destroy)
+        self.cancel_button.pack(side=tk.LEFT, padx=5)
+
+    def _save_client(self):
+        name = self.name_entry.get().strip()
+        contact_info = self.contact_entry.get().strip()
+        status = 'active'  # Default status for new clients
+        
+
+        if not name or not contact_info:
+            messagebox.showerror("Input Error", "All fields are required.")
             return
 
         try:
-            # Check if contact info is unique if it's being changed
+            client_id = self.db_manager.add_client(name, contact_info, status, self.user_id)
+            if client_id:
+                messagebox.showinfo("Success", f"Client '{name}' added successfully.")
+                self.refresh_callback()
+                self.destroy()
+            else:
+                messagebox.showerror("Error", "Failed to add client. Contact info may already exist.")
+        except Exception as e:
+            messagebox.showerror("Database Error", f"An error occurred: {e}")
+
+
+class UpdateClientForm(BaseForm):
+    """A modal form for updating an existing client."""
+    def __init__(self, parent, db_manager, user_id, client_data, refresh_callback, icon_loader):
+        super().__init__(parent, "Update Client", 400, 200, "client.png", icon_loader)
+        
+        self.db_manager = db_manager
+        self.user_id = user_id
+        self.client_data = client_data
+        self.refresh_callback = refresh_callback
+        
+        self._create_widgets()
+        self._load_data()
+
+    def _create_widgets(self):
+        frame = ttk.Frame(self, padding="15")
+        frame.pack(fill="both", expand=True)
+
+        ttk.Label(frame, text="Client Name:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        self.name_entry = ttk.Entry(frame, width=30)
+        self.name_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+
+        ttk.Label(frame, text="Contact Info (Email/Phone):").grid(row=1, column=0, padx=5, pady=5, sticky="w")
+        self.contact_entry = ttk.Entry(frame, width=30)
+        self.contact_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+
+        button_frame = ttk.Frame(frame)
+        button_frame.grid(row=2, column=0, columnspan=2, pady=10)
+
+        self.save_button = ttk.Button(button_frame, text="Save Changes", command=self._save_changes)
+        self.save_button.pack(side=tk.LEFT, padx=5)
+
+        self.cancel_button = ttk.Button(button_frame, text="Cancel", command=self.destroy)
+        self.cancel_button.pack(side=tk.LEFT, padx=5)
+
+    def _load_data(self):
+        self.name_entry.insert(0, self.client_data['name'])
+        self.contact_entry.insert(0, self.client_data['contact_info'])
+
+    def _save_changes(self):
+        new_name = self.name_entry.get().strip()
+        new_contact_info = self.contact_entry.get().strip()
+        client_id = self.client_data['client_id']
+
+        if not new_name or not new_contact_info:
+            messagebox.showerror("Input Error", "All fields are required.")
+            return
+
+        try:
             current_client = self.db_manager.get_client(client_id)
             if current_client and current_client['contact_info'] != new_contact_info:
                 existing_client_by_contact = self.db_manager.get_client_by_contact_info(new_contact_info)
@@ -221,116 +477,9 @@ class ClientForm(tk.Toplevel):
             updated = self.db_manager.update_client(client_id, name=new_name, contact_info=new_contact_info)
             if updated:
                 messagebox.showinfo("Success", f"Client ID {client_id} updated successfully.")
-                self._clear_form()
-                self._load_clients()
+                self.refresh_callback()
+                self.destroy()
             else:
                 messagebox.showerror("Error", "Failed to update client. No changes or client not found.")
         except Exception as e:
             messagebox.showerror("Database Error", f"An error occurred during update: {e}")
-
-    def _delete_client(self):
-        selected_item = self.tree.focus()
-        if not selected_item:
-            messagebox.showwarning("No Selection", "Please select a client from the list to delete.")
-            return
-
-        client_id = self.tree.item(selected_item, "values")[0]
-        client_name = self.tree.item(selected_item, "values")[1]
-
-        # Check for associated records before deleting
-        associated_properties = self.db_manager.get_client_properties(client_id)
-        associated_surveys = self.db_manager.get_client_survey_jobs(client_id)
-
-        if associated_properties or associated_surveys:
-            confirm_msg = f"Client '{client_name}' (ID: {client_id}) has associated records:\n"
-            if associated_properties:
-                confirm_msg += f"- {len(associated_properties)} Land Purchase(s)\n"
-            if associated_surveys:
-                confirm_msg += f"- {len(associated_surveys)} Survey Job(s)\n"
-            confirm_msg += "Deleting this client might affect these records or violate database constraints. Do you wish to proceed anyway?"
-
-            if not messagebox.askyesno("Confirm Delete with Associations", confirm_msg):
-                return  # User cancelled
-
-        if messagebox.askyesno("Confirm Delete",
-                               f"Are you sure you want to delete client '{client_name}' (ID: {client_id})? This action cannot be undone."):
-            try:
-                deleted = self.db_manager.delete_client(client_id)
-                if deleted:
-                    messagebox.showinfo("Success", f"Client '{client_name}' deleted successfully.")
-                    self._clear_form()
-                    self._load_clients()
-                else:
-                    messagebox.showerror("Error", "Failed to delete client. Client not found.")
-            except Exception as e:
-                messagebox.showerror("Database Error", f"An error occurred during deletion: {e}")
-
-    def _on_client_select(self, event):
-        selected_item = self.tree.focus()
-        if selected_item:
-            values = self.tree.item(selected_item, "values")
-            client_id = values[0]  # Get client ID
-
-            self.client_name_entry.delete(0, tk.END)
-            self.client_name_entry.insert(0, values[1])  # Name
-            self.contact_info_entry.delete(0, tk.END)
-            self.contact_info_entry.insert(0, values[2])  # Contact Info
-
-            self.update_button.config(state="normal")
-            self.delete_button.config(state="normal")
-            self.add_button.config(state="disabled")  # Disable add when updating
-
-            self._load_associated_data(client_id)  # Load associated data for selected client
-        else:
-            self._clear_form()
-            self.update_button.config(state="disabled")
-            self.delete_button.config(state="disabled")
-            self.add_button.config(state="normal")
-            self._clear_associated_data()  # Clear associated data if nothing selected
-
-    def _clear_form(self):
-        self.client_name_entry.delete(0, tk.END)
-        self.contact_info_entry.delete(0, tk.END)
-        self.tree.selection_remove(self.tree.focus())  # Deselect any item in treeview
-        self.update_button.config(state="disabled")
-        self.delete_button.config(state="disabled")
-        self.add_button.config(state="normal")
-        self._clear_associated_data()  # Clear associated data as well
-
-    def _clear_associated_data(self):
-        for item in self.land_tree.get_children():
-            self.land_tree.delete(item)
-        for item in self.survey_tree.get_children():
-            self.survey_tree.delete(item)
-
-    def _load_associated_data(self, client_id):
-        self._clear_associated_data()
-
-        # Load associated Land Purchases
-        properties = self.db_manager.get_client_properties(client_id)
-        if properties:
-            for prop in properties:
-                self.land_tree.insert("", "end", values=(
-                    prop['property_id'],
-                    prop['title_deed_number'],
-                    prop['location'],
-                    prop['size'],
-                    prop['price'],
-                    prop['status'],
-                    prop['transaction_date']
-                ))
-
-        # Load associated Survey Jobs
-        survey_jobs = self.db_manager.get_client_survey_jobs(client_id)
-        if survey_jobs:
-            for job in survey_jobs:
-                self.survey_tree.insert("", "end", values=(
-                    job['job_id'],
-                    job['property_location'],
-                    job['job_description'],
-                    job['fee'],
-                    job['status'],
-                    job['deadline'],
-                    job['created_at']
-                ))
-

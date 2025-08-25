@@ -88,13 +88,17 @@ class CreatePaymentPlanForm(tk.Toplevel):
         self.plan_name_entry = ttk.Entry(form_frame, width=30)
         self.plan_name_entry.grid(row=0, column=1, sticky='we', padx=5, pady=5)
 
-        ttk.Label(form_frame, text="Duration (months):").grid(row=1, column=0, sticky='w', padx=5, pady=5)
-        self.duration_spinbox = ttk.Spinbox(form_frame, from_=1, to=120, width=5)
-        self.duration_spinbox.grid(row=1, column=1, sticky='w', padx=5, pady=5)
+        ttk.Label(form_frame, text="Deposit Percentage (%):").grid(row=1, column=0, sticky='w', padx=5, pady=5)
+        self.deposit_percentage_entry = ttk.Entry(form_frame, width=10)
+        self.deposit_percentage_entry.grid(row=1, column=1, sticky='w', padx=5, pady=5)
 
-        ttk.Label(form_frame, text="Interest Rate (%):").grid(row=2, column=0, sticky='w', padx=5, pady=5)
+        ttk.Label(form_frame, text="Duration (months):").grid(row=2, column=0, sticky='w', padx=5, pady=5)
+        self.duration_spinbox = ttk.Spinbox(form_frame, from_=1, to=120, width=5)
+        self.duration_spinbox.grid(row=2, column=1, sticky='w', padx=5, pady=5)
+
+        ttk.Label(form_frame, text="Interest Rate (%):").grid(row=3, column=0, sticky='w', padx=5, pady=5)
         self.interest_rate_entry = ttk.Entry(form_frame, width=10)
-        self.interest_rate_entry.grid(row=2, column=1, sticky='w', padx=5, pady=5)
+        self.interest_rate_entry.grid(row=3, column=1, sticky='w', padx=5, pady=5)
 
         # Create a style for the green button
         style = ttk.Style()
@@ -102,34 +106,36 @@ class CreatePaymentPlanForm(tk.Toplevel):
         style.configure('Custom.Green.TButton', background='#4CAF50', foreground='white')
 
         create_btn = ttk.Button(form_frame, text="Create", style='Custom.Green.TButton', command=self._create_plan)
-        create_btn.grid(row=3, column=0, columnspan=2, pady=20)
+        create_btn.grid(row=4, column=0, columnspan=2, pady=20)
 
     def _validate_input(self):
         """Validates form input before saving."""
         plan_name = self.plan_name_entry.get().strip()
+        deposit_percentage_str = self.deposit_percentage_entry.get().strip()
         duration_str = self.duration_spinbox.get().strip()
         interest_rate_str = self.interest_rate_entry.get().strip()
 
-        if not all([plan_name, duration_str, interest_rate_str]):
+        if not all([plan_name, deposit_percentage_str, duration_str, interest_rate_str]):
             messagebox.showerror("Input Error", "All fields are required.", parent=self)
-            return False, None, None, None
+            return False, None, None, None, None
 
         try:
             duration = int(duration_str)
             interest_rate = float(interest_rate_str)
-            if duration <= 0 or interest_rate < 0:
+            deposit_percentage = float(deposit_percentage_str)
+            if duration <= 0 or interest_rate < 0 or deposit_percentage < 0:
                 messagebox.showerror("Input Error", "Duration must be a positive integer and interest rate a non-negative number.", parent=self)
-                return False, None, None, None
-            return True, plan_name, duration, interest_rate
+                return False, None, None, None, None
+            return True, plan_name, deposit_percentage, duration, interest_rate
         except ValueError:
             messagebox.showerror("Input Error", "Please enter valid numbers for duration and interest rate.", parent=self)
-            return False, None, None, None
+            return False, None, None, None, None
 
     def _create_plan(self):
         """
         Creates a new payment plan and then closes the form, refreshing the parent.
         """
-        is_valid, plan_name, duration, interest_rate = self._validate_input()
+        is_valid, plan_name,deposit_percentage, duration, interest_rate = self._validate_input()
         if not is_valid:
             return
 
@@ -140,6 +146,7 @@ class CreatePaymentPlanForm(tk.Toplevel):
 
         plan_data_dict = {
             "name": plan_name,
+            "deposit_percentage": deposit_percentage,
             "duration_months": duration,
             "interest_rate": interest_rate,
             "created_by": username
@@ -260,7 +267,7 @@ class ManagePaymentPlansForm(tk.Toplevel):
         tree_frame = ttk.Frame(self, padding="10")
         tree_frame.pack(fill="both", expand=True)
         
-        columns = ("plan_id", "name", "duration", "interest_rate", "Created By")
+        columns = ("plan_id", "name", "deposit_percentage", "duration", "interest_rate", "Created By")
         self.plans_treeview = ttk.Treeview(
             tree_frame, 
             columns=columns, 
@@ -269,12 +276,14 @@ class ManagePaymentPlansForm(tk.Toplevel):
         )
         self.plans_treeview.heading("plan_id", text="ID")
         self.plans_treeview.heading("name", text="Plan Name")
+        self.plans_treeview.heading("deposit_percentage", text="Deposit (%)")
         self.plans_treeview.heading("duration", text="Duration")
         self.plans_treeview.heading("interest_rate", text="Interest Rate (%)")
         self.plans_treeview.heading("Created By", text="Created By")
         
         self.plans_treeview.column("plan_id", width=50, anchor=tk.CENTER)
         self.plans_treeview.column("name", width=200)
+        self.plans_treeview.column("deposit_percentage", width=100, anchor=tk.CENTER)
         self.plans_treeview.column("duration", width=100, anchor=tk.CENTER)
         self.plans_treeview.column("interest_rate", width=100, anchor=tk.CENTER)
         self.plans_treeview.column("Created By", width=150, anchor=tk.CENTER)
@@ -340,6 +349,7 @@ class ManagePaymentPlansForm(tk.Toplevel):
                 self.plans_treeview.insert("", "end", values=(
                     plan['plan_id'],
                     plan['name'],
+                    plan['deposit_percentage'],  # Assuming this is now included
                     plan['duration_months'],
                     plan['interest_rate'],
                     plan['created_by']
@@ -377,6 +387,7 @@ class ManagePaymentPlansForm(tk.Toplevel):
             self.plans_treeview.insert("", "end", values=(
                 plan['plan_id'],
                 plan['name'],
+                plan['deposit_percentage'],
                 plan['duration_months'],
                 plan['interest_rate'],
                 plan['created_by']
@@ -504,22 +515,28 @@ class PlanUpdateForm(tk.Toplevel):
 
         # Plan Name
         ttk.Label(main_frame, text="Plan Name:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
-        self.name_entry = ttk.Entry(main_frame, width=40)
+        self.name_entry = ttk.Entry(main_frame, width=30)
         self.name_entry.grid(row=0, column=1, pady=5, padx=5)
 
+        #deposit Percentage
+        ttk.Label(main_frame, text="Deposit Percentage (%):").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        self.deposit_percentage_entry = ttk.Entry(main_frame, width=10)
+        self.deposit_percentage_entry.grid(row=1, column=1, sticky='w', padx=5, pady=5)
+
+
         # Duration (months)
-        ttk.Label(main_frame, text="Duration (months):").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(main_frame, text="Duration (months):").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
         self.duration_spinbox = ttk.Spinbox(main_frame, from_=1, to=120, width=5)
-        self.duration_spinbox.grid(row=1, column=1, sticky='w', padx=5, pady=5)
+        self.duration_spinbox.grid(row=2, column=1, sticky='w', padx=5, pady=5)
         
         # Interest Rate (%)
-        ttk.Label(main_frame, text="Interest Rate (%):").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(main_frame, text="Interest Rate (%):").grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
         self.interest_rate_entry = ttk.Entry(main_frame, width=10)
-        self.interest_rate_entry.grid(row=2, column=1, sticky='w', padx=5, pady=5)
+        self.interest_rate_entry.grid(row=3, column=1, sticky='w', padx=5, pady=5)
 
         # Buttons
         button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=3, column=0, columnspan=2, pady=20)
+        button_frame.grid(row=4, column=0, columnspan=2, pady=20)
         
         # Load and set images for buttons using the icon_loader function
         save_icon = self.icon_loader("save.png", size=(20, 20))
@@ -538,6 +555,7 @@ class PlanUpdateForm(tk.Toplevel):
         Pre-populates the form fields with the selected plan's data.
         """
         self.name_entry.insert(0, self.plan_details.get("name", ""))
+        self.deposit_percentage_entry.insert(0, self.plan_details.get("deposit_percentage", 0))
         self.duration_spinbox.set(self.plan_details.get("duration_months", 1))
         self.interest_rate_entry.insert(0, self.plan_details.get("interest_rate", 0))
 
@@ -549,6 +567,10 @@ class PlanUpdateForm(tk.Toplevel):
         
         try:
             # Get and validate numerical inputs
+            updated_deposit_percentage = float(self.deposit_percentage_entry.get())
+            if not (0 <= updated_deposit_percentage <= 100):
+                messagebox.showerror("Validation Error", "Deposit Percentage must be between 0 and 100.", parent=self)
+                return  
             updated_duration = int(self.duration_spinbox.get())
             updated_interest_rate = float(self.interest_rate_entry.get())
         except ValueError:
@@ -564,6 +586,7 @@ class PlanUpdateForm(tk.Toplevel):
 
         updated_plan_data = {
         'name': updated_name,
+        'deposit_percentage': updated_deposit_percentage,
         'duration_months': updated_duration,
         'interest_rate': updated_interest_rate
         }

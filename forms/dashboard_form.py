@@ -82,11 +82,11 @@ class DashboardForm(ttk.Frame):
     def populate_dashboard(self):
         """Fetches data from the database and updates the dashboard UI."""
 
-        num_sold = self.db_manager.count_sold_properties()
+        num_sold = self.db_manager.get_total_sold_properties_count()
         num_available = self.db_manager.count_available_properties()
         num_total_properties = num_sold + num_available
-        num_clients = self.db_manager.count_clients()
-        num_survey_jobs = self.db_manager.count_survey_jobs()
+        num_clients = self.db_manager.get_total_clients()
+        num_survey_jobs = self.db_manager.get_total_survey_jobs()
 
         self.labels["Total Properties"].config(text=str(num_total_properties))
         self.labels["Sold Properties"].config(text=str(num_sold))

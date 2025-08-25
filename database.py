@@ -75,6 +75,7 @@ class DatabaseManager:
                         client_id INTEGER PRIMARY KEY AUTOINCREMENT,
                         name TEXT NOT NULL,
                         contact_info TEXT UNIQUE NOT NULL, -- Can be phone, email, etc.
+                        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'inactive')),
                         added_by_user_id INTEGER, -- New column
                         FOREIGN KEY (added_by_user_id) REFERENCES users(user_id)
                     )
@@ -178,6 +179,7 @@ class DatabaseManager:
                                CREATE TABLE IF NOT EXISTS payment_plans (
                                       plan_id INTEGER PRIMARY KEY AUTOINCREMENT,
                                       name TEXT NOT NULL,
+                                      deposit_percentage REAL NOT NULL CHECK(deposit_percentage >= 0 AND deposit_percentage <= 100),
                                       duration_months INTEGER NOT NULL,
                                       interest_rate REAL NOT NULL,
                                       created_by TEXT NOT NULL
@@ -395,6 +397,7 @@ class DatabaseManager:
         Adds a new property to the database and ensures the owner is in the clients table.
         """
         existing_properties = self.get_properties_by_title_deed(title_deed_number)
+        client_status = 'active'
 
         for prop in existing_properties:
             if prop['status'].lower() == 'available':
@@ -404,11 +407,12 @@ class DatabaseManager:
         # --- Logic to add owner to clients table ---
         # Step 1: Check if the client already exists using their contact info (since it's unique).
         client_exists = self.get_client_by_contact_info(contact)
+        client_status = 'active'
         
         # Step 2: If the client doesn't exist, insert them.
         if not client_exists:
             # You must have an 'add_client' method in your class to do this.
-            self.add_client(name=owner, contact_info=contact, added_by_user_id=added_by_user_id)
+            self.add_client(name=owner, contact_info=contact, status=client_status, added_by_user_id=added_by_user_id)
 
         # Step 3: Insert the property.
         # This part remains the same after the client is handled.
@@ -417,11 +421,26 @@ class DatabaseManager:
         return self._execute_query(query, (property_type,title_deed_number, location, size, description, owner, contact, price, image_paths, title_image_paths, status, added_by_user_id))
 
 
+    def get_propertiesfortransfer_by_title_deed(self, title_deed_number):
+        """
+        Retrieves ALL properties matching a given title deed number.
+        Returns: A list of dictionaries representing matching properties.
+        """
+        query = "SELECT * FROM propertiesForTransfer WHERE title_deed_number = ?;"
+        results_rows = self._execute_query(query, (title_deed_number,), fetch_all=True)
+        return [dict(row) for row in results_rows] if results_rows else [] # Explicitly convert
+
+
     def add_propertyForTransfer(self, title_deed_number, location, size, description, owner, contact,  image_paths=None, title_image_paths=None, added_by_user_id=None):
         """
         Adds a new property to the database and ensures the owner is in the clients table.
         """
-        existing_properties = self.get_properties_by_title_deed(title_deed_number)
+        existing_properties = self.get_propertiesfortransfer_by_title_deed(title_deed_number)
+        client_status = 'active'
+
+        for prop in existing_properties:
+                print(f"Property with title deed '{title_deed_number}' already exists and is 'Available'. Cannot add duplicate.")
+                return None
 
 
         # --- Logic to add owner to clients table ---
@@ -431,7 +450,7 @@ class DatabaseManager:
         # Step 2: If the client doesn't exist, insert them.
         if not client_exists:
             # You must have an 'add_client' method in your class to do this.
-            self.add_client(name=owner, contact_info=contact, added_by_user_id=added_by_user_id)
+            self.add_client(name=owner, contact_info=contact, status=client_status, added_by_user_id=added_by_user_id)
 
         # Step 3: Insert the property.
         # This part remains the same after the client is handled.
@@ -597,13 +616,13 @@ class DatabaseManager:
 
     ## CRUD Operations for Clients
 
-    def add_client(self, name, contact_info, added_by_user_id=None):
+    def add_client(self, name, contact_info, status, added_by_user_id=None):
         """
         Adds a new client to the database, tracking the user who added them.
         Returns: The ID of the new client, or None on error/duplicate contact_info.
         """
-        query = "INSERT INTO clients (name, contact_info, added_by_user_id) VALUES (?, ?, ?)"
-        return self._execute_query(query, (name, contact_info, added_by_user_id))
+        query = "INSERT INTO clients (name, contact_info, status, added_by_user_id) VALUES (?, ?, ?, ?)"
+        return self._execute_query(query, (name, contact_info, status, added_by_user_id))
 
     def get_client(self, client_id):
         """
@@ -633,6 +652,31 @@ class DatabaseManager:
             c.client_id,
             c.name,
             c.contact_info,
+            c.status,
+            c.added_by_user_id,
+            u.username AS added_by_username
+        FROM
+            clients c
+        LEFT JOIN
+            users u ON c.added_by_user_id = u.user_id
+        WHERE
+            c.status = 'active'
+        ORDER BY c.name ASC
+        """
+        results_rows = self._execute_query(query, fetch_all=True)
+        return [dict(row) for row in results_rows] if results_rows else []
+
+    def get_all_clients_fortransferform(self):
+        """
+        Retrieves all clients from the database, including the username of the user who added them.
+        Returns: A list of dictionaries representing clients.
+        """
+        query = """
+        SELECT
+            c.client_id,
+            c.name,
+            c.contact_info,
+            c.status,
             c.added_by_user_id,
             u.username AS added_by_username
         FROM
@@ -665,11 +709,12 @@ class DatabaseManager:
         return self._execute_query(query, params)
 
     def delete_client(self, client_id):
-        """
+        """s
         Deletes a client from the database.
         Returns: True if deletion was successful, False otherwise.
         """
-        query = "DELETE FROM clients WHERE client_id = ?"
+        query = "UPDATE clients SET status = 'inactive' WHERE client_id = ?"
+        print(f"Executing query for client ID {client_id}: {query}")
         return self._execute_query(query, (client_id,))
 
     def get_total_clients(self):
@@ -677,7 +722,7 @@ class DatabaseManager:
         Returns the total count of clients.
         Returns: Total number of clients.
         """
-        query = "SELECT COUNT(*) FROM clients"
+        query = "SELECT COUNT(*) FROM clients WHERE status = 'active'"
         result_row = self._execute_query(query, fetch_one=True)
         return result_row[0] if result_row else 0 # No dict conversion needed for scalar
 
@@ -919,6 +964,12 @@ class DatabaseManager:
         results_rows = self._execute_query(query, params, fetch_all=True)
         return [dict(row) for row in results_rows] if results_rows else [] # Explicitly convert
 
+    def count_available_properties(self):
+        """Returns the count of properties with 'Available' status."""
+        query = "SELECT COUNT(*) FROM properties WHERE status = 'Available'"
+        result_row = self._execute_query(query, fetch_one=True)
+        return result_row[0] if result_row else 0
+
 
     def add_survey_job(self, client_id, property_location, job_description, fee, deadline,
                         amount_paid=0.0, balance=0.0, status='Pending',
@@ -1057,6 +1108,15 @@ class DatabaseManager:
         params = (current_date, future_date)
         result_row = self._execute_query(query, params, fetch_one=True)
         return result_row[0] if result_row else 0
+
+    def get_survey_job_status_counts(self):
+        """
+        Returns a dictionary of survey job status counts.
+        e.g., {'Pending': 5, 'Ongoing': 2, 'Completed': 8, 'Cancelled': 1}
+        """
+        query = "SELECT status, COUNT(*) FROM survey_jobs GROUP BY status"
+        results_rows = self._execute_query(query, fetch_all=True)
+        return {row[0]: row[1] for row in results_rows} if results_rows else {}
 
     ## NEW REPORTING METHODS (FOR SalesReportsForm)
     def get_total_sales_for_date_range(self, start_date, end_date):
@@ -1564,14 +1624,15 @@ class DatabaseManager:
                               and 'created_by'.
         """
         sql = """
-        INSERT INTO payment_plans (name, duration_months, interest_rate, created_by)
-        VALUES (?, ?, ?, ?);
+        INSERT INTO payment_plans (name, deposit_percentage,duration_months, interest_rate, created_by)
+        VALUES (?,?,?, ?, ?);
         """
         conn = self._get_connection()
         if conn:
             cursor = conn.cursor()
             cursor.execute(sql, (
                 plan_data['name'],
+                plan_data['deposit_percentage'],
                 plan_data['duration_months'],
                 plan_data['interest_rate'],
                 plan_data['created_by']
@@ -1587,7 +1648,7 @@ class DatabaseManager:
         Returns:
             list: A list of dictionaries, where each dictionary represents a plan.
         """
-        sql = "SELECT plan_id, name, duration_months, interest_rate, created_by FROM payment_plans;"
+        sql = "SELECT plan_id, name, deposit_percentage, duration_months, interest_rate, created_by FROM payment_plans;"
         conn = self._get_connection()
         plans = []
         if conn:
@@ -1609,7 +1670,7 @@ class DatabaseManager:
         Returns:
             dict: A dictionary of the plan details, or None if not found.
         """
-        sql = "SELECT plan_id, name, duration_months, interest_rate, created_by FROM payment_plans WHERE plan_id = ?;"
+        sql = "SELECT plan_id, name, deposit_percentage, duration_months, interest_rate, created_by FROM payment_plans WHERE plan_id = ?;"
         conn = self._get_connection()
         plan_data = None
         if conn:
@@ -1641,16 +1702,18 @@ class DatabaseManager:
         cursor = conn.cursor()
         cursor.execute('''
             UPDATE payment_plans
-            SET name = ?, duration_months = ?, interest_rate = ?
+            SET name = ?, deposit_percentage =?,duration_months = ?, interest_rate = ?
             WHERE plan_id = ?
         ''', (
             plan_data.get('name'),
+            plan_data.get('deposit_percentage'),
             plan_data.get('duration_months'),
             plan_data.get('interest_rate'),
             plan_id
         ))
         conn.commit()
         conn.close()
+
     def delete_payment_plan(self, plan_id):
         """
         Deletes a payment plan based on its ID using the new, simple format.
@@ -1714,6 +1777,8 @@ class DatabaseManager:
             }
             for row in rows
         ]
+    
+    
 
     
     def get_lots_for_update(self):
@@ -1739,6 +1804,17 @@ class DatabaseManager:
             }
             for row in rows
         ]
+
+    def get_lot_details_for_rejection(self, lot_id):        
+        query = """
+        SELECT parent_block_id, size
+        FROM proposed_lots
+        WHERE lot_id = ?
+        """
+        row = self._execute_query(query, (lot_id,), fetch_one=True)
+        if row:
+            return dict(row)
+        return None
 
     def finalize_lot(self, lot_id):
         """
