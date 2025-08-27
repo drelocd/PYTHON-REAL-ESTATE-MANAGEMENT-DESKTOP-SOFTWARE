@@ -166,6 +166,7 @@ class DatabaseManager:
                         role TEXT DEFAULT 'user' CHECK(role IN ('user', 'admin','accountant','property_manager','sales_agent'))
                     )
                 ''')
+                # 8. Agents Table - New table for agents
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS agents (
                          agent_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -185,6 +186,58 @@ class DatabaseManager:
                                       created_by TEXT NOT NULL
                                  )
                                  ''')
+                cursor.execute('''
+                               CREATE TABLE IF NOT EXISTS service_clients (
+                                      client_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                      name TEXT NOT NULL,
+                                      contact TEXT UNIQUE NOT NULL,
+                                      brought_by TEXT,
+                                      added_by TEXT NOT NULL,
+                                      timestamp DATETIME NOT NULL
+                                )
+                               ''')
+                cursor.execute('''
+               -- NEW TABLE: Links a specific file (e.g., for a land parcel) to a client.
+               -- Each client can have multiple files.
+                               CREATE TABLE IF NOT EXISTS client_files (
+                                      file_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                      client_id INTEGER NOT NULL,
+                                      file_name TEXT NOT NULL,
+                                      added_by TEXT NOT NULL,
+                                      timestamp DATETIME NOT NULL,
+                                      FOREIGN KEY (client_id) REFERENCES service_clients(client_id)
+                             )
+                            ''')
+                cursor.execute('''
+               -- The jobs table now links to a specific file (file_id) instead of the
+               -- general client (client_id). This ensures each job is tied to the
+               -- correct land project.
+                              CREATE TABLE IF NOT EXISTS service_jobs (
+                                     job_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                     file_id INTEGER NOT NULL,
+                                     job_description TEXT,
+                                     fee REAL NOT NULL,
+                                     amount_paid REAL DEFAULT 0.0,
+                                     balance REAL DEFAULT 0.0,
+                                     status TEXT NOT NULL DEFAULT 'Pending' CHECK(status IN ('Pending', 'Ongoing', 'Completed', 'Cancelled')),
+                                     added_by TEXT NOT NULL,
+                                     timestamp DATETIME NOT NULL,
+                                     FOREIGN KEY (file_id) REFERENCES client_files(file_id)
+                                )
+                          ''')
+                cursor.execute('''
+               -- The payments table correctly links to the job_id, which is now
+               -- linked to a specific file.
+                              CREATE TABLE IF NOT EXISTS service_payments (
+                                     payment_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                     job_id INTEGER NOT NULL,
+                                     amount REAL NOT NULL,
+                                     payment_date TEXT NOT NULL,
+                                     payment_type TEXT,
+                                     FOREIGN KEY (job_id) REFERENCES service_jobs(job_id)
+               )
+            ''')
+
 
                 conn.commit()
             print("Database initialized successfully.")
@@ -971,103 +1024,289 @@ class DatabaseManager:
         return result_row[0] if result_row else 0
 
 
-    def add_survey_job(self, client_id, property_location, job_description, fee, deadline,
-                        amount_paid=0.0, balance=0.0, status='Pending',
-                        attachments_path=None, added_by_user_id=None, created_at=None, receipt_creation_path=None):
+    def add_service_client(self, name, contact, brought_by, added_by):
         """
-        Adds a new survey job, tracking the user who created it and the creation timestamp.
-        Returns: The ID of the newly added survey job, or None on error.
+        Adds a new client to the database. The 'file_name' is now handled
+        separately in the `client_files` table.
         """
-        query = '''INSERT INTO survey_jobs (client_id, property_location, job_description, fee,
-                                     amount_paid, balance, deadline, status, attachments_path, 
-                                     added_by_user_id, created_at, receipt_creation_path)
-                                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'''
-        params = (
-             client_id, property_location, job_description, fee,
-             amount_paid, balance, deadline, status,
-             attachments_path, added_by_user_id, created_at, receipt_creation_path
-        )
-        return self._execute_query(query, params)
+        conn = self._connect()
+        cursor = conn.cursor()
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        try:
+            cursor.execute('''
+                INSERT INTO service_clients (name, contact, brought_by, added_by, timestamp)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (name, contact, brought_by, added_by, timestamp))
+            conn.commit()
+            return cursor.lastrowid
+        except sqlite3.IntegrityError:
+            return None # Returns None on duplicate contact
+        finally:
+            conn.close()
 
-    def get_survey_job_by_id(self, job_id):
+    def add_client_file(self, client_id, file_name, added_by):
         """
-        Retrieves a survey job by its ID.
-        Returns: The survey job details as a dict, or None if not found.
+        Adds a new file for an existing client.
         """
-        query = "SELECT * FROM survey_jobs WHERE job_id = ?"
-        job_data_row = self._execute_query(query, (job_id,), fetch_one=True)
-        return dict(job_data_row) if job_data_row else None # Explicitly convert
+        conn = self._connect()
+        cursor = conn.cursor()
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        try:
+            cursor.execute('''
+                INSERT INTO client_files (client_id, file_name, added_by, timestamp)
+                VALUES (?, ?, ?, ?)
+            ''', (client_id, file_name, added_by, timestamp))
+            conn.commit()
+            return cursor.lastrowid
+        except sqlite3.IntegrityError:
+            return None # Returns None on duplicate file_name
+        finally:
+            conn.close()
 
+    def get_all_client_files(self):
+        """
+        Retrieves all client files from the database, joining with the
+        service_clients table to include client names and contact info.
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            query = """
+                SELECT
+                    cf.file_id,
+                    cf.file_name,
+                    sc.name AS client_name,
+                    sc.contact AS contact
+                FROM
+                    client_files cf
+                JOIN
+                    service_clients sc ON cf.client_id = sc.client_id
+                ORDER BY
+                    sc.name
+            """
+            cursor.execute(query)
+            columns = [desc[0] for desc in cursor.description]
+            files = [dict(zip(columns, row)) for row in cursor.fetchall()]
+            return files
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+            return []
+        finally:
+            conn.close()
 
-    def update_survey_job_receipt_path(self, job_id, receipt_path):
+    def get_all_service_clients(self):
         """
-        Updates the 'receipt_path' field for a given survey job.
-        Returns: True if the update was successful, False otherwise.
+        Retrieves all clients from the database (now only client info, not files).
         """
-        query = """
-            UPDATE survey_jobs
-            SET receipt_creation_path = ?
-            WHERE job_id = ?
-        """
-        return self._execute_query(query, (receipt_path, job_id)) 
-    
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute('SELECT client_id, name, contact FROM service_clients ORDER BY name')
+        clients = [{'client_id': row[0], 'name': row[1], 'contact': row[2]}
+                   for row in cursor.fetchall()]
+        return clients
 
-    def get_all_survey_jobs(self, status=None):
-        """
-        Retrieves all survey jobs, optionally filtered by status.
-        Returns: A list of dictionaries representing survey jobs.
-        """
-        query = "SELECT * FROM survey_jobs"
-        params = ()
-        if status:
-            query += " WHERE status = ?"
-            params = (status,)
-        results_rows = self._execute_query(query, params, fetch_all=True)
-        return [dict(row) for row in results_rows] if results_rows else [] # Explicitly convert
-    
-    def update_survey_job_attachments(self, job_id, attachments_paths_str):
-        """
-        Updates the 'attachments_path' field for a given survey job.
-        attachments_paths_str should be a comma-separated string of relative paths.
-        """
-        query = """
-            UPDATE survey_jobs
-            SET attachments_path = ?
-            WHERE job_id = ?
-        """
-        return self._execute_query(query, (attachments_paths_str, job_id))
+    def get_service_client_by_id(self, client_id):
+        """Retrieves a single client by their ID."""
+        conn = self._connect()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('SELECT * FROM service_clients WHERE client_id = ?', (client_id,))
+            client_data = cursor.fetchone()
+            if client_data:
+                columns = [desc[0] for desc in cursor.description]
+                return dict(zip(columns, client_data))
+            return None
+        finally:
+            conn.close()
 
-    def update_survey_job(self, job_id, **kwargs):
-        """
-        Updates details of an existing survey job.
-        Returns: True if the update was successful, False otherwise.
-        """
-        set_clauses = []
-        params = []
-        allowed_keys = ['client_id', 'property_location', 'job_description', 
-                        'fee', 'amount_paid', 'balance', 'deadline', 
-                        'status', 'attachments_path', 'added_by_user_id', 'receipt_creation_path'] 
+    def update_service_client(self, client_id, new_data):
+        """Updates a client's information."""
+        conn = self._connect()
+        cursor = conn.cursor()
+        try:
+            set_clause = ', '.join([f"{key} = ?" for key in new_data.keys()])
+            values = list(new_data.values())
+            values.append(client_id)
+            cursor.execute(f'UPDATE service_clients SET {set_clause} WHERE client_id = ?', values)
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
 
-        for key, value in kwargs.items():
-            if key in allowed_keys:
-                set_clauses.append(f"{key} = ?")
-                params.append(value)
+    def delete_service_client(self, client_id):
+        """Deletes a client and all associated files, jobs, and payments."""
+        conn = self._connect()
+        try:
+            conn.execute("PRAGMA foreign_keys = ON")
+            cursor = conn.cursor()
             
-        if not set_clauses:
-            print("No valid columns provided for survey job update.")
+            # Deletes from service_clients will cascade to client_files
+            # which will in turn cascade to service_jobs and service_payments
+            # if the foreign key constraints are set with ON DELETE CASCADE.
+            # A manual approach is safer to ensure all records are deleted.
+            
+            # Find all file_ids for this client
+            file_ids = [row[0] for row in cursor.execute('SELECT file_id FROM client_files WHERE client_id = ?', (client_id,)).fetchall()]
+            
+            # Delete payments and jobs associated with each file
+            for file_id in file_ids:
+                job_ids = [row[0] for row in cursor.execute('SELECT job_id FROM service_jobs WHERE file_id = ?', (file_id,)).fetchall()]
+                for job_id in job_ids:
+                    cursor.execute('DELETE FROM service_payments WHERE job_id = ?', (job_id,))
+                cursor.execute('DELETE FROM service_jobs WHERE file_id = ?', (file_id,))
+            
+            # Delete client files
+            cursor.execute('DELETE FROM client_files WHERE client_id = ?', (client_id,))
+            
+            # Finally, delete the client
+            cursor.execute('DELETE FROM service_clients WHERE client_id = ?', (client_id,))
+            
+            conn.commit()
+            return cursor.rowcount > 0
+        except sqlite3.Error as e:
+            print(f"An error occurred: {e}")
             return False
+        finally:
+            conn.close()
 
-        params.append(job_id)
-        query = f"UPDATE survey_jobs SET {', '.join(set_clauses)} WHERE job_id = ?"
-        return self._execute_query(query, params)
+    # --- CRUD for Service Jobs ---
 
-    def delete_survey_job(self, job_id):
+    def add_job(self, file_id, job_description, fee, added_by):
         """
-        Deletes a survey job from the database.
-        Returns: True if deletion was successful, False otherwise.
+        Adds a new job for a specific file. This method now takes 'file_id'
+        instead of 'client_id'.
         """
-        query = "DELETE FROM survey_jobs WHERE job_id = ?"
-        return self._execute_query(query, (job_id,))
+        conn = self._connect()
+        cursor = conn.cursor()
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        balance = fee
+        try:
+            cursor.execute('''
+                INSERT INTO service_jobs (file_id, job_description, fee, balance, added_by, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (file_id, job_description, fee, balance, added_by, timestamp))
+            conn.commit()
+            return cursor.lastrowid
+        finally:
+            conn.close()
+
+    def get_all_jobs(self):
+        """
+        Retrieves all jobs, joining with the client_files and service_clients
+        tables to include client and file information.
+        """
+        conn = self._connect()
+        cursor = conn.cursor()
+        try:
+            query = """
+                SELECT
+                    sj.*,
+                    cf.file_name,
+                    sc.name AS client_name,
+                    sc.contact AS contact
+                FROM
+                    service_jobs sj
+                JOIN
+                    client_files cf ON sj.file_id = cf.file_id
+                JOIN
+                    service_clients sc ON cf.client_id = sc.client_id
+                ORDER BY
+                    sj.timestamp DESC
+            """
+            cursor.execute(query)
+            columns = [desc[0] for desc in cursor.description]
+            jobs = [dict(zip(columns, row)) for row in cursor.fetchall()]
+            return jobs
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+            return []
+        finally:
+            conn.close()
+
+    def get_jobs_by_file_id(self, file_id):
+        """
+        Retrieves all jobs for a specific client file. This method replaces
+        the old get_jobs_by_client_id.
+        """
+        conn = self._connect()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('SELECT * FROM service_jobs WHERE file_id = ?', (file_id,))
+            columns = [desc[0] for desc in cursor.description]
+            jobs = [dict(zip(columns, row)) for row in cursor.fetchall()]
+            return jobs
+        finally:
+            conn.close()
+
+    def update_job(self, job_id, new_data):
+        """Updates a job's information."""
+        conn = self._connect()
+        cursor = conn.cursor()
+        try:
+            set_clause = ', '.join([f"{key} = ?" for key in new_data.keys()])
+            values = list(new_data.values())
+            values.append(job_id)
+            cursor.execute(f'UPDATE service_jobs SET {set_clause} WHERE job_id = ?', values)
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def delete_job(self, job_id):
+        """Deletes a job and its associated payments."""
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA foreign_keys = ON")
+        try:
+            cursor.execute('DELETE FROM service_payments WHERE job_id = ?', (job_id,))
+            cursor.execute('DELETE FROM service_jobs WHERE job_id = ?', (job_id,))
+            conn.commit()
+            return True
+        except sqlite3.Error as e:
+            print(f"An error occurred: {e}")
+            return False
+        finally:
+            conn.close()
+
+    # --- CRUD for Service Payments ---
+
+    def add_payment(self, job_id, amount, payment_type):
+        """Records a new payment for a job and updates the job's balance."""
+        conn = self._connect()
+        cursor = conn.cursor()
+        payment_date = datetime.now().strftime('%Y-%m-%d')
+        try:
+            cursor.execute('''
+                INSERT INTO service_payments (job_id, amount, payment_date, payment_type)
+                VALUES (?, ?, ?, ?)
+            ''', (job_id, amount, payment_date, payment_type))
+            
+            cursor.execute('''
+                UPDATE service_jobs
+                SET amount_paid = amount_paid + ?, balance = balance - ?
+                WHERE job_id = ?
+            ''', (amount, amount, job_id))
+            
+            conn.commit()
+            return cursor.lastrowid
+        except sqlite3.Error as e:
+            print(f"An error occurred: {e}")
+            return None
+        finally:
+            conn.close()
+
+    def get_payments_by_job_id(self, job_id):
+        """Retrieves all payments for a specific job."""
+        conn = self._connect()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('SELECT * FROM service_payments WHERE job_id = ?', (job_id,))
+            columns = [desc[0] for desc in cursor.description]
+            payments = [dict(zip(columns, row)) for row in cursor.fetchall()]
+            return payments
+        finally:
+            conn.close()
+
 
     def get_total_pending_survey_payments(self):
         """

@@ -23,7 +23,7 @@ from forms.admin_manage_users_form import AdminManageUsersPanel  # Import the ad
 # NEW IMPORTS from your file
 from forms.property_forms import AddPropertyForm, SellPropertyLandingForm, TrackPaymentsForm, SoldPropertiesView, \
     ViewAllPropertiesForm, EditPropertyForm, SalesReportsForm
-from forms.survey_forms import AddSurveyJobForm, PaymentSurveyJobsFrame, TrackSurveyJobsFrame, SurveyReportsForm
+from forms.survey_forms import ClientFileDashboard, AddNewClientForm, TrackJobsView, ManagePaymentsView,JobReportsView
 from forms.signup_form import SignupForm
 from forms.dashboard_form import DashboardForm
 from forms.client_form import ClientForm
@@ -32,6 +32,7 @@ from forms.activity_log_viewer_form import ActivityLogViewerForm
 from forms.subdivide_lands_form import subdividelandForm  # NEW: Import the subdivide land form
 # Assuming this is the correct import for ViewPropertiesToTransferForm
 #from forms.view_properties_to_transfer_form import ViewPropertiesToTransferForm
+
 
 db_manager = DatabaseManager()
 print("\n--- Checking/Adding Default Users ---")
@@ -277,39 +278,77 @@ class SalesSectionView(ttk.Frame):
 
 
 class SurveySectionView(ttk.Frame):
+    """
+    The main view for the 'Survey Section' tab, providing a central hub
+    for client search/creation and access to all related functionalities.
+    """
     def __init__(self, master, db_manager, load_icon_callback, user_id, user_type):
         super().__init__(master, padding="10 10 10 10")
         self.db_manager = db_manager
         self.load_icon_callback = load_icon_callback
         self.user_id = user_id
-        self.user_type = user_type  # Store user type here
-        self.survey_button_icons = []  # To hold PhotoImage references
+        self.user_type = user_type
+        self.button_icons = []
         self._create_widgets()
         self.populate_survey_overview()
 
     def _create_widgets(self):
+        """Creates the grid of buttons for the main dashboard."""
+        
+        # --- Top Section: Client Search and Creation ---
+        client_frame = ttk.Frame(self)
+        client_frame.pack(pady=20, padx=20, fill="x")
+
+        ttk.Label(client_frame, text="Search for a Client:").pack(side="left", padx=(0, 10))
+        self.client_search_entry = ttk.Entry(client_frame)
+        self.client_search_entry.pack(side="left", expand=True, fill="x", padx=(0, 10))
+        self.client_search_entry.bind("<KeyRelease>", self._filter_clients)
+        
+        # This button should open the new client registration form
+        ttk.Button(client_frame, text="New Client", command=self._open_add_new_client_form).pack(side="left", padx=(10, 0))
+
+        # Client Table
+        client_table_frame = ttk.Frame(self)
+        client_table_frame.pack(pady=10, padx=20, fill="both", expand=True)
+        
+        # NOTE: Columns now reflect the new schema with separate files
+        columns = ("client_name", "file_name", "contact")
+        self.client_tree = ttk.Treeview(client_table_frame, columns=columns, show="headings")
+        self.client_tree.heading("client_name", text="Client Name")
+        self.client_tree.heading("file_name", text="File Name")
+        self.client_tree.heading("contact", text="Contact Info")
+
+        # Set column widths
+        self.client_tree.column("client_name", width=150, anchor=tk.W)
+        self.client_tree.column("file_name", width=100, anchor=tk.W)
+        self.client_tree.column("contact", width=100, anchor=tk.W)
+        
+        # Add a scrollbar
+        scrollbar = ttk.Scrollbar(client_table_frame, orient=tk.VERTICAL, command=self.client_tree.yview)
+        self.client_tree.configure(yscrollcommand=scrollbar.set)
+        
+        self.client_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Bind double-click event to open client file
+        self.client_tree.bind("<Double-1>", self._open_client_file_dashboard)
+
+        # --- Middle Section: Main Action Buttons ---
         button_grid_container = ttk.Frame(self, padding="20")
         button_grid_container.pack(pady=20, padx=20, fill="x", anchor="n")
 
         for i in range(2):
-            button_grid_container.grid_columnconfigure(i, weight=1, uniform="survey_button_cols")
+            button_grid_container.grid_columnconfigure(i, weight=1, uniform="button_cols")
         for i in range(2):
-            button_grid_container.grid_rowconfigure(i, weight=1, uniform="survey_button_rows")
+            button_grid_container.grid_rowconfigure(i, weight=1, uniform="button_rows")
 
         buttons_data = [
-            {"text": "Register New Job", "icon": "add_survey.png", "command": self._open_add_survey_job_form,
-             "roles": ['admin']},
-            {"text": "Track Jobs", "icon": "track_jobs.png", "command": self._open_track_survey_jobs_view,
-             "roles": ['admin']},
+            {"text": "Track Jobs", "icon": "track_jobs.png", "command": self._open_track_jobs_view,
+             "roles": ['admin', 'field_worker']},
             {"text": "Manage Payments", "icon": "manage_payments.png",
-             "command": self._open_manage_survey_payments_view, "roles": ['admin', 'accountant']},
-            {"text": "Survey Reports", "icon": "survey_reports.png", "command": self._open_survey_reports_view,
+             "command": self._open_manage_payments_view, "roles": ['admin', 'accountant']},
+            {"text": "Job Reports", "icon": "survey_reports.png", "command": self._open_job_reports_view,
              "roles": ['admin', 'accountant']},
-            {"text": "Transfer Property", "icon": "transfer.png", "command": self._open_property_transfer_form,
-             "roles": ['admin', 'property_manager']},
-            {"text": "View Properties To Transfer", "icon": "view_transfer_properties.png",
-             "command": self._open_view_property_to_transfer_form,
-             "roles": ['admin', 'property_manager']}
         ]
 
         row, col = 0, 0
@@ -317,7 +356,7 @@ class SurveySectionView(ttk.Frame):
             state = 'normal' if self.user_type in data["roles"] else 'disabled'
 
             icon_img = self.load_icon_callback(data["icon"], size=(64, 64))
-            self.survey_button_icons.append(icon_img)  # Store reference to prevent garbage collection
+            self.button_icons.append(icon_img)
 
             btn_wrapper_frame = ttk.Frame(button_grid_container, relief="raised", borderwidth=1,
                                           cursor="hand2" if state == 'normal' else "")
@@ -329,67 +368,105 @@ class SurveySectionView(ttk.Frame):
                 image=icon_img,
                 compound=tk.TOP,
                 command=data["command"],
-                state=state  # Apply the state here
+                state=state
             )
             btn.pack(expand=True, fill="both", ipadx=20, ipady=20)
-            btn.image = icon_img  # Store reference on the button itself
+            btn.image = icon_img
 
             col += 1
             if col > 1:
                 col = 0
                 row += 1
 
-        
-
+    # --- Button Command Methods ---
     def populate_survey_overview(self):
+        """Refreshes the data displayed in the view, including the client table."""
+        for item in self.client_tree.get_children():
+            self.client_tree.delete(item)
+        
+        # Assuming a new db_manager method that gets all files with client info joined
+        files_data = self.db_manager.get_all_client_files()
+        for file in files_data:
+            self.client_tree.insert("", tk.END, values=(file['client_name'], file['file_name'], file['contact']),
+                                    tags=('client_row',), iid=file['file_id']) # Now using file_id as the iid
+        
+        print("UI refreshed with all client files.")
 
-        print("Refreshing UI...")
+    def _filter_clients(self, event=None):
+        """Filters the client treeview based on the text in the search entry."""
+        search_query = self.client_search_entry.get().lower()
+        
+        for item in self.client_tree.get_children():
+            self.client_tree.delete(item)
 
-    def _open_add_survey_job_form(self):
-        AddSurveyJobForm(self.master, self.db_manager, self.populate_survey_overview,
-                         parent_icon_loader=self.load_icon_callback, window_icon_name="add_survey.png",
-                         current_user_id=self.user_id)
+        all_files = self.db_manager.get_all_client_files()
+        for file in all_files:
+            if search_query in file['client_name'].lower() or search_query in file['file_name'].lower():
+                self.client_tree.insert("", tk.END, values=(file['client_name'], file['file_name'], file['contact']),
+                                         tags=('client_row',), iid=file['file_id'])
 
-    def _open_track_survey_jobs_view(self):
-        TrackSurveyJobsFrame(self.master, self.db_manager, self.populate_survey_overview,
-                             parent_icon_loader=self.load_icon_callback, window_icon_name="track_jobs.png")
 
-    def _open_manage_survey_payments_view(self):
-        PaymentSurveyJobsFrame(self.master, self.db_manager, self.populate_survey_overview,
-                               parent_icon_loader=self.load_icon_callback,
-                               window_icon_name="manage_payments.png")
+    def _open_client_file_dashboard(self, event=None):
+        """
+        Opens a new window for the selected client's file.
+        Correctly retrieves the file ID from the Treeview item.
+        """
+        selected_item = self.client_tree.selection()
+        
+        if not selected_item:
+            messagebox.showinfo("Selection Error", "Please double-click on a client file row.")
+            return
 
-    def _open_survey_reports_view(self):
-        SurveyReportsForm(self.master, self.db_manager, parent_icon_loader=self.load_icon_callback,
-                          window_icon_name="survey_reports.png")
+        # The selection method returns a tuple of iids. We get the first one, which is the file_id.
+        file_id = selected_item[0]
 
-    def generate_report_type(self, action):
-        # self.notebook.select(self.sales_section)
-        if action == "Completed Survey Jobs":
-            self._open_survey_reports_view()  # Corrected from self.sales_section
-        elif action == "Upcoming Survey Deadlines":
-            self._open_survey_reports_view()
+        # Get the specific file data based on the file_id
+        file_data = self.db_manager.get_file_by_id(file_id)
 
-    def _open_property_transfer_form(self):
-        PropertyTransferForm(
+        if file_data:
+            # We now pass the specific file data to the dashboard
+            ClientFileDashboard(
+                self.master,
+                self.db_manager,
+                file_data,
+                self.populate_survey_overview,
+                parent_icon_loader=self.load_icon_callback
+            )
+
+    def _open_add_new_client_form(self):
+        """Opens the form for registering a new client."""
+        AddNewClientForm(
             self.master,
             self.db_manager,
             self.populate_survey_overview,
-            user_id=self.user_id,
-            # No dummy_property_data is passed now
-            parent_icon_loader=self.load_icon_callback,
-            window_icon_name="transfer.png"
+            self.user_id,
+            parent_icon_loader=self.load_icon_callback
         )
 
-    def _open_view_property_to_transfer_form(self):
-        ViewPropertiesToTransferForm(
+    def _open_track_jobs_view(self):
+        """Opens the view for tracking the status of all jobs."""
+        TrackJobsView(
             self.master,
             self.db_manager,
             self.populate_survey_overview,
-            user_id=self.user_id,
-            # No dummy_property_data is passed now
-            parent_icon_loader=self.load_icon_callback,
-            window_icon_name="transfer.png"
+            parent_icon_loader=self.load_icon_callback
+        )
+
+    def _open_manage_payments_view(self):
+        """Opens the view for managing payments for all jobs."""
+        ManagePaymentsView(
+            self.master,
+            self.db_manager,
+            self.populate_survey_overview,
+            parent_icon_loader=self.load_icon_callback
+        )
+
+    def _open_job_reports_view(self):
+        """Opens the view for generating reports on all jobs."""
+        JobReportsView(
+            self.master,
+            self.db_manager,
+            parent_icon_loader=self.load_icon_callback
         )
 
 
@@ -582,7 +659,7 @@ class RealEstateApp(tk.Tk):
 
             assets = release_info.get("assets", [])
             for asset in assets:
-                if "mathengerestatemgmt_setup" in asset["name"].lower() and asset["name"].lower().endswith(".exe"):
+                if "REMS" in asset["name"].lower() and asset["name"].lower().endswith(".exe"):
                     download_url = asset["browser_download_url"]
                     asset_filename = asset["name"]
                     break

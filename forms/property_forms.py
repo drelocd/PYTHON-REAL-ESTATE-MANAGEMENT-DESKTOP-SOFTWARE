@@ -2916,7 +2916,7 @@ class SellPropertyFormBlock(tk.Toplevel):
         self.style = ttk.Style()
         self.style.configure('Green.TButton', background='green', foreground='white', font=('Arial', 10, 'bold'))
         self.style.map('Green.TButton', background=[('active', 'darkgreen')], foreground=[('disabled', 'gray')])
-        self.style.configure('Yellow.TButton', background='gold', foreground='white', font=('Arial', 10, 'bold'))
+        self.style.configure('Yellow.TButton', background='gold', foreground='black', font=('Arial', 10, 'bold'))
         self.style.map('Yellow.TButton', background=[('active', 'goldenrod')], foreground=[('disabled', 'gray')])
         self.style.configure('Red.TButton', background='red', foreground='white', font=('Arial', 10, 'bold'))
         self.style.map('Red.TButton', background=[('active', 'darkred')])
