@@ -216,11 +216,13 @@ class DatabaseManager:
                                      job_id INTEGER PRIMARY KEY AUTOINCREMENT,
                                      file_id INTEGER NOT NULL,
                                      job_description TEXT,
+                                     title_name TEXT NOT NULL,
+                                     title_number TEXT NOT NULL,
                                      fee REAL NOT NULL,
                                      amount_paid REAL DEFAULT 0.0,
-                                     balance REAL DEFAULT 0.0,
-                                     status TEXT NOT NULL DEFAULT 'Pending' CHECK(status IN ('Pending', 'Ongoing', 'Completed', 'Cancelled')),
+                                     status TEXT NOT NULL DEFAULT 'Ongoing' CHECK(status IN ('Ongoing', 'Completed', 'Cancelled')),
                                      added_by TEXT NOT NULL,
+                                     brought_by TEXT NOT NULL,
                                      timestamp DATETIME NOT NULL,
                                      FOREIGN KEY (file_id) REFERENCES client_files(file_id)
                                 )
@@ -1029,7 +1031,7 @@ class DatabaseManager:
         Adds a new client to the database. The 'file_name' is now handled
         separately in the `client_files` table.
         """
-        conn = self._connect()
+        conn = self._get_connection()
         cursor = conn.cursor()
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         try:
@@ -1048,7 +1050,7 @@ class DatabaseManager:
         """
         Adds a new file for an existing client.
         """
-        conn = self._connect()
+        conn = self._get_connection()
         cursor = conn.cursor()
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         try:
@@ -1098,16 +1100,31 @@ class DatabaseManager:
         """
         Retrieves all clients from the database (now only client info, not files).
         """
-        conn = self._connect()
+        conn = self._get_connection()
         cursor = conn.cursor()
         cursor.execute('SELECT client_id, name, contact FROM service_clients ORDER BY name')
         clients = [{'client_id': row[0], 'name': row[1], 'contact': row[2]}
                    for row in cursor.fetchall()]
         return clients
 
+    def get_file_by_id(self, file_id):
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+           cursor.execute("SELECT * FROM client_files WHERE file_id = ?", (file_id,))
+           file_data = cursor.fetchone()
+           if file_data:
+               columns = [desc[0] for desc in cursor.description]
+               return dict(zip(columns, file_data))
+           return None
+        finally:
+            conn.close()
+    
+         
+
     def get_service_client_by_id(self, client_id):
         """Retrieves a single client by their ID."""
-        conn = self._connect()
+        conn = self._get_connection()
         cursor = conn.cursor()
         try:
             cursor.execute('SELECT * FROM service_clients WHERE client_id = ?', (client_id,))
@@ -1121,7 +1138,7 @@ class DatabaseManager:
 
     def update_service_client(self, client_id, new_data):
         """Updates a client's information."""
-        conn = self._connect()
+        conn = self._get_connection()
         cursor = conn.cursor()
         try:
             set_clause = ', '.join([f"{key} = ?" for key in new_data.keys()])
@@ -1135,7 +1152,7 @@ class DatabaseManager:
 
     def delete_service_client(self, client_id):
         """Deletes a client and all associated files, jobs, and payments."""
-        conn = self._connect()
+        conn = self._get_connection()
         try:
             conn.execute("PRAGMA foreign_keys = ON")
             cursor = conn.cursor()
@@ -1171,20 +1188,19 @@ class DatabaseManager:
 
     # --- CRUD for Service Jobs ---
 
-    def add_job(self, file_id, job_description, fee, added_by):
+    def add_job(self, file_id, job_description, title_name, title_number, fee, amount_paid, added_by,brought_by):
         """
         Adds a new job for a specific file. This method now takes 'file_id'
         instead of 'client_id'.
         """
-        conn = self._connect()
+        conn = self._get_connection()
         cursor = conn.cursor()
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        balance = fee
         try:
             cursor.execute('''
-                INSERT INTO service_jobs (file_id, job_description, fee, balance, added_by, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (file_id, job_description, fee, balance, added_by, timestamp))
+                INSERT INTO service_jobs (file_id, job_description, title_name, title_number,fee, amount_paid, added_by, brought_by, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (file_id, job_description, title_name, title_number, fee, amount_paid , added_by, brought_by, timestamp))
             conn.commit()
             return cursor.lastrowid
         finally:
@@ -1195,7 +1211,7 @@ class DatabaseManager:
         Retrieves all jobs, joining with the client_files and service_clients
         tables to include client and file information.
         """
-        conn = self._connect()
+        conn = self._get_connection()
         cursor = conn.cursor()
         try:
             query = """
@@ -1228,7 +1244,7 @@ class DatabaseManager:
         Retrieves all jobs for a specific client file. This method replaces
         the old get_jobs_by_client_id.
         """
-        conn = self._connect()
+        conn = self._get_connection()
         cursor = conn.cursor()
         try:
             cursor.execute('SELECT * FROM service_jobs WHERE file_id = ?', (file_id,))
@@ -1240,7 +1256,7 @@ class DatabaseManager:
 
     def update_job(self, job_id, new_data):
         """Updates a job's information."""
-        conn = self._connect()
+        conn = self._get_connection()
         cursor = conn.cursor()
         try:
             set_clause = ', '.join([f"{key} = ?" for key in new_data.keys()])
@@ -1254,7 +1270,7 @@ class DatabaseManager:
 
     def delete_job(self, job_id):
         """Deletes a job and its associated payments."""
-        conn = self._connect()
+        conn = self._get_connection()
         cursor = conn.cursor()
         cursor.execute("PRAGMA foreign_keys = ON")
         try:
@@ -1272,7 +1288,7 @@ class DatabaseManager:
 
     def add_payment(self, job_id, amount, payment_type):
         """Records a new payment for a job and updates the job's balance."""
-        conn = self._connect()
+        conn = self._get_connection()
         cursor = conn.cursor()
         payment_date = datetime.now().strftime('%Y-%m-%d')
         try:
@@ -1297,7 +1313,7 @@ class DatabaseManager:
 
     def get_payments_by_job_id(self, job_id):
         """Retrieves all payments for a specific job."""
-        conn = self._connect()
+        conn = self._get_connection()
         cursor = conn.cursor()
         try:
             cursor.execute('SELECT * FROM service_payments WHERE job_id = ?', (job_id,))

@@ -23,7 +23,7 @@ from forms.admin_manage_users_form import AdminManageUsersPanel  # Import the ad
 # NEW IMPORTS from your file
 from forms.property_forms import AddPropertyForm, SellPropertyLandingForm, TrackPaymentsForm, SoldPropertiesView, \
     ViewAllPropertiesForm, EditPropertyForm, SalesReportsForm
-from forms.survey_forms import ClientFileDashboard, AddNewClientForm, TrackJobsView, ManagePaymentsView,JobReportsView
+from forms.survey_forms import ClientFileDashboard, AddClientAndFileForm, TrackJobsView, ManagePaymentsView,JobReportsView
 from forms.signup_form import SignupForm
 from forms.dashboard_form import DashboardForm
 from forms.client_form import ClientForm
@@ -304,34 +304,41 @@ class SurveySectionView(ttk.Frame):
         self.client_search_entry.pack(side="left", expand=True, fill="x", padx=(0, 10))
         self.client_search_entry.bind("<KeyRelease>", self._filter_clients)
         
-        # This button should open the new client registration form
-        ttk.Button(client_frame, text="New Client", command=self._open_add_new_client_form).pack(side="left", padx=(10, 0))
+        # This button will now open the unified form
+        style = ttk.Style()
+        # Configure a new style named "Red.TButton"
+        style.configure("Red.TButton", background="green", foreground="black")
+        ttk.Button(client_frame, text="Add Client/File", command=self._open_add_client_and_file_form, style="Red.TButton").pack(side="left", padx=(10, 0))
 
         # Client Table
         client_table_frame = ttk.Frame(self)
         client_table_frame.pack(pady=10, padx=20, fill="both", expand=True)
         
-        # NOTE: Columns now reflect the new schema with separate files
         columns = ("client_name", "file_name", "contact")
         self.client_tree = ttk.Treeview(client_table_frame, columns=columns, show="headings")
         self.client_tree.heading("client_name", text="Client Name")
         self.client_tree.heading("file_name", text="File Name")
         self.client_tree.heading("contact", text="Contact Info")
 
-        # Set column widths
         self.client_tree.column("client_name", width=150, anchor=tk.W)
         self.client_tree.column("file_name", width=100, anchor=tk.W)
         self.client_tree.column("contact", width=100, anchor=tk.W)
         
-        # Add a scrollbar
         scrollbar = ttk.Scrollbar(client_table_frame, orient=tk.VERTICAL, command=self.client_tree.yview)
         self.client_tree.configure(yscrollcommand=scrollbar.set)
         
         self.client_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # Bind double-click event to open client file
         self.client_tree.bind("<Double-1>", self._open_client_file_dashboard)
+        self.client_tree.bind("<Return>", self._open_client_file_dashboard)
+
+        # Bind the Escape key to deselect all items in the treeview
+        self.client_tree.bind("<Escape>", self._deselect_all)
+        self.bind("<Escape>", self._deselect_all)  # Also bind to the frame itself
+        self.bind("<Button-1>", self._handle_click_to_deselect)
+
+
 
         # --- Middle Section: Main Action Buttons ---
         button_grid_container = ttk.Frame(self, padding="20")
@@ -379,6 +386,17 @@ class SurveySectionView(ttk.Frame):
                 row += 1
 
     # --- Button Command Methods ---
+    def _deselect_all(self, event=None):
+        """Deselects all items in the client Treeview when the Escape key is pressed."""
+        self.client_tree.selection_remove(self.client_tree.selection())
+
+    def _handle_click_to_deselect(self, event):
+        """Deselects all items in the treeview if the click was not on the treeview itself."""
+        if event.widget != self.client_tree:
+            self.client_tree.selection_remove(self.client_tree.selection())
+
+
+
     def populate_survey_overview(self):
         """Refreshes the data displayed in the view, including the client table."""
         for item in self.client_tree.get_children():
@@ -387,8 +405,12 @@ class SurveySectionView(ttk.Frame):
         # Assuming a new db_manager method that gets all files with client info joined
         files_data = self.db_manager.get_all_client_files()
         for file in files_data:
-            self.client_tree.insert("", tk.END, values=(file['client_name'], file['file_name'], file['contact']),
-                                    tags=('client_row',), iid=file['file_id']) # Now using file_id as the iid
+            client_name = file['client_name'].upper()
+            file_name = file['file_name'].upper()
+            contact = file['contact'].upper()
+            
+            self.client_tree.insert("", tk.END, values=(client_name,file_name,contact), 
+                                        tags=('client_row',), iid=file['file_id'])
         
         print("UI refreshed with all client files.")
 
@@ -411,31 +433,45 @@ class SurveySectionView(ttk.Frame):
         Opens a new window for the selected client's file.
         Correctly retrieves the file ID from the Treeview item.
         """
-        selected_item = self.client_tree.selection()
+        selected_items = self.client_tree.selection()
         
-        if not selected_item:
+        if not selected_items:
             messagebox.showinfo("Selection Error", "Please double-click on a client file row.")
             return
 
         # The selection method returns a tuple of iids. We get the first one, which is the file_id.
-        file_id = selected_item[0]
+        file_id = selected_items[0]
 
         # Get the specific file data based on the file_id
         file_data = self.db_manager.get_file_by_id(file_id)
-
-        if file_data:
-            # We now pass the specific file data to the dashboard
-            ClientFileDashboard(
-                self.master,
-                self.db_manager,
-                file_data,
-                self.populate_survey_overview,
-                parent_icon_loader=self.load_icon_callback
-            )
-
-    def _open_add_new_client_form(self):
-        """Opens the form for registering a new client."""
-        AddNewClientForm(
+        if not file_data:
+            messagebox.showerror("Data Error", "Could not retrieve data for the selected file.")
+            return
+        
+        client_id = file_data.get('client_id')
+        if not client_id:
+            messagebox.showerror("Data Error", "The selected file does not have a valid client associated.")
+            return
+        
+        client_data = self.db_manager.get_service_client_by_id(client_id)
+        if not client_data:
+            messagebox.showerror("Data Error", "Could not retrieve data for the associated client.")
+            return
+        
+        combined_data = {**file_data, **client_data}
+        ClientFileDashboard(
+            self.master,
+            self.db_manager,
+            combined_data,
+            self.populate_survey_overview,
+            self.user_id,
+            parent_icon_loader=self.load_icon_callback
+        )
+    def _open_add_client_and_file_form(self):
+        """
+        Opens the unified form for registering a new client or adding a new file.
+        """
+        AddClientAndFileForm(
             self.master,
             self.db_manager,
             self.populate_survey_overview,
