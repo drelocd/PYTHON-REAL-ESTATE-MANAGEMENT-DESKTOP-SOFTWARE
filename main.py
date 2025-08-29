@@ -27,6 +27,7 @@ from forms.survey_forms import ClientFileDashboard, AddClientAndFileForm, TrackJ
 from forms.signup_form import SignupForm
 from forms.dashboard_form import DashboardForm
 from forms.client_form import ClientForm
+from forms.dispatch_form import DispatchJobsView
 from forms.system_settings_form import SystemSettingsForm  # NEW
 from forms.activity_log_viewer_form import ActivityLogViewerForm
 from forms.subdivide_lands_form import subdividelandForm  # NEW: Import the subdivide land form
@@ -356,6 +357,8 @@ class SurveySectionView(ttk.Frame):
              "command": self._open_manage_payments_view, "roles": ['admin', 'accountant']},
             {"text": "Job Reports", "icon": "survey_reports.png", "command": self._open_job_reports_view,
              "roles": ['admin', 'accountant']},
+             {"text": "Dispatch Completed Jobs", "icon": "dispatch.png", "command": self._open_job_dispatch_view,
+             "roles": ['admin', 'accountant']}
         ]
 
         row, col = 0, 0
@@ -504,6 +507,17 @@ class SurveySectionView(ttk.Frame):
             self.db_manager,
             parent_icon_loader=self.load_icon_callback
         )
+
+    def _open_job_dispatch_view(self):
+        """Opens the view for managing payments for all jobs."""
+        DispatchJobsView(
+            self.master,
+            self.db_manager,
+            self.populate_survey_overview,
+            self.user_id,
+            parent_icon_loader=self.load_icon_callback
+        )
+
 
 
 class LoginPage(tk.Toplevel):
@@ -695,7 +709,7 @@ class RealEstateApp(tk.Tk):
 
             assets = release_info.get("assets", [])
             for asset in assets:
-                if "REMS" in asset["name"].lower() and asset["name"].lower().endswith(".exe"):
+                if  asset["name"].lower().endswith(".exe"):
                     download_url = asset["browser_download_url"]
                     asset_filename = asset["name"]
                     break
@@ -1011,7 +1025,7 @@ class RealEstateApp(tk.Tk):
         # Clients Menu - Now with role-based access
         self.client_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Clients", menu=self.client_menu)
-        self.client_menu.add_command(label="Client Management", command=self._open_client_management_form,
+        self.client_menu.add_command(label="Land Sales Clients Management", command=self._open_client_management_form,
                                      state='normal' if self.user_type in ['admin', 'sales_agent'] else 'disabled')
 
         sales_menu = tk.Menu(menubar, tearoff=0)
@@ -1136,9 +1150,9 @@ class RealEstateApp(tk.Tk):
     def _go_to_survey_tab_and_action(self, action):
         self.notebook.select(self.survey_section)
         if action == "add_job":
-            self.survey_section._open_add_survey_job_form()
+            self.survey_section._open_client_file_dashboard()
         elif action == "track_jobs":
-            self.survey_section._open_track_survey_jobs_view()
+            self.survey_section._open_track_jobs_view()
 
     def _create_main_frames(self):
         self.notebook = ttk.Notebook(self)

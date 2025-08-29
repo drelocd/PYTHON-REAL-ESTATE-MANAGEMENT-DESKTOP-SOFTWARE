@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta,date
+
 import os
 from PIL import Image, ImageTk
 import shutil
@@ -26,10 +27,6 @@ ICONS_DIR = os.path.join(ASSETS_DIR, 'icons')
 DATA_DIR = os.path.join(BASE_DIR, 'data')
 RECEIPTS_DIR = os.path.join(DATA_DIR, 'receipts')
 os.makedirs(RECEIPTS_DIR, exist_ok=True)  # Ensure receipts directory exists
-
-# Directory for reports
-REPORTS_DIR = os.path.join(BASE_DIR, 'reports')
-os.makedirs(REPORTS_DIR, exist_ok=True)  # Ensure reports directory exists
 
 try:
     from tkcalendar import DateEntry
@@ -102,7 +99,6 @@ class FormBase(tk.Toplevel):
     Base class for all forms to handle common functionalities like
     window centering, title bar customization, and icon loading.
     """
-
     def __init__(self, master, width, height, title, icon_name, parent_icon_loader):
         # Correctly set the parent to the top-level window.
         # This fixes the "bad window path name" error.
@@ -111,7 +107,7 @@ class FormBase(tk.Toplevel):
         self.transient(master)
         self.grab_set()
         self.resizable(False, False)
-
+        
         self.parent_icon_loader = parent_icon_loader
         self._window_icon_ref = None
         self._set_window_properties(width, height, icon_name, parent_icon_loader)
@@ -136,10 +132,10 @@ class FormBase(tk.Toplevel):
                 if icon_image:
                     self.iconphoto(False, icon_image)
                     self._window_icon_ref = icon_image
-                    print(f"Icon '{icon_name}' loaded successfully.")  # Add this line
+                    print(f"Icon '{icon_name}' loaded successfully.") # Add this line
                 else:
                     print(f"Icon '{icon_name}' could not be loaded.")
-
+                
             except Exception as e:
                 print(f"Failed to set icon for {self.title()}: {e}")
 
@@ -225,78 +221,12 @@ class FormBase(tk.Toplevel):
         self.destroy()
 
 
-# Helper function for generating PDF receipts (extracted from AddNewTaskForm)
-def _generate_pdf_payment_receipt(job_id, client_name, file_name, job_description, amount_paid, payment_date):
-    """
-    Generates a PDF payment receipt using ReportLab.
-    Returns the path to the generated PDF or None on failure.
-    This is a standalone function to be reused by multiple forms.
-    """
-    if not _REPORTLAB_AVAILABLE:
-        return None
-
-    try:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        receipt_filename = f"Receipt_Job_{job_id}_{timestamp}.pdf"
-        receipt_path = os.path.join(RECEIPTS_DIR, receipt_filename)
-
-        doc = SimpleDocTemplate(receipt_path, pagesize=letter)
-        styles = getSampleStyleSheet()
-        story = []
-
-        # Business Header
-        header_data = [
-            [Paragraph("<b>NDIRITU MATHENGE & ASSOCIATES</b>", styles['Normal']),
-             Paragraph(f"Date: {payment_date}", styles['Normal'])]
-        ]
-        header_table = Table(header_data, colWidths=[4 * inch, 2 * inch])
-        header_table.setStyle(TableStyle([
-            ('ALIGN', (0, 0), (0, 0), 'LEFT'),
-            ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
-            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, -1), 12),
-        ]))
-        story.append(header_table)
-
-        story.append(Spacer(1, 24))
-        story.append(Paragraph("<b>PAYMENT RECEIPT</b>", styles['Heading1']))
-        story.append(Spacer(1, 12))
-
-        # Receipt Details Table
-        data = [
-            ["Receipt Number:", job_id],
-            ["Client Name:", client_name],
-            ["File Name:", file_name],
-            ["Job Description:", job_description],
-            ["Amount Paid:", f"KSh {amount_paid:,.2f}"],
-        ]
-
-        t = Table(data, colWidths=[2 * inch, 4 * inch])
-        t.setStyle(TableStyle([
-            ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ('LEFTPADDING', (0, 0), (-1, -1), 0),
-            ('TOPPADDING', (0, 0), (-1, -1), 5),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
-        ]))
-        story.append(t)
-        story.append(Spacer(1, 24))
-        story.append(Paragraph("Thank you for your business.", styles['Normal']))
-
-        # Build the PDF
-        doc.build(story)
-        return receipt_path
-    except Exception as e:
-        messagebox.showerror("Receipt Error", f"Failed to generate PDF receipt: {e}")
-        return None
 
 
 class AddNewTaskForm(FormBase):
     """
     A form for adding a new task (job) to a specific client file.
     """
-
     def __init__(self, master, db_manager, client_data, user_id, refresh_callback, parent_icon_loader=None):
         # The icon_name 'add_task.png' is passed to the FormBase constructor
         super().__init__(master, 450, 310, "Add New Task", "add_task.png", parent_icon_loader)
@@ -315,19 +245,14 @@ class AddNewTaskForm(FormBase):
         main_frame.pack(fill="both", expand=True)
 
         ttk.Label(main_frame, text="Client:").grid(row=0, column=0, sticky="w", pady=5)
-        ttk.Label(main_frame, text=self.client_data['name'], font=('Helvetica', 10, 'bold')).grid(row=0, column=1,
-                                                                                                  sticky="w", pady=5)
-
+        ttk.Label(main_frame, text=self.client_data['name'], font=('Helvetica', 10, 'bold')).grid(row=0, column=1, sticky="w", pady=5)
+        
         ttk.Label(main_frame, text="File:").grid(row=1, column=0, sticky="w", pady=5)
-        ttk.Label(main_frame, text=self.client_data['file_name'], font=('Helvetica', 10, 'bold')).grid(row=1, column=1,
-                                                                                                       sticky="w",
-                                                                                                       pady=5)
+        ttk.Label(main_frame, text=self.client_data['file_name'], font=('Helvetica', 10, 'bold')).grid(row=1, column=1, sticky="w", pady=5)
 
         ttk.Label(main_frame, text="Brought By:").grid(row=2, column=0, sticky="w", pady=5)
-        ttk.Label(main_frame, text=self.client_data['brought_by'], font=('Helvetica', 10, 'bold')).grid(row=2, column=1,
-                                                                                                        sticky="w",
-                                                                                                        pady=5)
-
+        ttk.Label(main_frame, text=self.client_data['brought_by'], font=('Helvetica', 10, 'bold')).grid(row=2, column=1, sticky="w", pady=5)
+        
         ttk.Separator(main_frame, orient="horizontal").grid(row=3, column=0, columnspan=2, sticky="ew", pady=10)
 
         ttk.Label(main_frame, text="Job Description:").grid(row=4, column=0, sticky="w", pady=5)
@@ -337,7 +262,7 @@ class AddNewTaskForm(FormBase):
         ttk.Label(main_frame, text="Title Name:").grid(row=5, column=0, sticky="w", pady=5)
         self.title_name_entry = ttk.Entry(main_frame)
         self.title_name_entry.grid(row=5, column=1, sticky="ew", pady=5)
-
+        
         ttk.Label(main_frame, text="Title Number:").grid(row=6, column=0, sticky="w", pady=5)
         self.title_number_entry = ttk.Entry(main_frame)
         self.title_number_entry.grid(row=6, column=1, sticky="ew", pady=5)
@@ -348,20 +273,16 @@ class AddNewTaskForm(FormBase):
 
         if self.parent_icon_loader:
             self.button_icon = self.parent_icon_loader("add_task.png", size=(20, 20))
-
+        
         # We need to make sure the reference is explicitly held
         self.button_icon_ref = self.button_icon
-
-        ttk.Button(main_frame, text="Submit Task", image=self.button_icon, compound=tk.LEFT,
-                   command=self._submit_task).grid(row=8, column=0, columnspan=2, pady=15)
-
+        
+        ttk.Button(main_frame, text="Submit Task", image=self.button_icon, compound=tk.LEFT, command=self._submit_task).grid(row=8, column=0, columnspan=2, pady=15)
+        
         main_frame.grid_columnconfigure(1, weight=1)
 
     def _submit_task(self):
-        """
-        Validates and submits the new task to the database.
-        Also records an initial payment for the task.
-        """
+        """Validates and submits the new task to the database."""
         job_description = self.job_description_entry.get().strip()
         title_name = self.title_name_entry.get().strip()
         title_number = self.title_number_entry.get().strip()
@@ -374,7 +295,7 @@ class AddNewTaskForm(FormBase):
         try:
             price_val = float(price_str)
             if price_val < 0:
-                messagebox.showerror("Input Error", "Price must be a positive number.")
+                messagebox.showerror("Input Error", "Price must be a positive number.") 
                 return
         except ValueError:
             messagebox.showerror("Input Error", "Price must be a valid number.")
@@ -383,64 +304,32 @@ class AddNewTaskForm(FormBase):
         added_by = self.db_manager.get_username_by_id(self.user_id)
         if not added_by:
             added_by = "Unknown User"
-
-        # Step 1: Add the job to the database
-        # ASSUMPTION: db_manager.add_job now returns the job_id if successful, else None.
-        job_id = self.db_manager.add_job(
+            
+        success = self.db_manager.add_job(
             file_id=self.client_data['file_id'],
             job_description=job_description,
             title_name=title_name,
             title_number=title_number,
             fee=price_val,
-            amount_paid=price_val,  # Initial payment is the full fee
+            amount_paid=price_val,
             added_by=added_by,
             brought_by=self.client_data['brought_by']
         )
-
-        if job_id:  # Check if job was added successfully
-            # Step 2: Record an initial payment for this job
-            # ASSUMPTION: db_manager has an 'add_payment' method that takes:
-            # (job_id, amount, payment_date, payment_type, recorded_by)
-            payment_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            payment_type = "Initial Payment"  # Default type for task submission payment
-
+        
+        if success:
             payment_success = self.db_manager.add_payment(
-                job_id=job_id,
-                amount=price_val,
-                payment_date=payment_date,
-                payment_type=payment_type,
-                recorded_by=added_by  # Records who added the payment
+                job_id=success,
+                amount=price_val
             )
 
             if payment_success:
-                # Step 3: Print a payment receipt using the new helper function
-                receipt_path = _generate_pdf_payment_receipt(
-                    job_id=job_id,
-                    client_name=self.client_data['name'],
-                    file_name=self.client_data['file_name'],
-                    job_description=job_description,
-                    amount_paid=price_val,
-                    payment_date=payment_date
-                )
-
-                if receipt_path:
-                    SuccessMessage(
-                        self.master,
-                        success=True,
-                        message="New task and initial payment added successfully.\nPayment receipt generated.",
-                        pdf_path=receipt_path,
-                        parent_icon_loader=self.parent_icon_loader
-                    )
-                else:
-                    messagebox.showinfo("Success",
-                                        "New task and initial payment added successfully, but receipt generation failed.")
-                self.refresh_callback()  # Refresh the parent dashboard
+                messagebox.showinfo("Success", "New task and payments added successfully")
+                self.refresh_callback()
                 self.destroy()
             else:
-                messagebox.showerror("Error",
-                                     "New task added, but failed to record initial payment. Please check payment records manually.")
-                # Depending on business logic, you might want to roll back the job creation here
-                # self.db_manager.delete_job(job_id) # Example rollback
+                messagebox.showerror("Error", "Task added, but failed to record the initial payment.")
+                self.refresh_callback()
+                self.destroy()
         else:
             messagebox.showerror("Error", "Failed to add new task.")
 
@@ -450,7 +339,6 @@ class ClientFileDashboard(FormBase):
     A dashboard view for a specific client's file. It shows their recent tasks
     and allows for the creation of new tasks.
     """
-
     def __init__(self, master, db_manager, client_data, refresh_callback, user_id, parent_icon_loader=None):
         # We need the client_data to include the file_id for the new task form
         super().__init__(master, 900, 500, f"Client File: {client_data['name']}", "client_file.png", parent_icon_loader)
@@ -465,20 +353,17 @@ class ClientFileDashboard(FormBase):
 
     def _create_widgets(self):
         """Creates the UI for the client file dashboard."""
-
+        
         # --- Top section with client details and Add Task button ---
         top_frame = ttk.Frame(self, padding="10")
         top_frame.pack(fill="x", pady=10)
-
+        
         # Client and File Info
         client_info_frame = ttk.Frame(top_frame)
         client_info_frame.pack(side="left", fill="x", expand=True)
-        ttk.Label(client_info_frame, text=f"Client Name: {self.client_data['name']}",
-                  font=('Helvetica', 12, 'bold')).pack(anchor="w", padx=10, pady=2)
-        ttk.Label(client_info_frame, text=f"File Name: {self.client_data['file_name']}",
-                  font=('Helvetica', 12, 'bold')).pack(anchor="w", padx=10, pady=2)
-        ttk.Label(client_info_frame, text=f"Brought By: {self.client_data['brought_by']}",
-                  font=('Helvetica', 12, 'bold')).pack(anchor="w", padx=10, pady=2)
+        ttk.Label(client_info_frame, text=f"Client Name: {self.client_data['name']}", font=('Helvetica', 12, 'bold')).pack(anchor="w", padx=10, pady=2)
+        ttk.Label(client_info_frame, text=f"File Name: {self.client_data['file_name']}", font=('Helvetica', 12, 'bold')).pack(anchor="w", padx=10, pady=2)
+        ttk.Label(client_info_frame, text=f"Brought By: {self.client_data['brought_by']}", font=('Helvetica', 12, 'bold')).pack(anchor="w", padx=10, pady=2)
 
         # Style and Icon for the Add Task button
         # Use the parent_icon_loader to load the icon
@@ -488,11 +373,10 @@ class ClientFileDashboard(FormBase):
             self.button_icon = None
 
         style = ttk.Style()
-        style.configure("Red.TButton", background="red", foreground="black")
+        style.configure("Red.TButton", background="green", foreground="black")
 
         # Add New Task button
-        btn = ttk.Button(top_frame, text="Add New Task", command=self._open_add_task_form, image=self.button_icon,
-                         compound=tk.LEFT, style="Red.TButton")
+        btn = ttk.Button(top_frame, text="Add New Task", command=self._open_add_task_form, image=self.button_icon, compound=tk.LEFT, style="Red.TButton")
         btn.pack(side="right", padx=10)
 
         # --- Separator ---
@@ -500,12 +384,10 @@ class ClientFileDashboard(FormBase):
 
         # --- Middle section with tasks table ---
         table_frame = ttk.Frame(self, padding="10")
-
+        
         # New label above the table
-        ttk.Label(table_frame,
-                  text=f"Job History for client: {self.client_data['name']}, file name: {self.client_data['file_name']}",
-                  font=('Helvetica', 10, 'bold')).pack(pady=5, padx=10, anchor="center")
-
+        ttk.Label(table_frame, text=f"Job History for client: {self.client_data['name']}, file name: {self.client_data['file_name']}", font=('Helvetica', 10, 'bold')).pack(pady=5, padx=10, anchor="center")
+        
         table_frame.pack(fill="both", expand=True)
 
         columns = ("job_id", "date", "description", "title_name", "title_number", "status")
@@ -516,17 +398,17 @@ class ClientFileDashboard(FormBase):
         self.tasks_tree.heading("title_name", text="Title Name")
         self.tasks_tree.heading("title_number", text="Title Number")
         self.tasks_tree.heading("status", text="Status")
-
+        
         self.tasks_tree.column("job_id", width=50, anchor=tk.W)
         self.tasks_tree.column("date", width=120, anchor=tk.W)
         self.tasks_tree.column("description", width=200, anchor=tk.W)
         self.tasks_tree.column("title_name", width=150, anchor=tk.W)
         self.tasks_tree.column("title_number", width=150, anchor=tk.W)
         self.tasks_tree.column("status", width=120, anchor=tk.W)
-
+        
         scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.tasks_tree.yview)
         self.tasks_tree.configure(yscrollcommand=scrollbar.set)
-
+        
         self.tasks_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
@@ -534,7 +416,7 @@ class ClientFileDashboard(FormBase):
         """Populates the tasks table with data for the selected client."""
         for item in self.tasks_tree.get_children():
             self.tasks_tree.delete(item)
-
+        
         # We now use file_id from self.client_data to get the jobs
         tasks = self.db_manager.get_jobs_by_file_id(self.client_data['file_id'])
         for task in tasks:
@@ -559,24 +441,24 @@ class ClientFileDashboard(FormBase):
         )
 
 
+
 class AddClientAndFileForm(FormBase):
     """
     A unified form to either create a new client and their first file,
     or to add a new file to an existing client, using a tabbed interface.
     """
-
     def __init__(self, master, db_manager, refresh_callback, user_id, parent_icon_loader=None):
         # Increased window height to accommodate the tabbed layout
         super().__init__(master, 750, 500, "Add Client or File", "add_client.png", parent_icon_loader)
         self.db_manager = db_manager
         self.refresh_callback = refresh_callback
         self.user_id = user_id
-
-        self.selected_client_id = None  # Tracks the selected client from the table
+        
+        self.selected_client_id = None # Tracks the selected client from the table
 
         self.main_frame = ttk.Frame(self, padding="20")
         self.main_frame.pack(expand=True, fill="both")
-
+        
         # Use a Notebook widget for the tabbed interface
         self.notebook = ttk.Notebook(self.main_frame)
         self.notebook.pack(expand=True, fill="both")
@@ -584,7 +466,7 @@ class AddClientAndFileForm(FormBase):
         # Create the frames for the tabs
         self.new_client_frame = ttk.Frame(self.notebook, padding="10")
         self.existing_client_frame = ttk.Frame(self.notebook, padding="10")
-
+        
         # Add the frames as tabs to the notebook
         self.notebook.add(self.new_client_frame, text="Add New Client")
         self.notebook.add(self.existing_client_frame, text="Add New File to Existing Client")
@@ -602,18 +484,19 @@ class AddClientAndFileForm(FormBase):
         ttk.Label(new_contact_label_frame, text="Contact:").pack(side="left", fill="x", expand=True)
         self.contact_entry = ttk.Entry(self.new_client_frame)
         self.contact_entry.pack(fill="x", pady=(0, 10))
-
+        
         new_brought_by_label_frame = ttk.Frame(self.new_client_frame)
         new_brought_by_label_frame.pack(fill="x")
         ttk.Label(new_brought_by_label_frame, text="Brought By:").pack(side="left", fill="x", expand=True)
         self.brought_by_entry = ttk.Entry(self.new_client_frame)
         self.brought_by_entry.pack(fill="x", pady=(0, 10))
-
+        
         new_file_label_frame = ttk.Frame(self.new_client_frame)
         new_file_label_frame.pack(fill="x")
         ttk.Label(new_file_label_frame, text="File Name:").pack(side="left", fill="x", expand=True)
         self.new_client_file_name_entry = ttk.Entry(self.new_client_frame)
         self.new_client_file_name_entry.pack(fill="x", pady=(0, 10))
+
 
         # --- Existing Client fields with real-time search and short table ---
         # The content for the 'existing client' tab
@@ -628,26 +511,26 @@ class AddClientAndFileForm(FormBase):
         self.client_tree.heading("contact", text="Contact")
         self.client_tree.column("client_name", width=150, anchor=tk.W)
         self.client_tree.column("contact", width=150, anchor=tk.W)
-
+        
         scrollbar = ttk.Scrollbar(self.existing_client_frame, orient=tk.VERTICAL, command=self.client_tree.yview)
         self.client_tree.configure(yscrollcommand=scrollbar.set)
-
+        
         self.client_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
+        
         self.client_tree.bind("<<TreeviewSelect>>", self._on_client_select)
 
         # Common file name field for existing client
         ttk.Label(self.existing_client_frame, text="File Name:").pack(pady=(15, 5), anchor="w")
         self.existing_client_file_name_entry = ttk.Entry(self.existing_client_frame)
         self.existing_client_file_name_entry.pack(fill="x")
-
+        
         # Submit button with green color
         style = ttk.Style()
         style.configure("Green.TButton", background="green", foreground="black")
         self.submit_btn = ttk.Button(self.main_frame, text="Submit", command=self._submit_form, style="Green.TButton")
         self.submit_btn.pack(pady=20)
-
+        
         # Initial population of the table
         self._populate_clients_table()
 
@@ -655,7 +538,7 @@ class AddClientAndFileForm(FormBase):
         """Populates the client table with all clients."""
         for item in self.client_tree.get_children():
             self.client_tree.delete(item)
-
+        
         self.all_clients = self.db_manager.get_all_service_clients()
         for client in self.all_clients:
             self.client_tree.insert("", tk.END, values=(client['name'], client['contact']), iid=client['client_id'])
@@ -663,13 +546,12 @@ class AddClientAndFileForm(FormBase):
     def _filter_clients_table(self, event=None):
         """Filters the client table based on the search entry."""
         search_query = self.search_entry.get().lower()
-
+        
         for item in self.client_tree.get_children():
             self.client_tree.delete(item)
-
-        filtered_clients = [c for c in self.all_clients if
-                            search_query in c['name'].lower() or search_query in c['contact'].lower()]
-
+        
+        filtered_clients = [c for c in self.all_clients if search_query in c['name'].lower() or search_query in c['contact'].lower()]
+        
         for client in filtered_clients:
             self.client_tree.insert("", tk.END, values=(client['name'], client['contact']), iid=client['client_id'])
 
@@ -683,13 +565,13 @@ class AddClientAndFileForm(FormBase):
     def _submit_form(self):
         """Handles the submission logic based on the currently selected tab."""
         current_tab_id = self.notebook.index(self.notebook.select())
-
-        if current_tab_id == 0:  # "Add New Client" tab
+        
+        if current_tab_id == 0: # "Add New Client" tab
             name = self.name_entry.get().strip().upper()
             contact = self.contact_entry.get().strip().upper()
             brought_by = self.brought_by_entry.get().strip().upper()
             file_name = self.new_client_file_name_entry.get().strip().upper()
-
+            
             if not all([name, contact, brought_by, file_name]):
                 messagebox.showerror("Validation Error", "All fields are required for a new client.")
                 return
@@ -705,8 +587,8 @@ class AddClientAndFileForm(FormBase):
                     messagebox.showerror("Error", "Failed to add file. File name might be a duplicate.")
             else:
                 messagebox.showerror("Error", "Failed to add client. Contact might already exist.")
-
-        elif current_tab_id == 1:  # "Add New File to Existing Client" tab
+        
+        elif current_tab_id == 1: # "Add New File to Existing Client" tab
             if not self.selected_client_id:
                 messagebox.showerror("Validation Error", "Please select a client from the table.")
                 return
@@ -724,393 +606,581 @@ class AddClientAndFileForm(FormBase):
             else:
                 messagebox.showerror("Error", "Failed to add file. File name might be a duplicate for this client.")
 
-
-class TrackJobsView(FormBase):
-    """
-    A system-wide view to track all jobs.
-    Allows editing the status of a selected job.
-    """
-
-    def __init__(self, master, db_manager, refresh_callback, parent_icon_loader=None):
-        super().__init__(master, 950, 600, "Track All Jobs", "track_jobs.png", parent_icon_loader)
+class UpdateStatusForm(FormBase):
+    def __init__(self, master, db_manager, job_id, refresh_callback, parent_icon_loader):
+        super().__init__(master, 300, 250, "Update Job Status", "update_status.png", parent_icon_loader)
         self.db_manager = db_manager
+        self.job_id = job_id
         self.refresh_callback = refresh_callback
-        self.parent_icon_loader = parent_icon_loader  # Store for button icons
+        
         self._create_widgets()
-        self._populate_jobs_table()
-
+        
     def _create_widgets(self):
-        ttk.Label(self, text="All System Jobs", font=('Helvetica', 14, 'bold')).pack(pady=10)
-
-        table_frame = ttk.Frame(self, padding="10")
-        table_frame.pack(fill="both", expand=True)
-
-        columns = ("job_id", "client_name", "file_name", "description", "status")
-        self.jobs_tree = ttk.Treeview(table_frame, columns=columns, show="headings")
-        self.jobs_tree.heading("job_id", text="Job ID")
-        self.jobs_tree.heading("client_name", text="Client Name")
-        self.jobs_tree.heading("file_name", text="File Name")
-        self.jobs_tree.heading("description", text="Description")
-        self.jobs_tree.heading("status", text="Status")
-
-        self.jobs_tree.column("job_id", width=80, anchor=tk.W)
-        self.jobs_tree.column("client_name", width=150, anchor=tk.W)
-        self.jobs_tree.column("file_name", width=150, anchor=tk.W)
-        self.jobs_tree.column("description", width=300, anchor=tk.W)
-        self.jobs_tree.column("status", width=120, anchor=tk.W)
-
-        scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.jobs_tree.yview)
-        self.jobs_tree.configure(yscrollcommand=scrollbar.set)
-
-        self.jobs_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        # Buttons for Edit Status and Cancel
-        button_frame = ttk.Frame(self, padding="10")
-        button_frame.pack(fill="x", pady=10)
-
-        # Load icons for buttons
-        self.edit_icon_ref = None
-        self.cancel_icon_ref = None
-        if self.parent_icon_loader:
-            self.edit_icon_ref = self.parent_icon_loader("edit.png", size=(20, 20))
-            self.cancel_icon_ref = self.parent_icon_loader("cancel.png", size=(20, 20))
-
-        ttk.Button(button_frame, text="Edit Status", image=self.edit_icon_ref, compound=tk.LEFT,
-                   command=self._open_edit_status_form).pack(side=tk.LEFT, padx=10)
-        ttk.Button(button_frame, text="Cancel", image=self.cancel_icon_ref, compound=tk.LEFT,
-                   command=self.destroy).pack(side=tk.RIGHT, padx=10)
-
-    def _populate_jobs_table(self):
-        """Populates the table with all jobs, including client names and file names."""
-        for item in self.jobs_tree.get_children():
-            self.jobs_tree.delete(item)
-
-        try:
-            all_jobs = self.db_manager.get_all_jobs()
-            all_clients_data = self.db_manager.get_all_service_clients()
-            client_name_map = {client['client_id']: client['name'] for client in all_clients_data}
-
-            # Assuming db_manager also has a way to get file name by file_id
-            # For this example, we'll create a mock file_name_map
-            file_name_map = {}
-            for job in all_jobs:
-                file_id = job.get('file_id')
-                if file_id and file_id not in file_name_map:
-                    file_data = self.db_manager.get_file_by_id(file_id)
-                    file_name_map[file_id] = file_data.get('file_name', 'N/A') if file_data else 'N/A'
-
-            if not all_jobs:
-                self.jobs_tree.insert("", tk.END, values=("", "", "", "No jobs found.", ""))
-                return
-
-            for job in all_jobs:
-                job_id = job.get('job_id', 'N/A')
-                client_id = job.get('client_id')
-                file_id = job.get('file_id')  # Get file_id from job data
-                description = job.get('job_description', 'N/A')
-                status = job.get('status', 'N/A')
-
-                client_name = client_name_map.get(client_id, 'Unknown Client')
-                file_name = file_name_map.get(file_id, 'Unknown File')  # Get file_name from map
-
-                self.jobs_tree.insert("", tk.END, values=(
-                    job_id,
-                    job['timestamp'], # Keep full timestamp for consistency
-                    client_name,
-                    file_name,
-                    description.upper(),
-                    status.upper()
-                ), iid=job_id)  # Use job_id as iid for easy lookup
-
-        except AttributeError as ae:
-            messagebox.showerror("Database Error",
-                                 f"Missing database method: {ae}. Ensure DatabaseManager has 'get_all_jobs', 'get_all_service_clients', and 'get_file_by_id' methods.")
-            self.jobs_tree.insert("", tk.END, values=("", "", "", f"Error: {ae}", ""))
-        except KeyError as ke:
-            messagebox.showerror("Data Structure Error",
-                                 f"Missing key in job/client data: {ke}. Check database return format.")
-            self.jobs_tree.insert("", tk.END, values=("", "", "", f"Error: {ke}", ""))
-        except Exception as e:
-            messagebox.showerror("Error", f"An unexpected error occurred: {e}")
-            self.jobs_tree.insert("", tk.END, values=("", "", "", f"Error: {e}", ""))
-
-    def _open_edit_status_form(self):
-        """Opens a form to edit the status of the selected job."""
-        selected_item = self.jobs_tree.selection()
-        if not selected_item:
-            messagebox.showwarning("No Selection", "Please select a job from the table to edit its status.")
-            return
-
-        # FIX: The iid is directly the selected_item[0]
-        job_id = selected_item[0]
-
-        # Fetch the full job data from the database
-        job_data = self.db_manager.get_job_by_id(job_id)
-
-        if job_data:
-            EditJobStatusForm(
-                master=self.master,
-                db_manager=self.db_manager,
-                job_data=job_data,
-                refresh_callback=self._populate_jobs_table,  # Refresh this view after update
-                parent_icon_loader=self.parent_icon_loader
-            )
-        else:
-            messagebox.showerror("Error", f"Could not find details for Job ID: {job_id}")
-
-
-class EditJobStatusForm(FormBase):
-    """
-    A form to edit the status of a selected job.
-    """
-
-    def __init__(self, master, db_manager, job_data, refresh_callback, parent_icon_loader=None):
-        super().__init__(master, 400, 250, f"Edit Job Status: {job_data['job_id']}", "edit.png", parent_icon_loader)
-        self.db_manager = db_manager
-        self.job_data = job_data
-        self.refresh_callback = refresh_callback
-        self.parent_icon_loader = parent_icon_loader
-        self._create_widgets()
-
-    def _create_widgets(self):
-        main_frame = ttk.Frame(self, padding="15")
+        main_frame = ttk.Frame(self, padding="20")
         main_frame.pack(fill="both", expand=True)
 
-        ttk.Label(main_frame, text=f"Job ID: {self.job_data['job_id']}", font=('Helvetica', 10, 'bold')).pack(
-            anchor="w", pady=5)
-        ttk.Label(main_frame, text=f"Description: {self.job_data['job_description']}", font=('Helvetica', 10)).pack(
-            anchor="w", pady=2)
-        ttk.Label(main_frame, text=f"Current Status: {self.job_data['status']}", font=('Helvetica', 10)).pack(
-            anchor="w", pady=2)
-
-        ttk.Label(main_frame, text="Select New Status:").pack(anchor="w", pady=(10, 5))
-
-        # Define available statuses (MUST match database CHECK constraint)
-        self.new_status_var = tk.StringVar(self)
-        # 🌟 FIX: Updated job_statuses to match the database schema 🌟
-        job_statuses = ["Ongoing", "Completed", "Cancelled"]
-        self.new_status_var.set(self.job_data['status'])  # Set initial value to current status
-
-        self.status_option_menu = ttk.OptionMenu(
-            main_frame,
-            self.new_status_var,
-            self.new_status_var.get(),
-            *job_statuses
-        )
-        self.status_option_menu.pack(fill="x", pady=5)
-
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(pady=15)
-
-        ttk.Button(button_frame, text="Update Status", command=self._update_status).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Cancel", command=self.destroy).pack(side=tk.LEFT, padx=5)
-
-    def _update_status(self):
-        new_status = self.new_status_var.get()
-        if new_status == self.job_data['status']:
-            messagebox.showinfo("No Change", "Job status is already set to this value.")
+        ttk.Label(main_frame, text=f"Updating Job ID: {self.job_id}", font=('Helvetica', 12, 'bold')).pack(pady=10)
+        
+        ttk.Label(main_frame, text="Select New Status:").pack(pady=5)
+        self.status_combobox = ttk.Combobox(main_frame, values=["Ongoing", "Completed"], state="readonly")
+        self.status_combobox.set("Ongoing")
+        self.status_combobox.pack(pady=5)
+        
+        ttk.Button(main_frame, text="Confirm", command=self._update_job_status).pack(pady=20)
+        
+    def _update_job_status(self):
+        new_status = self.status_combobox.get()
+        if not new_status:
+            messagebox.showerror("Error", "Please select a status.")
             return
-
-        success = self.db_manager.update_job_status(self.job_data['job_id'], new_status)
-
+            
+        success = self.db_manager.update_job_status(self.job_id, new_status)
         if success:
-            messagebox.showinfo("Success", f"Job {self.job_data['job_id']} status updated to {new_status}.")
-            self.refresh_callback()  # Refresh the jobs table in TrackJobsView
+            messagebox.showinfo("Success", f"Job {self.job_id} status updated to '{new_status}'.")
+            self.refresh_callback()
             self.destroy()
         else:
             messagebox.showerror("Error", "Failed to update job status.")
-
-
-class ManagePaymentsView(FormBase):
+            
+class TrackJobsView(FormBase):
     """
-    A system-wide view for managing payments, displaying more detailed job and client info.
-    Includes a button to print receipts for selected payments.
+    A system-wide view to track all jobs, now with real-time search.
     """
-
     def __init__(self, master, db_manager, refresh_callback, parent_icon_loader=None):
-        super().__init__(master, 900, 550, "Manage Payments", "manage_payments.png", parent_icon_loader)
+        super().__init__(master, 1200, 600, "Track All Jobs", "track_jobs.png", parent_icon_loader)
         self.db_manager = db_manager
         self.refresh_callback = refresh_callback
-        self.parent_icon_loader = parent_icon_loader # Store for button icons
+        self.parent_icon_loader = parent_icon_loader
+        self.update_icon = None # To hold reference to the button icon
+        self.all_jobs_data = [] # To store the unfiltered job list
         self._create_widgets()
-        self._populate_payments_table()
+        self._populate_jobs_table()
+        self._update_status_button_state()
 
     def _create_widgets(self):
-        ttk.Label(self, text="Payment Management System", font=('Helvetica', 14, 'bold')).pack(pady=10)
-
+        # Frame for the search bar
+        search_frame = ttk.Frame(self, padding="10")
+        search_frame.pack(fill="x")
+        ttk.Label(search_frame, text="Search:").pack(side="left", padx=(0, 5))
+        self.search_entry = ttk.Entry(search_frame)
+        self.search_entry.pack(side="left", fill="x", expand=True)
+        self.search_entry.bind("<KeyRelease>", self._filter_jobs)
+        
+        # Frame for the table
         table_frame = ttk.Frame(self, padding="10")
         table_frame.pack(fill="both", expand=True)
 
-        # Updated columns based on the image: Payment ID, Job ID, Client Name, Task, Amount, Date
-        columns = ("payment_id", "job_id", "client_name", "task_description", "amount", "payment_date", "payment_type")
-        self.payments_tree = ttk.Treeview(table_frame, columns=columns, show="headings")
-
-        self.payments_tree.heading("payment_id", text="Payment ID")
-        self.payments_tree.heading("job_id", text="Job ID")
-        self.payments_tree.heading("client_name", text="Client Name")
-        self.payments_tree.heading("task_description", text="Task")
-        self.payments_tree.heading("amount", text="Amount")
-        self.payments_tree.heading("payment_date", text="Date")
-        self.payments_tree.heading("payment_type", text="Type")
-
-        self.payments_tree.column("payment_id", width=80, anchor=tk.W)
-        self.payments_tree.column("job_id", width=60, anchor=tk.W)
-        self.payments_tree.column("client_name", width=150, anchor=tk.W)
-        self.payments_tree.column("task_description", width=250, anchor=tk.W)
-        self.payments_tree.column("amount", width=100, anchor=tk.E)  # Right-align amount
-        self.payments_tree.column("payment_date", width=120, anchor=tk.W)
-        self.payments_tree.column("payment_type", width=100, anchor=tk.W)
-
-        scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.payments_tree.yview)
-        self.payments_tree.configure(yscrollcommand=scrollbar.set)
-
-        self.payments_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # Updated columns
+        columns = ("date", "description", "title_name", "title_number", "file_name", "client_name", "status")
+        self.jobs_tree = ttk.Treeview(table_frame, columns=columns, show="headings")
+        
+        self.jobs_tree.heading("date", text="Date")
+        self.jobs_tree.heading("description", text="Description")
+        self.jobs_tree.heading("title_name", text="Title Name")
+        self.jobs_tree.heading("title_number", text="Title Number")
+        self.jobs_tree.heading("file_name", text="File Name")
+        self.jobs_tree.heading("client_name", text="Client Name")
+        self.jobs_tree.heading("status", text="Status")
+        
+        self.jobs_tree.column("date", width=120, anchor=tk.W)
+        self.jobs_tree.column("description", width=250, anchor=tk.W)
+        self.jobs_tree.column("title_name", width=120, anchor=tk.W)
+        self.jobs_tree.column("title_number", width=120, anchor=tk.W)
+        self.jobs_tree.column("file_name", width=100, anchor=tk.W)
+        self.jobs_tree.column("client_name", width=150, anchor=tk.W)
+        self.jobs_tree.column("status", width=100, anchor=tk.W)
+        
+        scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.jobs_tree.yview)
+        self.jobs_tree.configure(yscrollcommand=scrollbar.set)
+        
+        self.jobs_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
+        
+        self.jobs_tree.bind("<<TreeviewSelect>>", self._update_status_button_state)
+        
+        # Frame for buttons
         button_frame = ttk.Frame(self, padding="10")
-        button_frame.pack(fill="x", pady=10)
+        button_frame.pack(fill="x", side="bottom")
 
-        self.refresh_icon_ref = None
-        self.print_icon_ref = None # New icon reference for Print button
+        # Update Status Button
         if self.parent_icon_loader:
-            self.refresh_icon_ref = self.parent_icon_loader("refresh.png",
-                                                            size=(20, 20))  # Assuming a refresh icon exists
-            self.print_icon_ref = self.parent_icon_loader("print_icon.png", # Assuming a print icon exists
-                                                           size=(20, 20))
+            self.update_icon = self.parent_icon_loader("update_status.png", size=(20, 20))
 
-        ttk.Button(button_frame, text="Refresh", image=self.refresh_icon_ref, compound=tk.LEFT,
-                   command=self._populate_payments_table).pack(side=tk.LEFT, padx=5)
+        self.update_status_btn = ttk.Button(
+            button_frame, 
+            text="Update Status", 
+            image=self.update_icon, 
+            compound=tk.LEFT,
+            state="disabled",
+            command=self._open_update_status_window
+        )
+        self.update_status_btn.pack(side="right")
+    
+    def _populate_jobs_table(self):
+        """Populates the table with all jobs, fetched with client info."""
+        for item in self.jobs_tree.get_children():
+            self.jobs_tree.delete(item)
+        
+        self.all_jobs_data = self.db_manager.get_all_jobs()
+        
+        for job in self.all_jobs_data:
+            # Display all relevant data, converted to uppercase for consistency
+            values = (
+                job['timestamp'].upper(),
+                job['job_description'].upper(),
+                job['title_name'].upper(),
+                job['title_number'].upper(),
+                job['file_name'].upper(),
+                job['client_name'].upper(),
+                job['status'].upper()
+            )
+            # We store the job_id in the item's `iid` so we can easily retrieve it later.
+            self.jobs_tree.insert("", tk.END, iid=job['job_id'], values=values)
+            
+    def _filter_jobs(self, event=None):
+        """Filters the jobs table based on the search entry text."""
+        search_text = self.search_entry.get().strip().lower()
+        
+        # Clear existing items
+        for item in self.jobs_tree.get_children():
+            self.jobs_tree.delete(item)
+            
+        if not search_text:
+            self._populate_jobs_table()
+            return
+            
+        for job in self.all_jobs_data:
+            # Search across multiple fields
+            if (search_text in str(job.get('title_number', '')).lower() or
+                search_text in str(job.get('client_name', '')).lower() or
+                search_text in str(job.get('file_name', '')).lower() or
+                search_text in str(job.get('title_name', '')).lower()):
+                
+                # Re-insert the filtered job
+                values = (
+                    job['timestamp'].upper(),
+                    job['job_description'].upper(),
+                    job['title_name'].upper(),
+                    job['title_number'].upper(),
+                    job['file_name'].upper(),
+                    job['client_name'].upper(),
+                    job['status'].upper()
+                )
+                self.jobs_tree.insert("", tk.END, iid=job['job_id'], values=values)
+    
+    def _update_status_button_state(self, event=None):
+        """Enables/disables the update button based on row selection."""
+        if self.jobs_tree.selection():
+            self.update_status_btn['state'] = 'normal'
+        else:
+            self.update_status_btn['state'] = 'disabled'
 
-        # New Print Receipt Button
-        ttk.Button(button_frame, text="Print Receipt", image=self.print_icon_ref, compound=tk.LEFT,
-                   command=self._print_receipt_for_selected_payment).pack(side=tk.RIGHT, padx=5)
-
-
-    def _populate_payments_table(self):
-        """Populates the table with payment records, including related job and client data."""
-        for item in self.payments_tree.get_children():
-            self.payments_tree.delete(item)
-
-        try:
-            payments = self.db_manager.get_all_payments()
-
-            if not payments:
-                self.payments_tree.insert("", tk.END, values=("", "", "", "No payments found.", "", "", ""))
-                return
-
-            for payment in payments:
-                payment_id = payment.get('payment_id', 'N/A')
-                job_id = payment.get('job_id', 'N/A')
-                amount = f"KSh {payment.get('amount', 0.00):,.2f}"  # Format as currency
-                payment_date = payment.get('payment_date', 'N/A')
-                payment_type = payment.get('payment_type', 'N/A')
-
-                client_name = 'Unknown Client'
-                task_description = 'Unknown Task'
-                file_name = 'N/A' # Initialize file_name here
-
-                if job_id != 'N/A':
-                    job_data = self.db_manager.get_job_by_id(job_id)
-                    if job_data:
-                        task_description = job_data.get('job_description', 'N/A').upper()
-                        client_id = job_data.get('client_id')
-                        file_id = job_data.get('file_id') # Get file_id from job_data
-
-                        if client_id:
-                            client_data = self.db_manager.get_client_by_id(client_id)
-                            if client_data:
-                                client_name = client_data.get('name', 'N/A').upper()
-                        if file_id:
-                            file_data = self.db_manager.get_file_by_id(file_id)
-                            if file_data:
-                                file_name = file_data.get('file_name', 'N/A').upper()
-
-
-                self.payments_tree.insert("", tk.END, values=(
-                    payment_id,
-                    job_id,
-                    client_name,
-                    task_description,
-                    amount,
-                    payment_date,
-                    payment_type
-                ), iid=payment_id)  # Use payment_id as iid
-
-        except AttributeError as ae:
-            messagebox.showerror("Database Error",
-                                 f"Missing database method: {ae}. Ensure DatabaseManager has 'get_all_payments', 'get_job_by_id', 'get_client_by_id', and 'get_file_by_id' methods.")
-            self.payments_tree.insert("", tk.END, values=("", "", "", f"Error: {ae}", "", "", ""))
-        except KeyError as ke:
-            messagebox.showerror("Data Structure Error",
-                                 f"Missing key in data: {ke}. Check database return format for payments, jobs, or clients.")
-            self.payments_tree.insert("", tk.END, values=("", "", "", f"Error: {ke}", "", "", ""))
-        except Exception as e:
-            messagebox.showerror("Error", f"An unexpected error occurred: {e}")
-            self.payments_tree.insert("", tk.END, values=("", "", "", f"Error: {e}", "", "", ""))
-
-    def _print_receipt_for_selected_payment(self):
-        """
-        Retrieves details for the selected payment and generates a PDF receipt.
-        """
-        selected_item = self.payments_tree.selection()
+    def _open_update_status_window(self):
+        """Opens the form to update the status of the selected job."""
+        selected_item = self.jobs_tree.selection()
         if not selected_item:
-            messagebox.showwarning("No Selection", "Please select a payment from the table to print a receipt.")
+            messagebox.showinfo("Selection Error", "Please select a job to update its status.")
+            return
+            
+        # Retrieve the job_id stored in the item's iid
+        job_id = selected_item[0] # Corrected line
+        
+        # Open the new form to update the status
+        UpdateStatusForm(self.master, self.db_manager, job_id, self._populate_jobs_table, self.parent_icon_loader)
+
+class UpdatePaymentForm(FormBase):
+    """
+    A form for updating a specific payment's details and status.
+    """
+    def __init__(self, master, db_manager, payment_data, populate_callback, parent_icon_loader=None):
+        """
+        Initializes the form with a specific payment's data.
+
+        Args:
+            master: The parent window.
+            db_manager: An instance of the DatabaseManager.
+            payment_data (tuple): A tuple containing the payment record details.
+            populate_callback (callable): A function to refresh the main view.
+            parent_icon_loader: A function to load icons.
+        """
+        # FormBase already handles transient and grab_set, so we remove them here.
+        super().__init__(master, 450, 300, "Update Payment", "update.png", parent_icon_loader)
+        self.db_manager = db_manager
+        self.payment_data = payment_data
+        self.populate_callback = populate_callback
+        
+        self._create_widgets()
+
+    def _create_widgets(self):
+        """
+        Creates the UI widgets for the update form.
+        
+        This method is updated to use a grid layout for the client details
+        and to add icons to the buttons.
+        """
+        main_frame = ttk.Frame(self, padding="20")
+        main_frame.pack(fill="both", expand=True)
+
+        ttk.Label(main_frame, text="Update Payment", font=('Helvetica', 14, 'bold')).pack(pady=(0, 15))
+
+        # We now use a grid for the details to keep them aligned horizontally
+        details_frame = ttk.Frame(main_frame)
+        details_frame.pack(fill="x", pady=10)
+
+        # Configure columns to expand equally
+        details_frame.columnconfigure(0, weight=1)
+        details_frame.columnconfigure(1, weight=1)
+        details_frame.columnconfigure(2, weight=1)
+
+        # Client Name (Left)
+        ttk.Label(details_frame, text="Client Name:", font=('Helvetica', 10, 'bold')).grid(row=0, column=0, sticky="w", padx=(0, 5))
+        ttk.Label(details_frame, text=self.payment_data[1]).grid(row=1, column=0, sticky="w", pady=(0, 5))
+
+        # Description (Center)
+        ttk.Label(details_frame, text="Description:", font=('Helvetica', 10, 'bold')).grid(row=0, column=1, sticky="w", padx=(15, 5))
+        ttk.Label(details_frame, text=self.payment_data[3]).grid(row=1, column=1, sticky="w", pady=(0, 5))
+
+        # Title Number (Right)
+        ttk.Label(details_frame, text="Title Number:", font=('Helvetica', 10, 'bold')).grid(row=0, column=2, sticky="w", padx=(15, 5))
+        ttk.Label(details_frame, text=self.payment_data[4]).grid(row=1, column=2, sticky="w", pady=(0, 5))
+
+        # Payment Type Dropdown
+        ttk.Label(main_frame, text="Payment Type:").pack(pady=(10, 5))
+        self.payment_type_combobox = ttk.Combobox(main_frame, values=["cash", "mpesa", "bank"], state="readonly")
+        self.payment_type_combobox.set("cash")  # Set a default value
+        self.payment_type_combobox.pack(pady=(0, 20))
+
+        # Action Buttons
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(pady=10)
+        
+        # Load and store button icons to prevent garbage collection
+        if self.parent_icon_loader:
+            self._submit_icon = self.parent_icon_loader("check.png", size=(16, 16))
+            self._cancel_icon = self.parent_icon_loader("cancel.png", size=(16, 16))
+        else:
+            self._submit_icon = None
+            self._cancel_icon = None
+
+        submit_btn = ttk.Button(button_frame, text="Submit", image=self._submit_icon, compound=tk.LEFT, command=self._submit_update_action)
+        submit_btn.pack(side="left", padx=5)
+
+        cancel_btn = ttk.Button(button_frame, text="Cancel", image=self._cancel_icon, compound=tk.LEFT, command=self.destroy)
+        cancel_btn.pack(side="left", padx=5)
+
+    def _submit_update_action(self):
+        """
+        Handles the submission of the payment update.
+        """
+        selected_type = self.payment_type_combobox.get()
+        if not selected_type:
+            messagebox.showwarning("Invalid Selection", "Please select a payment type.")
             return
 
-        payment_id = selected_item[0]
-        payment_data = self.db_manager.get_payment_by_id(payment_id)
-
-        if not payment_data:
-            messagebox.showerror("Error", f"Could not retrieve details for Payment ID: {payment_id}")
-            return
-
-        # Extract details for the receipt
-        job_id = payment_data.get('job_id', 'N/A')
-        amount_paid = payment_data.get('amount', 0.0)
-        payment_date = payment_data.get('payment_date', 'N/A')
-
-        # Fetch associated job and client data
-        client_name = 'Unknown Client'
-        file_name = 'N/A'
-        job_description = 'N/A'
-
-        if job_id != 'N/A':
-            job_data = self.db_manager.get_job_by_id(job_id)
-            if job_data:
-                job_description = job_data.get('job_description', 'N/A')
-                client_id = job_data.get('client_id')
-                file_id = job_data.get('file_id')
-
-                if client_id:
-                    client_data = self.db_manager.get_client_by_id(client_id)
-                    if client_data:
-                        client_name = client_data.get('name', 'N/A')
-                if file_id:
-                    file_data = self.db_manager.get_file_by_id(file_id)
-                    if file_data:
-                        file_name = file_data.get('file_name', 'N/A')
-
-        # Generate the PDF receipt using the helper function
-        receipt_path = _generate_pdf_payment_receipt(
-            job_id=job_id,
-            client_name=client_name,
-            file_name=file_name,
-            job_description=job_description,
-            amount_paid=amount_paid,
-            payment_date=payment_date
+        confirmation = messagebox.askyesno(
+            "Confirm Action",
+            f"Are you sure you want to update this payment to 'paid' with payment type '{selected_type}'? This action is irreversible."
         )
 
-        if receipt_path:
-            SuccessMessage(
-                self.master,
-                success=True,
-                message=f"Receipt for Payment ID {payment_id} generated successfully!",
-                pdf_path=receipt_path,
-                parent_icon_loader=self.parent_icon_loader
-            )
+        if confirmation:
+            payment_id = self.payment_data[0]
+            new_status = 'paid'
+            
+            if self.db_manager.update_payment_record(payment_id, new_status, selected_type):
+                messagebox.showinfo("Success", "Payment updated successfully.")
+                self.populate_callback()
+                self.destroy()
+            else:
+                messagebox.showerror("Error", "Failed to update payment.")
+
+
+# --- Original ManagePaymentsView with modifications ---
+
+class ManagePaymentsView(FormBase):
+    """
+    Form to manage payment records, inheriting from FormBase.
+    This includes viewing, adding, editing, and deleting payments.
+    """
+    def __init__(self, master, db_manager, populate_survey_overview, parent_icon_loader=None):
+        """
+        Initializes the ManagePaymentsView form.
+        """
+        super().__init__(master, 1200, 620, "Manage Payments", "payment.png", parent_icon_loader)
+        self.db_manager = db_manager
+        self.populate_survey_overview = populate_survey_overview
+        self.parent_icon_loader = parent_icon_loader
+        self.selected_item = None
+        self.page_size = 20
+        self.current_page = 1
+        self.total_payments = 0
+        self.total_pages = 0
+
+        self._apply_filters_icon = None
+        self._clear_filters_icon = None # New icon for clear filters
+        self._prev_icon = None
+        self._next_icon = None
+        self._close_icon = None
+        
+        self._create_widgets()
+        self._fetch_and_display_payments()
+
+    def _create_widgets(self):
+        """Creates the UI widgets for the payments management form."""
+        main_frame = ttk.Frame(self, padding="10 10 10 10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        title_label = ttk.Label(main_frame, text="Manage Payments", font=('Helvetica', 16, 'bold'))
+        title_label.pack(pady=10)
+
+        filter_frame = ttk.LabelFrame(main_frame, text="Filter Payments", padding="10")
+        filter_frame.pack(fill="x", pady=5)
+        filter_frame.columnconfigure(1, weight=1)
+        filter_frame.columnconfigure(3, weight=1)
+        filter_frame.columnconfigure(5, weight=1)
+
+        # Row 0
+        ttk.Label(filter_frame, text="Status:").grid(row=0, column=0, padx=5, pady=2, sticky="w")
+        self.status_filter_combobox = ttk.Combobox(filter_frame, values=["All", "paid", "unpaid"], state="readonly", width=10)
+        self.status_filter_combobox.set("All")
+        self.status_filter_combobox.grid(row=0, column=1, padx=5, pady=2, sticky="ew")
+
+        ttk.Label(filter_frame, text="From Date:").grid(row=0, column=2, padx=5, pady=2, sticky="w")
+        self.from_date_entry = DateEntry(filter_frame, width=12, date_pattern='yyyy-mm-dd')
+        self.from_date_entry.grid(row=0, column=3, padx=5, pady=2, sticky="ew")
+        self.from_date_entry.set_date(date.today())
+
+        ttk.Label(filter_frame, text="To Date:").grid(row=0, column=4, padx=5, pady=2, sticky="w")
+        self.to_date_entry = DateEntry(filter_frame, width=12, date_pattern='yyyy-mm-dd')
+        self.to_date_entry.grid(row=0, column=5, padx=5, pady=2, sticky="ew")
+        self.to_date_entry.set_date(date.today())
+
+        # Row 1
+        ttk.Label(filter_frame, text="Payment Mode:").grid(row=1, column=0, padx=5, pady=2, sticky="w")
+        self.payment_mode_filter_combobox = ttk.Combobox(filter_frame, values=["", "cash", "bank", "mpesa"], state="readonly", width=10)
+        self.payment_mode_filter_combobox.set("")
+        self.payment_mode_filter_combobox.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
+
+        ttk.Label(filter_frame, text="Client Name:").grid(row=1, column=2, padx=5, pady=2, sticky="w")
+        self.client_name_search_entry = ttk.Entry(filter_frame, width=20)
+        self.client_name_search_entry.grid(row=1, column=3, padx=5, pady=2, sticky="ew")
+
+        ttk.Label(filter_frame, text="File Name:").grid(row=1, column=4, padx=5, pady=2, sticky="w")
+        self.file_name_search_entry = ttk.Entry(filter_frame, width=20)
+        self.file_name_search_entry.grid(row=1, column=5, padx=5, pady=2, sticky="ew")
+        
+        # New: Title Number Filter (Row 2)
+        ttk.Label(filter_frame, text="Title Number:").grid(row=2, column=0, padx=5, pady=2, sticky="w")
+        self.title_number_search_entry = ttk.Entry(filter_frame, width=20)
+        self.title_number_search_entry.grid(row=2, column=1, padx=5, pady=2, sticky="ew")
+
+        # Buttons for filters (Row 3)
+        # Buttons for filters (Row 3)
+        if self.parent_icon_loader:
+            self._apply_filters_icon = self.parent_icon_loader("filter.png", size=(20, 20))
+            self._clear_filters_icon = self.parent_icon_loader("clear_filter.png", size=(20, 20)) # Assuming you have a refresh.png icon
+
+        # Note: Icon loading is skipped in this mock example
+        apply_button = ttk.Button(filter_frame, text="Apply Filters", command=self._apply_filters)
+        apply_button.grid(row=3, column=0, columnspan=3, pady=10)
+        apply_button.image = self._apply_filters_icon # Store reference for this button
+
+        clear_button = ttk.Button(filter_frame, text="Clear Filters", command=self._clear_filters)
+        clear_button.grid(row=3, column=3, columnspan=3, pady=10)
+        clear_button.image = self._clear_filters_icon # Store reference for this button
+
+        # Treeview to display payments
+        columns = ("payment_id", "client_name", "file_name", "description", "title_number", "amount", "status", "payment_type", "payment_date")
+        self.payments_tree = ttk.Treeview(main_frame, columns=columns, show="headings")
+
+        # Define headings and columns
+        for col in columns:
+            self.payments_tree.heading(col, text=col.replace('_', ' ').title())
+        
+        # Hide the payment_id column as it's for internal use
+        self.payments_tree.column("payment_id", width=0, stretch=tk.NO)
+        self.payments_tree.column("client_name", width=120, anchor=tk.W)
+        self.payments_tree.column("file_name", width=120, anchor=tk.W)
+        self.payments_tree.column("description", width=250, anchor=tk.W)
+        self.payments_tree.column("title_number", width=120, anchor=tk.CENTER)
+        self.payments_tree.column("amount", width=80, anchor=tk.CENTER)
+        self.payments_tree.column("status", width=100, anchor=tk.CENTER)
+        self.payments_tree.column("payment_type", width=100, anchor=tk.CENTER)
+        self.payments_tree.column("payment_date", width=120, anchor=tk.CENTER)
+        
+        # Bind the selection event
+        self.payments_tree.bind('<<TreeviewSelect>>', self._on_tree_select)
+        self.payments_tree.bind("<Escape>", self._deselect_all)
+        self.bind("<Escape>", self._deselect_all)  # Also bind to the frame itself
+        self.bind("<Button-1>", self._handle_click_to_deselect)
+        
+        self.payments_tree.pack(fill=tk.BOTH, expand=True, pady=10)
+        
+        # Scrollbar for the treeview
+        tree_scrollbar = ttk.Scrollbar(main_frame, orient=tk.VERTICAL, command=self.payments_tree.yview)
+        self.payments_tree.configure(yscrollcommand=tree_scrollbar.set)
+        tree_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Pagination and close buttons
+        pagination_frame = ttk.Frame(main_frame, padding="5")
+        pagination_frame.pack(fill="x", pady=5)
+
+        # Action button frame
+        action_frame = ttk.Frame(pagination_frame)
+        action_frame.pack(side="left")
+
+        # Update Payment button - initially disabled
+        self.update_button = ttk.Button(action_frame, text="Update Payment", command=self._update_payment, state=tk.DISABLED)
+        self.update_button.pack(padx=5)
+        
+        self.prev_button = ttk.Button(pagination_frame, text="Previous", command=self._go_previous_page, state=tk.DISABLED)
+        self.prev_button.pack(side="left", padx=5)
+
+        self.page_info_label = ttk.Label(pagination_frame, text="Page 1 of 1")
+        self.page_info_label.pack(side="left", padx=10)
+
+        self.next_button = ttk.Button(pagination_frame, text="Next", command=self._go_next_page, state=tk.DISABLED)
+        self.next_button.pack(side="left", padx=5)
+
+        close_btn = ttk.Button(pagination_frame, text="Close", command=self.destroy)
+        close_btn.pack(side="right", padx=5)
+
+    def _deselect_all(self, event=None):
+        """Deselects all items in the client Treeview when the Escape key is pressed."""
+        self.payments_tree.selection_remove(self.payments_tree.selection())
+
+    def _handle_click_to_deselect(self, event):
+        """Deselects all items in the treeview if the click was not on the treeview itself."""
+        if event.widget != self.payments_tree and event.widget != self.update_button:
+            self.payments_tree.selection_remove(self.payments_tree.selection())
+
+    def _fetch_and_display_payments(self):
+        """
+        Fetches payments from the database based on current filters and page,
+        then updates the Treeview and pagination controls.
+        """
+        filters = {
+            'status': self.status_filter_combobox.get(),
+            'payment_mode': self.payment_mode_filter_combobox.get(),
+            'client_name': self.client_name_search_entry.get(),
+            'file_name': self.file_name_search_entry.get(),
+            'title_number': self.title_number_search_entry.get(),
+            'from_date': self.from_date_entry.get_date(),
+            'to_date': self.to_date_entry.get_date()
+        }
+        
+        try:
+            payments, total_count = self.db_manager.get_filtered_payments(filters, self.current_page, self.page_size)
+            
+            # Clear existing items
+            for item in self.payments_tree.get_children():
+                self.payments_tree.delete(item)
+
+            for payment in payments:
+                # Get individual values
+                payment_id, client_name, file_name, description, title_number, amount, status, payment_type, payment_date = payment
+                
+                # Create the display tuple
+                display_values = (
+                    payment_id,
+                    client_name.upper(),
+                    file_name.upper(),
+                    description,
+                    title_number,
+                    amount,
+                    status.upper() if isinstance(status, str) else status,
+                    payment_type.upper() if isinstance(payment_type, str) else payment_type,
+                    payment_date
+                )
+                
+                self.payments_tree.insert("", tk.END, values=display_values)
+
+            self.total_payments = total_count
+            self.total_pages = (self.total_payments + self.page_size - 1) // self.page_size
+            
+            # Update page info label and button states
+            self.page_info_label.config(text=f"Page {self.current_page} of {self.total_pages}")
+            
+            self.prev_button.config(state=tk.DISABLED if self.current_page <= 1 else tk.NORMAL)
+            self.next_button.config(state=tk.DISABLED if self.current_page >= self.total_pages else tk.NORMAL)
+            self.update_button.config(state=tk.DISABLED)
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load payments: {e}")
+
+    def _load_payments(self):
+        """Initial load of payments. Calls the unified fetch method."""
+        self.current_page = 1
+        self._fetch_and_display_payments()
+
+    def _apply_filters(self):
+        """Applies filters. Resets to page 1 and calls the unified fetch method."""
+        self.current_page = 1
+        self._fetch_and_display_payments()
+        
+    def _clear_filters(self):
+        """Clears all filter fields and reloads all payments."""
+        self.status_filter_combobox.set("All")
+        self.payment_mode_filter_combobox.set("")
+        self.client_name_search_entry.delete(0, tk.END)
+        self.file_name_search_entry.delete(0, tk.END)
+        self.title_number_search_entry.delete(0, tk.END)
+        self.from_date_entry.set_date(date.today())
+        self.to_date_entry.set_date(date.today())
+        
+        self.current_page = 1
+        self._fetch_and_display_payments()
+
+    def _go_next_page(self):
+        """Moves to the next page of payments."""
+        if self.current_page < self.total_pages:
+            self.current_page += 1
+            self._fetch_and_display_payments()
+            
+    def _go_previous_page(self):
+        """Moves to the previous page of payments."""
+        if self.current_page > 1:
+            self.current_page -= 1
+            self._fetch_and_display_payments()
+
+    def _on_tree_select(self, event):
+        """
+        Handles selection of a row in the Treeview and enables/disables the update button
+        based on the payment's status.
+        """
+        selected_items = self.payments_tree.selection()
+        if selected_items:
+            # Get the dictionary of values for the selected item
+            item_data = self.payments_tree.item(selected_items[0])
+            self.selected_item = item_data['values']
+            
+            # Check the status of the selected item
+            current_status = self.selected_item[6].lower()
+            
+            # Disable the button if the status is 'paid'
+            if current_status == 'paid':
+                self.update_button.config(state=tk.DISABLED)
+                print(f"Payment with ID {self.selected_item[0]} is already paid. Update button disabled.")
+            else:
+                self.update_button.config(state=tk.NORMAL)
+                print(f"Selected payment with Title Number: {self.selected_item[4]}")
         else:
-            messagebox.showerror("Receipt Error", f"Failed to generate receipt for Payment ID {payment_id}.")
+            self.selected_item = None
+            self.update_button.config(state=tk.DISABLED)
+
+    def _update_payment(self):
+        """Opens a new window to handle the payment update."""
+        if not self.selected_item:
+            messagebox.showwarning("No Selection", "Please select a payment to update.")
+            return
+
+        # Open the new UpdatePaymentForm window
+        UpdatePaymentForm(
+            master=self,
+            db_manager=self.db_manager,
+            payment_data=self.selected_item,
+            populate_callback=self._fetch_and_display_payments,
+            parent_icon_loader=self.parent_icon_loader
+        )
 
 
 
@@ -1446,35 +1516,3 @@ class JobReportsView(FormBase):
             report_text_widget.delete(1.0, tk.END)
             report_text_widget.insert(tk.END,
                                       "PDF generation failed. Please check the error logs or ensure ReportLab is installed and data is available.")
-
-
-# Dummy DatePicker and REPORTS_DIR if not defined in your context
-# You should ensure these are properly imported/defined in your actual project
-if 'DatePicker' not in locals():
-    class DatePicker(tk.Toplevel):
-        def __init__(self, master, current_date, callback, parent_icon_loader=None, window_icon_name=None):
-            super().__init__(master)
-            self.title("Select Date")
-            self.transient(master)
-            self.grab_set()
-            self.callback = callback
-            self.current_date = current_date
-
-            # Simple placeholder for DateEntry
-            if DateEntry:
-                self.cal = DateEntry(self, selectmode='day', year=current_date.year, month=current_date.month,
-                                     day=current_date.day)
-                self.cal.pack(padx=10, pady=10)
-                self.cal.bind("<<DateSelected>>", self._on_date_selected)
-            else:
-                ttk.Label(self, text="DateEntry not available. Cannot select date.").pack(padx=10, pady=10)
-                ttk.Button(self, text="OK", command=self.destroy).pack(pady=5)
-
-        def _on_date_selected(self, event):
-            self.callback(self.cal.get_date().strftime("%Y-%m-%d"))
-            self.destroy()
-
-# Ensure REPORTS_DIR is defined if not already in global scope or imported
-if 'REPORTS_DIR' not in locals():
-    REPORTS_DIR = os.path.join(BASE_DIR, 'reports')
-    os.makedirs(REPORTS_DIR, exist_ok=True)

@@ -220,7 +220,7 @@ class DatabaseManager:
                                      title_number TEXT NOT NULL,
                                      fee REAL NOT NULL,
                                      amount_paid REAL DEFAULT 0.0,
-                                     status TEXT NOT NULL DEFAULT 'Ongoing' CHECK(status IN ('Ongoing', 'Completed', 'Cancelled')),
+                                     status TEXT NOT NULL DEFAULT 'Ongoing' CHECK(status IN ('Ongoing', 'Completed', 'Dispatched')),
                                      added_by TEXT NOT NULL,
                                      brought_by TEXT NOT NULL,
                                      timestamp DATETIME NOT NULL,
@@ -235,10 +235,25 @@ class DatabaseManager:
                                      job_id INTEGER NOT NULL,
                                      amount REAL NOT NULL,
                                      payment_date TEXT NOT NULL,
-                                     payment_type TEXT,
+                                     payment_type TEXT CHECK (payment_type IN ('cash','bank','mpesa')),
+                                     status TEXT DEFAULT 'unpaid' CHECK (status IN ('paid', 'unpaid')),
                                      FOREIGN KEY (job_id) REFERENCES service_jobs(job_id)
                )
             ''')
+                cursor.execute('''
+            CREATE TABLE IF NOT EXISTS service_dispatch (
+                dispatch_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id INTEGER NOT NULL,
+                dispatch_date TEXT NOT NULL,
+                reason_for_dispatch TEXT,
+                collected_by TEXT,
+                collector_phone TEXT,
+                sign BLOB, -- Stores the digital signature file.
+                          -- Note: For large files, it's often better to store a path/URL
+                          -- to a file storage system instead of storing the BLOB directly.
+                FOREIGN KEY (job_id) REFERENCES service_jobs(job_id)
+            )
+        ''')
 
 
                 conn.commit()
@@ -1254,6 +1269,39 @@ class DatabaseManager:
         finally:
             conn.close()
 
+    def get_job_details(self, job_id):
+        """
+        Fetches detailed information for a single job, including client and file info.
+        This method now matches the requested format.
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        query = """
+        SELECT
+            sj.job_id,
+            sj.job_description,
+            sj.title_name,
+            sj.title_number,
+            cf.file_name,
+            sc.name AS client_name
+        FROM service_jobs sj
+        JOIN client_files cf ON sj.file_id = cf.file_id
+        JOIN service_clients sc ON cf.client_id = sc.client_id
+        WHERE sj.job_id = ?
+        """
+        try:
+            cursor.execute(query, (job_id,))
+            row = cursor.fetchone()
+            if row:
+                columns = [desc[0] for desc in cursor.description]
+                return dict(zip(columns, row))
+            return None
+        except sqlite3.Error as e:
+            print(f"Error fetching job details for ID {job_id}: {e}")
+            return None
+        finally:
+            conn.close()
+
     def update_job(self, job_id, new_data):
         """Updates a job's information."""
         conn = self._get_connection()
@@ -1267,6 +1315,23 @@ class DatabaseManager:
             return cursor.rowcount > 0
         finally:
             conn.close()
+
+    def update_job_status(self, job_id, new_status):
+        """
+        Updates only the status of a specific job.
+        
+        This method uses the more general update_job function, making it
+        more specific and easier to use for this particular task.
+        
+        Args:
+            job_id (int): The unique ID of the job.
+            new_status (str): The new status for the job (e.g., 'Ongoing', 'Completed').
+            
+        Returns:
+            bool: True if the update was successful, False otherwise.
+        """
+        new_data = {'status': new_status}
+        return self.update_job(job_id, new_data)
 
     def delete_job(self, job_id):
         """Deletes a job and its associated payments."""
@@ -1284,25 +1349,111 @@ class DatabaseManager:
         finally:
             conn.close()
 
+    def get_completed_jobs(self):
+        """
+        Retrieves all service jobs from the database that have a 'Completed' status.
+        The result includes the file name and client name by joining tables.
+        
+        Returns:
+            list: A list of rows (as sqlite3.Row objects), where each row is a 'Completed' job.
+                  Returns an empty list on failure.
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            # Query joins the three tables to get all the required information
+            query = """
+                SELECT 
+                    sj.job_id,
+                    sj.timestamp,
+                    sj.job_description,
+                    sj.title_name,
+                    sj.title_number,
+                    cf.file_name,
+                    sc.name AS client_name,
+                    sj.status
+                FROM 
+                    service_jobs sj
+                JOIN 
+                    client_files cf ON sj.file_id = cf.file_id
+                JOIN 
+                    service_clients sc ON cf.client_id = sc.client_id
+                WHERE 
+                    sj.status = 'Completed'
+            """
+            cursor.execute(query)
+            rows = cursor.fetchall()
+            return rows
+        except sqlite3.Error as e:
+            print(f"An error occurred while fetching data: {e}")
+            return []
+        finally:
+            conn.close()
+
+    def get_dispatched_jobs(self):
+        """
+        Fetches all records from the dispatch table.
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        query = """
+        SELECT dispatch_id, job_id, dispatch_date, reason_for_dispatch, collected_by, collector_phone
+        FROM service_dispatch
+        ORDER BY dispatch_date DESC
+        """
+        try:
+            cursor.execute(query)
+            # Use a list comprehension to convert rows to dictionaries
+            columns = [desc[0] for desc in cursor.description]
+            dispatched_jobs = [dict(zip(columns, row)) for row in cursor.fetchall()]
+            return dispatched_jobs
+        except sqlite3.Error as e:
+            print(f"Error fetching dispatch records: {e}")
+            return []
+        finally:
+            conn.close()
+    
+    def save_dispatch_details(self, job_id, dispatch_date, reason, collected_by, phone, sign_blob):
+        """
+        Inserts new dispatch details into the service_dispatch table.
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        insert_query = """
+        INSERT INTO service_dispatch (job_id, dispatch_date, reason_for_dispatch, collected_by, collector_phone, sign)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """
+        update_query = """
+        UPDATE service_jobs
+        SET status = 'Dispatched'
+        WHERE job_id = ?
+        """
+        try:
+            cursor.execute(insert_query, (job_id, dispatch_date, reason, collected_by, phone, sign_blob))
+            cursor.execute(update_query, (job_id,))
+            conn.commit()
+            return True
+        except sqlite3.Error as e:
+            print(f"Error saving dispatch details: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    
+
     # --- CRUD for Service Payments ---
 
-    def add_payment(self, job_id, amount, payment_type):
+    def add_payment(self, job_id, amount):
         """Records a new payment for a job and updates the job's balance."""
         conn = self._get_connection()
         cursor = conn.cursor()
         payment_date = datetime.now().strftime('%Y-%m-%d')
         try:
             cursor.execute('''
-                INSERT INTO service_payments (job_id, amount, payment_date, payment_type)
-                VALUES (?, ?, ?, ?)
-            ''', (job_id, amount, payment_date, payment_type))
-            
-            cursor.execute('''
-                UPDATE service_jobs
-                SET amount_paid = amount_paid + ?, balance = balance - ?
-                WHERE job_id = ?
-            ''', (amount, amount, job_id))
-            
+                INSERT INTO service_payments (job_id, amount, payment_date)
+                VALUES (?, ?, ?)
+            ''', (job_id, amount, payment_date))
             conn.commit()
             return cursor.lastrowid
         except sqlite3.Error as e:
@@ -1323,46 +1474,175 @@ class DatabaseManager:
         finally:
             conn.close()
 
+    def get_all_payments(self):
+        """
+        Retrieves all payments with detailed information from related tables.
+        Returns a list of tuples.
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            query = """
+                SELECT
+                    sp.payment_id,
+                    sc.name AS client_name,
+                    cf.file_name,
+                    sj.job_description,
+                    sj.title_number,
+                    sp.amount,
+                    sp.status AS payment_status,
+                    sp.payment_type,
+                    sp.payment_date
+                FROM service_payments AS sp
+                JOIN service_jobs AS sj ON sp.job_id = sj.job_id
+                JOIN client_files AS cf ON sj.file_id = cf.file_id
+                JOIN service_clients AS sc ON cf.client_id = sc.client_id
+                ORDER BY sp.payment_date DESC;
+            """
+            cursor.execute(query)
+            return cursor.fetchall()
+        except sqlite3.Error as e:
+            print(f"Error fetching payments: {e}")
+            return []
+        finally:
+            conn.close()
 
-    def get_total_pending_survey_payments(self):
+    def get_filtered_payments(self, filters, page=1, page_size=20):
         """
-        Calculates the sum of outstanding balances from survey jobs.
-        Returns: Total pending amount from survey jobs, or 0.0 if none.
+        Retrieves a filtered and paginated list of payments.
+
+        Args:
+            filters (dict): Dictionary of filters (e.g., 'status', 'client_name').
+            page (int): The current page number (1-based).
+            page_size (int): The number of items per page.
+
+        Returns:
+            tuple: A tuple containing a list of payment records and the total count.
         """
-        query = "SELECT SUM(balance) FROM survey_jobs WHERE balance > 0"
-        result_row = self._execute_query(query, fetch_one=True)
-        return result_row[0] if result_row and result_row[0] is not None else 0.0
+        conn = self._get_connection()
+        if not conn:
+            return [], 0
+
+        try:
+            base_query = """
+                FROM service_payments AS sp
+                JOIN service_jobs AS sj ON sp.job_id = sj.job_id
+                JOIN client_files AS cf ON sj.file_id = cf.file_id
+                JOIN service_clients AS sc ON cf.client_id = sc.client_id
+            """
+            
+            conditions = []
+            params = []
+            
+            # Add filtering conditions dynamically
+            if 'status' in filters and filters['status'] != 'All':
+                conditions.append("sp.status = ?")
+                params.append(filters['status'])
+                
+            if 'payment_mode' in filters and filters['payment_mode']:
+                conditions.append("sp.payment_type = ?")
+                params.append(filters['payment_mode'])
+            
+            if 'client_name' in filters and filters['client_name']:
+                conditions.append("sc.name LIKE ?")
+                params.append(f"%{filters['client_name']}%")
+
+            if 'file_name' in filters and filters['file_name']:
+                conditions.append("cf.file_name LIKE ?")
+                params.append(f"%{filters['file_name']}%")
+
+            if 'title_number' in filters and filters['title_number']:
+                conditions.append("sj.title_number LIKE ?")
+                params.append(f"%{filters['title_number']}%")
+            
+            if 'from_date' in filters and filters['to_date']:
+                conditions.append("sp.payment_date BETWEEN ? AND ?")
+                params.append(filters['from_date'])
+                params.append(filters['to_date'])
+                
+            where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
+            
+            # First, get the total count for pagination
+            count_query = f"SELECT COUNT(*) {base_query}{where_clause}"
+            cursor = conn.cursor()
+            cursor.execute(count_query, params)
+            total_count = cursor.fetchone()[0]
+
+            # Then, get the paginated data
+            data_query = f"""
+                SELECT
+                    sp.payment_id,
+                    sc.name AS client_name,
+                    cf.file_name,
+                    sj.job_description,
+                    sj.title_number,
+                    sp.amount,
+                    sp.status,
+                    sp.payment_type,
+                    sp.payment_date
+                {base_query}{where_clause}
+                ORDER BY sp.payment_date DESC
+                LIMIT ? OFFSET ?;
+            """
+            offset = (page - 1) * page_size
+            params.extend([page_size, offset])
+            
+            cursor.execute(data_query, params)
+            payments = cursor.fetchall()
+
+            return payments, total_count
+        except sqlite3.Error as e:
+            print(f"Error fetching filtered payments: {e}")
+            return [], 0
+        finally:
+            conn.close()
+
+    def update_payment_record(self, payment_id, new_status, payment_type):
+        """
+        Updates the status and payment type of a specific payment.
+
+        Args:
+            payment_id (int): The ID of the payment to update.
+            new_status (str): The new status ('paid' or 'unpaid').
+            payment_type (str): The method of payment ('cash', 'mpesa', 'bank').
+        
+        Returns:
+            bool: True on success, False on failure.
+        """
+        conn = self._get_connection()
+        if not conn:
+            return False
+
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE service_payments SET status = ?, payment_type = ? WHERE payment_id = ?",
+                (new_status, payment_type, payment_id)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        except sqlite3.Error as e:
+            print(f"Error updating payment record: {e}")
+            return False
+        finally:
+            conn.close()
+
+
+
+
+
 
     def get_total_survey_jobs(self):
         """
         Returns the total count of survey jobs.
         Returns: Total number of survey jobs.
         """
-        query = "SELECT COUNT(*) FROM survey_jobs"
+        query = "SELECT COUNT(*) FROM service_jobs"
         result_row = self._execute_query(query, fetch_one=True)
         return result_row[0] if result_row else 0
 
-    def get_completed_survey_jobs_count(self):
-        """
-        Returns the count of completed survey jobs.
-        Returns: Number of completed survey jobs.
-        """
-        query = "SELECT COUNT(*) FROM survey_jobs WHERE status = 'Completed'"
-        result_row = self._execute_query(query, fetch_one=True)
-        return result_row[0] if result_row else 0
-
-    def get_upcoming_survey_deadlines_count(self, days_threshold=30):
-        """
-        Returns the count of pending/ongoing survey jobs with deadlines within the next `days_threshold` days.
-        Returns: Number of upcoming survey deadlines.
-        """
-        current_date = datetime.now().strftime("%Y-%m-%d")
-        future_date = (datetime.now() + timedelta(days=days_threshold)).strftime("%Y-%m-%d")
-        
-        query = "SELECT COUNT(*) FROM survey_jobs WHERE status IN ('Pending', 'Ongoing') AND deadline BETWEEN ? AND ?"
-        params = (current_date, future_date)
-        result_row = self._execute_query(query, params, fetch_one=True)
-        return result_row[0] if result_row else 0
+    
+    
 
     def get_survey_job_status_counts(self):
         """
@@ -1489,176 +1769,7 @@ class DatabaseManager:
             print(f"Error in get_pending_instalments_for_date_range: {e}")
             return []
 
-    def get_completed_surveys_for_date_range(self, start_date, end_date):
-        """
-        Returns completed surveys between the given dates based on 'created_at' and 'status = 'Completed''.
-        Uses 'added_by_user_id' for the user who added the job.
-        """
-        try:
-            query = """
-            SELECT 
-                sj.job_id, 
-                sj.property_location, 
-                sj.job_description,
-                sj.fee,
-                sj.status,
-                sj.created_at AS completion_date, -- Renamed for report compatibility
-                c.name AS client_name,
-                u.username AS surveyor_name -- Using added_by_user as surveyor_name for report
-            FROM survey_jobs sj
-            JOIN clients c ON sj.client_id = c.client_id
-            JOIN users u ON sj.added_by_user_id = u.user_id
-            WHERE sj.status = 'Completed'
-            AND DATE(sj.created_at) BETWEEN ? AND ? 
-            ORDER BY sj.created_at DESC
-            """
-            results_rows = self._execute_query(query, (start_date, end_date), fetch_all=True)
-            return [dict(row) for row in results_rows] if results_rows else []
-        except Exception as e:
-            print(f"Error fetching completed surveys: {e}")
-            return []
-
-    def get_upcoming_survey_deadlines_for_date_range(self, start_date, end_date):
-        """
-        Returns surveys with deadlines between the given dates, based on 'deadline' and status.
-        Uses 'added_by_user_id' for the user who added the job.
-        """
-        try:
-            query = """
-            SELECT 
-                sj.job_id, 
-                c.name AS client_name, 
-                sj.property_location,
-                sj.deadline AS deadline_date, 
-                sj.status, 
-                u.username AS assigned_to, -- Using added_by_user as assigned_to for report
-                CASE 
-                    WHEN DATE(sj.deadline) = DATE('now') THEN 'High'
-                    WHEN DATE(sj.deadline) < DATE('now', '+3 days') THEN 'Medium'
-                    ELSE 'Low'
-                END AS priority
-            FROM survey_jobs sj
-            JOIN clients c ON sj.client_id = c.client_id
-            JOIN users u ON sj.added_by_user_id = u.user_id 
-            WHERE sj.status IN ('Pending', 'Ongoing')
-            AND DATE(sj.deadline) BETWEEN ? AND ?
-            ORDER BY 
-                CASE priority
-                    WHEN 'High' THEN 1
-                    WHEN 'Medium' THEN 2
-                    ELSE 3
-                END,
-                sj.deadline ASC
-            """
-            results_rows = self._execute_query(query, (start_date, end_date), fetch_all=True)
-            return [dict(row) for row in results_rows] if results_rows else []
-        except Exception as e:
-            print(f"Error fetching upcoming deadlines: {e}")
-            return []
-
-
-    def get_survey_jobs_paginated(self, page=1, page_size=15, filters=None, sort_by='created_at', sort_order='DESC'):
-        """
-        Retrieves a paginated list of survey jobs with client and user information,
-        applying filters and sorting.
-        """
-        jobs = []
-        total_count = 0
-        try:
-            where_clauses = []
-            params = []
-
-            # Base query including JOINs to client and user tables
-            base_query_select = """
-                SELECT 
-                    sj.job_id, sj.client_id, sj.property_location, sj.job_description,
-                    sj.fee, sj.amount_paid, sj.balance, sj.deadline, sj.status,
-                    sj.attachments_path, sj.added_by_user_id, sj.created_at, sj.receipt_creation_path,
-                    c.name AS client_name, c.contact_info AS client_contact,
-                    u.username AS added_by_username
-                FROM 
-                    survey_jobs sj
-                JOIN 
-                    clients c ON sj.client_id = c.client_id
-                LEFT JOIN 
-                    users u ON sj.added_by_user_id = u.user_id
-            """
-            
-            # Filters
-            if filters:
-                if 'client_name' in filters and filters['client_name']:
-                    where_clauses.append("c.name LIKE ?")
-                    params.append(f"%{filters['client_name']}%")
-                if 'location' in filters and filters['location']:
-                    where_clauses.append("sj.property_location LIKE ?")
-                    params.append(f"%{filters['location']}%")
-                if 'contact_info' in filters and filters['contact_info']:
-                    where_clauses.append("c.contact_info LIKE ?")
-                    params.append(f"%{filters['contact_info']}%")
-                if 'job_description' in filters and filters['job_description']:
-                    where_clauses.append("sj.job_description LIKE ?")
-                    params.append(f"%{filters['job_description']}%")
-                if 'status' in filters and filters['status'] and filters['status'].lower() != 'all':
-                    where_clauses.append("sj.status = ?")
-                    params.append(filters['status'])
-                
-                # Date filtering for 'created_at' column
-                if 'start_date' in filters and filters['start_date']:
-                    try:
-                        datetime.strptime(filters['start_date'], '%Y-%m-%d')
-                        where_clauses.append("sj.created_at >= ?")
-                        params.append(filters['start_date'] + ' 00:00:00')
-                    except ValueError:
-                        pass # Ignore invalid date format
-                if 'end_date' in filters and filters['end_date']:
-                    try:
-                        datetime.strptime(filters['end_date'], '%Y-%m-%d')
-                        where_clauses.append("sj.created_at <= ?")
-                        params.append(filters['end_date'] + ' 23:59:59')
-                    except ValueError:
-                        pass # Ignore invalid date format
-
-            where_sql = " WHERE " + " AND ".join(where_clauses) if where_clauses else ""
-
-            # Count total jobs with filters (uses same WHERE clause)
-            count_query = f"SELECT COUNT(*) FROM survey_jobs sj JOIN clients c ON sj.client_id = c.client_id {where_sql}"
-            total_count_row = self._execute_query(count_query, params, fetch_one=True)
-            total_count = total_count_row[0] if total_count_row else 0
-
-            # Fetch paginated jobs
-            offset = (page - 1) * page_size
-            
-            # Validate sort_by column to prevent SQL injection
-            allowed_sort_columns_full = ['sj.created_at', 'c.name', 'sj.property_location', 'sj.fee', 'sj.status', 'sj.deadline', 'sj.job_id']
-            if sort_by not in [col.replace('sj.', '').replace('c.', '') for col in allowed_sort_columns_full]: 
-                sort_by_full = 'sj.created_at' 
-            else:
-                if sort_by == 'client_name':
-                    sort_by_full = 'c.name'
-                else: 
-                    sort_by_full = f'sj.{sort_by}'
-            
-            # Validate sort_order
-            if sort_order.upper() not in ['ASC', 'DESC']:
-                sort_order = 'DESC'
-
-            order_sql = f"ORDER BY {sort_by_full} {sort_order}"
-            limit_sql = f"LIMIT ? OFFSET ?"
-
-            main_query_params = list(params)
-            main_query_params.extend([page_size, offset])
-
-            query = f"{base_query_select} {where_sql} {order_sql} {limit_sql}"
-            
-            rows = self._execute_query(query, main_query_params, fetch_all=True)
-
-            if rows:
-                jobs = [dict(row) for row in rows] # Explicitly convert here for this method's consumer
-
-        except Exception as e:
-            print(f"Error in get_survey_jobs_paginated: {e}")
-            return [], 0 
-        return jobs, total_count
+    
     def get_all_agents(self):
         """Fetches all agent records from the 'agents' table as a list of dictionaries."""
         try:

@@ -116,7 +116,7 @@ class ClientForm(BaseForm):
             user_id: The ID of the currently logged-in user.
             parent_icon_loader: A callable to load icons from the parent app.
         """
-        super().__init__(parent, "Client Management", 1300, 780, "client.png", parent_icon_loader)
+        super().__init__(parent, "Land Sales Clients Management", 1300, 780, "client.png", parent_icon_loader)
         
         self.db_manager = db_manager
         self.user_id = user_id
