@@ -1,0 +1,332 @@
+class JobReportsView(FormBase):
+    """
+    A system-wide view for generating job reports, including daily, monthly, yearly,
+    and custom range reports based on job status.
+    """
+
+    def __init__(self, master, db_manager, parent_icon_loader=None):
+        super().__init__(master, 750, 600, "Job Reports", "survey_reports.png", parent_icon_loader)
+        self.db_manager = db_manager
+        self.parent_icon_loader_ref = parent_icon_loader  # Store for icon loading
+
+        self.report_type_var = tk.StringVar(self, value="daily")
+        self.job_status_var = tk.StringVar(self, value="All")
+        self.from_date_var = tk.StringVar(self, value=datetime.now().strftime("%Y-%m-%d"))
+        self.to_date_var = tk.StringVar(self, value=datetime.now().strftime("%Y-%m-%d"))
+
+        # Icon references for internal buttons
+        self._calendar_icon = None
+        self._generate_report_icon = None
+
+        self._create_widgets()
+        self._toggle_date_entries()  # Initialize date entry states
+        # self._generate_report() # Optional: generate a default report on open
+
+    def _create_widgets(self):
+        main_frame = ttk.Frame(self, padding="15")
+        main_frame.pack(fill="both", expand=True)
+
+        ttk.Label(main_frame, text="Generate Job Reports", font=('Helvetica', 14, 'bold')).pack(pady=10)
+
+        # --- Report Options Frame ---
+        options_frame = ttk.LabelFrame(main_frame, text="Report Options", padding="10")
+        options_frame.pack(fill="x", pady=10)
+
+        # Report Type Radio Buttons
+        ttk.Label(options_frame, text="Report Period:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        ttk.Radiobutton(options_frame, text="Daily", variable=self.report_type_var, value="daily",
+                        command=self._toggle_date_entries).grid(row=0, column=1, padx=2, pady=5, sticky="w")
+        ttk.Radiobutton(options_frame, text="Monthly", variable=self.report_type_var, value="monthly",
+                        command=self._toggle_date_entries).grid(row=0, column=2, padx=2, pady=5, sticky="w")
+        ttk.Radiobutton(options_frame, text="Yearly", variable=self.report_type_var, value="yearly",
+                        command=self._toggle_date_entries).grid(row=0, column=3, padx=2, pady=5, sticky="w")
+        ttk.Radiobutton(options_frame, text="Custom Range", variable=self.report_type_var, value="custom",
+                        command=self._toggle_date_entries).grid(row=0, column=4, padx=2, pady=5, sticky="w")
+
+        # Job Status Dropdown
+        ttk.Label(options_frame, text="Job Status:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
+        self.status_combobox = ttk.Combobox(options_frame, textvariable=self.job_status_var,
+                                            values=["All", "Ongoing", "Completed", "Cancelled"], state="readonly")
+        self.status_combobox.grid(row=1, column=1, columnspan=4, padx=5, pady=5, sticky="ew")
+
+        # Custom Date Range Inputs
+        date_range_frame = ttk.Frame(options_frame)
+        date_range_frame.grid(row=2, column=0, columnspan=5, pady=5, sticky="ew")
+
+        ttk.Label(date_range_frame, text="From Date:").pack(side="left", padx=5)
+        self.from_date_entry = ttk.Entry(date_range_frame, textvariable=self.from_date_var, state="readonly", width=12)
+        self.from_date_entry.pack(side="left", padx=2)
+
+        if self.parent_icon_loader:
+            self._calendar_icon = self.parent_icon_loader("calendar_icon.png", size=(20, 20))
+
+        self.from_cal_btn = ttk.Button(date_range_frame, image=self._calendar_icon,
+                                       command=lambda: self._open_datepicker(self.from_date_var))
+        self.from_cal_btn.image = self._calendar_icon  # Keep reference
+        self.from_cal_btn.pack(side="left", padx=2)
+
+        ttk.Label(date_range_frame, text="To Date:").pack(side="left", padx=(15, 5))
+        self.to_date_entry = ttk.Entry(date_range_frame, textvariable=self.to_date_var, state="readonly", width=12)
+        self.to_date_entry.pack(side="left", padx=2)
+        self.to_cal_btn = ttk.Button(date_range_frame, image=self._calendar_icon,
+                                     command=lambda: self._open_datepicker(self.to_date_var))
+        self.to_cal_btn.image = self._calendar_icon  # Keep reference
+        self.to_cal_btn.pack(side="left", padx=2)
+
+        # Configure columns to expand
+        options_frame.grid_columnconfigure(1, weight=1)
+        options_frame.grid_columnconfigure(2, weight=1)
+        options_frame.grid_columnconfigure(3, weight=1)
+        options_frame.grid_columnconfigure(4, weight=1)
+
+        # Generate Report Button
+        if self.parent_icon_loader:
+            self._generate_report_icon = self.parent_icon_loader("report.png", size=(20, 20))
+
+        ttk.Button(main_frame, text="Generate PDF Report", image=self._generate_report_icon, compound=tk.LEFT,
+                   command=self._generate_report).pack(pady=15)
+
+        # --- Report Preview Area ---
+        report_preview_frame = ttk.LabelFrame(main_frame, text="Report Preview", padding="10")
+        report_preview_frame.pack(fill="both", expand=True, pady=10)
+        report_preview_frame.grid_columnconfigure(0, weight=1)
+        report_preview_frame.grid_rowconfigure(0, weight=1)
+
+        self.report_text_widget = tk.Text(report_preview_frame, wrap=tk.WORD, height=10, font=('Helvetica', 9))
+        self.report_text_widget.grid(row=0, column=0, sticky="nsew")
+
+        report_scroll_y = ttk.Scrollbar(report_preview_frame, orient="vertical", command=self.report_text_widget.yview)
+        report_scroll_y.grid(row=0, column=1, sticky="ns")
+        self.report_text_widget.config(yscrollcommand=report_scroll_y.set)
+
+        report_scroll_x = ttk.Scrollbar(report_preview_frame, orient="horizontal",
+                                        command=self.report_text_widget.xview)
+        report_scroll_x.grid(row=1, column=0, sticky="ew")
+        self.report_text_widget.config(xscrollcommand=report_scroll_x.set)
+
+    def _toggle_date_entries(self):
+        """Enables/disables custom date entry fields based on report type selection."""
+        report_type = self.report_type_var.get()
+        is_custom = (report_type == "custom")
+        state = "normal" if is_custom else "readonly"
+        button_state = "normal" if is_custom else "disabled"
+
+        self.from_date_entry.config(state=state)
+        self.to_date_entry.config(state=state)
+        self.from_cal_btn.config(state=button_state)
+        self.to_cal_btn.config(state=button_state)
+
+        # Set default dates based on report type if not custom
+        today = datetime.now()
+        if report_type == "daily":
+            self.from_date_var.set(today.strftime("%Y-%m-%d"))
+            self.to_date_var.set(today.strftime("%Y-%m-%d"))
+        elif report_type == "monthly":
+            first_day_of_month = today.replace(day=1)
+            # Calculate last day of the current month
+            if today.month == 12:
+                last_day_of_month = today.replace(year=today.year + 1, month=1, day=1) - timedelta(days=1)
+            else:
+                last_day_of_month = today.replace(month=today.month + 1, day=1) - timedelta(days=1)
+            self.from_date_var.set(first_day_of_month.strftime("%Y-%m-%d"))
+            self.to_date_var.set(last_day_of_month.strftime("%Y-%m-%d"))
+        elif report_type == "yearly":
+            first_day_of_year = today.replace(month=1, day=1)
+            last_day_of_year = today.replace(month=12, day=31)
+            self.from_date_var.set(first_day_of_year.strftime("%Y-%m-%d"))
+            self.to_date_var.set(last_day_of_year.strftime("%Y-%m-%d"))
+
+    def _open_datepicker(self, target_var):
+        """Opens date picker for a specific StringVar."""
+        current_date_str = target_var.get()
+        try:
+            current_date_obj = datetime.strptime(current_date_str, "%Y-%m-%d")
+        except ValueError:
+            current_date_obj = datetime.now()
+
+        DatePicker(self, current_date_obj, lambda d: target_var.set(d),
+                   parent_icon_loader=self.parent_icon_loader_ref,
+                   window_icon_name="calendar_icon.png")
+
+    def _get_report_dates(self):
+        """Determines start and end dates based on selected report type."""
+        report_type = self.report_type_var.get()
+        start_date_str = self.from_date_var.get()
+        end_date_str = self.to_date_var.get()
+
+        if report_type == "custom":
+            if not self._is_valid_date(start_date_str) or not self._is_valid_date(end_date_str):
+                messagebox.showerror("Date Error", "Invalid custom date range. Please use YYYY-MM-DD format.")
+                return None, None
+            if start_date_str > end_date_str:
+                messagebox.showerror("Date Error", "Start date cannot be after end date.")
+                return None, None
+
+        return start_date_str, end_date_str
+
+    def _is_valid_date(self, date_string):
+        """Validates date format."""
+        try:
+            datetime.strptime(date_string, "%Y-%m-%d")
+            return True
+        except ValueError:
+            return False
+
+    def _generate_report(self):
+        """
+        Fetches job data based on filters and generates a PDF report.
+        """
+        if not _REPORTLAB_AVAILABLE:
+            messagebox.showerror("PDF Error",
+                                 "ReportLab library is not installed. PDF generation is not available. Please install it using 'pip install reportlab'.")
+            self.report_text_widget.delete("1.0", tk.END)
+            self.report_text_widget.insert("1.0", "Error: ReportLab not installed for PDF generation.")
+            return
+
+        self.report_text_widget.delete("1.0", tk.END)  # Clear previous content
+        self.report_text_widget.insert("1.0", "Generating report, please wait...")  # Show status
+
+        start_date, end_date = self._get_report_dates()
+        if start_date is None:
+            self.report_text_widget.delete("1.0", tk.END)  # Clear "generating" message
+            return  # Date validation failed
+
+        selected_status = self.job_status_var.get()
+        db_status = selected_status if selected_status != "All" else None
+
+        try:
+            # Call the database manager method to get job data
+            jobs_for_report = self.db_manager.get_service_jobs_for_report(
+                start_date=start_date,
+                end_date=end_date,
+                status=db_status
+            )
+
+            report_name = f"Service Jobs Report ({selected_status})"
+            pdf_path = self._generate_pdf_report(
+                report_name,
+                {'data': jobs_for_report},
+                self.report_type_var.get(),
+                start_date,
+                end_date
+            )
+
+            if pdf_path:
+                SuccessMessage(
+                    self,
+                    success=True,
+                    message="Service Jobs Report PDF generated successfully!",
+                    pdf_path=pdf_path,
+                    parent_icon_loader=self.parent_icon_loader_ref
+                )
+                self._show_pdf_preview(pdf_path, self.report_text_widget)
+            else:
+                SuccessMessage(
+                    self,
+                    success=False,
+                    message="Service Jobs Report PDF generation failed!",
+                    parent_icon_loader=self.parent_icon_loader_ref
+                )
+                self._show_pdf_preview(None, self.report_text_widget)
+        except Exception as e:
+            messagebox.showerror("Report Generation Error", f"An error occurred while generating Job Report: {e}")
+            self.report_text_widget.delete("1.0", tk.END)
+            self.report_text_widget.insert("1.0", f"Error: {e}")
+
+    def _generate_pdf_report(self, report_name, content, report_type, start_date, end_date):
+        """Generates PDF report using ReportLab and returns the file path."""
+        if not _REPORTLAB_AVAILABLE:
+            return None  # Error message already shown by calling function
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        period_suffix = ""
+
+        if report_type == "daily":
+            period_suffix = f"_{start_date}"
+        elif report_type == "monthly":
+            period_suffix = f"_{datetime.strptime(start_date, '%Y-%m-%d').strftime('%Y-%m')}"
+        elif report_type == "yearly":
+            period_suffix = f"_{datetime.strptime(start_date, '%Y-%m-%d').strftime('%Y')}"
+        elif report_type == "custom":
+            period_suffix = f"_{start_date}_to_{end_date}"
+
+        file_name = f"{report_name.replace(' ', '_')}{period_suffix}_{timestamp}.pdf"
+        file_path = os.path.join(REPORTS_DIR, file_name)
+
+        try:
+            doc = SimpleDocTemplate(file_path, pagesize=letter)
+            styles = getSampleStyleSheet()
+            story = []
+
+            # Business Header with Timestamp
+            header_table = Table([
+                ["MATHENGE REAL ESTATE", datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
+            ], colWidths=[4 * inch, 2 * inch])
+
+            header_table.setStyle(TableStyle([
+                ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (0, -1), 14),
+                ('FONTSIZE', (1, 0), (1, -1), 10),
+                ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
+            ]))
+            story.append(header_table)
+
+            # Report Title
+            story.append(Paragraph(f"<b>{report_name.upper()}</b>", styles['Heading2']))
+            story.append(Paragraph(f"Period: {start_date} to {end_date}", styles['Normal']))
+            story.append(Spacer(1, 12))
+
+            if content.get('data'):
+                headers = ["Job ID", "Date", "Client Name", "File Name", "Description", "Status"]
+                table_data = [headers]
+
+                for job in content['data']:
+                    date_part = job['timestamp'].split(' ')[0] if ' ' in job['timestamp'] else job['timestamp']
+                    table_data.append([
+                        job['job_id'],
+                        date_part,
+                        job['client_name'],
+                        job['file_name'],
+                        job['job_description'],
+                        job['status']
+                    ])
+
+                # Adjust column widths dynamically or provide fixed widths
+                col_widths = [0.8 * inch, 1.2 * inch, 1.5 * inch, 1.5 * inch, 1.8 * inch, 1 * inch]
+                t = Table(table_data, colWidths=col_widths)
+                t.setStyle(TableStyle([
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 8),
+                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                    ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                ]))
+                story.append(t)
+            else:
+                story.append(Paragraph("No jobs found for this period and status.", styles['Normal']))
+
+            # Build the PDF
+            doc.build(story)
+            return file_path
+
+        except Exception as e:
+            print(f"PDF generation failed: {e}")
+            return None
+
+    def _show_pdf_preview(self, pdf_path, report_text_widget):
+        """Displays PDF generation status in the preview area."""
+        if pdf_path and os.path.exists(pdf_path):
+            preview_text = f"PDF successfully generated and saved to:\n{pdf_path}\n\n"
+            preview_text += "Note: A full PDF preview is not available directly within Tkinter. You can open the file from the saved location.\n\n"
+
+            # Add a basic file info
+            preview_text += f"File size: {os.path.getsize(pdf_path) / 1024:.1f} KB"
+
+            report_text_widget.delete(1.0, tk.END)
+            report_text_widget.insert(tk.END, preview_text)
+        else:
+            report_text_widget.delete(1.0, tk.END)
+            report_text_widget.insert(tk.END,
+                                      "PDF generation failed. Please check the error logs or ensure ReportLab is installed and data is available.")
