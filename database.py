@@ -99,27 +99,6 @@ class DatabaseManager:
                         FOREIGN KEY (added_by_user_id) REFERENCES users(user_id)
                     )
                 ''')
-
-                # 5. SurveyJobs Table - ADDED 'added_by_user_id', 'created_at', 'receipt_creation_path'
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS survey_jobs (
-                        job_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        client_id INTEGER NOT NULL, -- Link to clients table
-                        property_location TEXT NOT NULL, -- Location where survey is done
-                        job_description TEXT,
-                        fee REAL NOT NULL,
-                        amount_paid REAL DEFAULT 0.0,
-                        balance REAL DEFAULT 0.0,
-                        deadline TEXT NOT NULL, --YYYY-MM-DD
-                        status TEXT NOT NULL DEFAULT 'Pending' CHECK(status IN ('Pending', 'Ongoing', 'Completed', 'Cancelled')),
-                        attachments_path TEXT,
-                        added_by_user_id INTEGER NOT NULL, -- New column
-                        created_at TEXT DEFAULT CURRENT_TIMESTAMP, -- New timestamp column
-                        receipt_creation_path TEXT,
-                        FOREIGN KEY (client_id) REFERENCES clients(client_id),
-                        FOREIGN KEY (added_by_user_id) REFERENCES users(user_id)
-                    )
-                ''')
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS proposed_lots (
                         lot_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1649,7 +1628,7 @@ class DatabaseManager:
         Returns a dictionary of survey job status counts.
         e.g., {'Pending': 5, 'Ongoing': 2, 'Completed': 8, 'Cancelled': 1}
         """
-        query = "SELECT status, COUNT(*) FROM survey_jobs GROUP BY status"
+        query = "SELECT status, COUNT(*) FROM service_jobs GROUP BY status"
         results_rows = self._execute_query(query, fetch_all=True)
         return {row[0]: row[1] for row in results_rows} if results_rows else {}
 

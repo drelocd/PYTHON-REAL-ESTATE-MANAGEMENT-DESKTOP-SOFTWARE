@@ -7,7 +7,6 @@ from PIL import Image, ImageTk, ImageDraw
 
 try:
     from ctypes import windll, c_int, byref, sizeof
-
     HAS_CTYPES = True
 except (ImportError, OSError):
     HAS_CTYPES = False
@@ -26,49 +25,49 @@ class BaseForm(tk.Toplevel):
     - Centered positioning
     - Modal behavior
     """
-
+    
     def __init__(self, parent, title, width, height, icon_name=None, icon_loader=None):
         """Initialize the base form with common properties."""
         super().__init__(parent)
         self.parent = parent
         self.title(title)
         self.geometry(f"{width}x{height}")
-
+        
         # Prevent resizing but keep standard window buttons
         self.resizable(False, False)
         self.transient(parent)
-
+        
         # Set window attributes for Windows
         if platform.system() == 'Windows' and HAS_CTYPES:
             self._customize_title_bar()
-
+        
         # Center the window
         self._center_window(width, height)
-
+        
         # Set custom icon if provided
         if icon_name and icon_loader:
             self._set_icon(icon_name, icon_loader)
-
+        
         # Make window modal
         self.grab_set()
         self.focus_set()
-
+        
         # Handle window closing
         self.protocol("WM_DELETE_WINDOW", self._on_closing)
-
+    
     def _customize_title_bar(self):
         """Applies a custom color to the title bar on Windows systems."""
         try:
             DWMWA_CAPTION_COLOR = 35
             DWMWA_TEXT_COLOR = 36
             hwnd = windll.user32.GetParent(self.winfo_id())
-
+            
             # Use the same blue color as your payment plan forms (0x00663300 - dark blue in BGR format)
             color = c_int(0x00663300)
             windll.dwmapi.DwmSetWindowAttribute(
                 hwnd, DWMWA_CAPTION_COLOR, byref(color), sizeof(color)
             )
-
+            
             # Set white text
             text_color = c_int(0x00FFFFFF)  # White in BGR
             windll.dwmapi.DwmSetWindowAttribute(
@@ -76,7 +75,7 @@ class BaseForm(tk.Toplevel):
             )
         except Exception as e:
             print(f"Could not customize title bar: {e}")
-
+    
     def _center_window(self, width, height):
         """Center the window on the screen."""
         self.update_idletasks()
@@ -85,7 +84,7 @@ class BaseForm(tk.Toplevel):
         x = (screen_width - width) // 2
         y = (screen_height - height) // 2
         self.geometry(f"+{x}+{y}")
-
+    
     def _set_icon(self, icon_name, icon_loader):
         """Set the window icon using the provided icon loader."""
         try:
@@ -94,7 +93,7 @@ class BaseForm(tk.Toplevel):
             self._window_icon_ref = icon_image
         except Exception as e:
             print(f"Failed to set icon for {self.title()}: {e}")
-
+    
     def _on_closing(self):
         """Handle window closing."""
         self.grab_release()
@@ -118,7 +117,7 @@ class ClientForm(BaseForm):
             parent_icon_loader: A callable to load icons from the parent app.
         """
         super().__init__(parent, "Land Sales Clients Management", 1300, 780, "client.png", parent_icon_loader)
-
+        
         self.db_manager = db_manager
         self.user_id = user_id
         self.parent_icon_loader = parent_icon_loader
@@ -141,10 +140,10 @@ class ClientForm(BaseForm):
             self.add_icon_img = None
             self.update_icon_img = None
             self.delete_icon_img = None
-
+        
     def _create_widgets(self):
         """Creates and packs all the widgets for the UI."""
-
+        
         main_frame = ttk.Frame(self, padding="15")
         main_frame.pack(fill="both", expand=True)
 
@@ -160,12 +159,16 @@ class ClientForm(BaseForm):
         self.search_entry = ttk.Entry(search_frame, textvariable=self.search_var)
         self.search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
         self.search_entry.bind("<KeyRelease>", self._filter_clients)
-
+        
         # Add New Client Button
-        self.add_client_button = ttk.Button(top_controls_frame, text="Add New Client",
-                                            image=self.add_icon_img, compound=tk.LEFT,
-                                            command=self._open_add_client_form)
+        self.add_client_button = ttk.Button(top_controls_frame, text="Add New Client", 
+                                            image=self.add_icon_img, compound=tk.LEFT, 
+                                            style="Green.TButton", command=self._open_add_client_form)
         self.add_client_button.pack(side=tk.RIGHT, padx=(10, 0))
+
+        style = ttk.Style()
+        style.configure('Green.TButton', foreground='black',background='green', font=('Helvetica', 10, 'bold'))
+        style.map('Green.TButton', background=[('active', 'light green')])
 
         # --- Paned Window for Client List and Associated Data ---
         paned_window = ttk.PanedWindow(main_frame, orient=tk.VERTICAL)
@@ -182,23 +185,18 @@ class ClientForm(BaseForm):
 
         list_frame = ttk.LabelFrame(tree_and_buttons_frame, text="Existing Clients")
         list_frame.pack(fill="both", expand=True, pady=(0, 5))
-
-        self.tree = ttk.Treeview(list_frame, columns=("ID", "Name", "Telephone No", "Email", "Purpose", "Added by"),
-                                 show="headings")
+        
+        self.tree = ttk.Treeview(list_frame, columns=("ID", "Name", "Contact Info", "Added By User"), show="headings")
         self.tree.heading("ID", text="ID")
         self.tree.heading("Name", text="Client Name")
-        self.tree.heading("Telephone No", text="Telephone No")
-        self.tree.heading("Email", text="Email")
-        self.tree.heading("Purpose", text="Purpose")
-        self.tree.heading("Added by", text="Added by")
+        self.tree.heading("Contact Info", text="Contact Info")
+        self.tree.heading("Added By User", text="Added By User ID")
         self.tree.column("ID", width=50, anchor="center")
-        self.tree.column("Name", width=150)
-        self.tree.column("Telephone No", width=100)
-        self.tree.column("Email", width=150)
-        self.tree.column("Purpose", width=80)
-        self.tree.column("Added by", width=100, anchor="center")
+        self.tree.column("Name", width=200)
+        self.tree.column("Contact Info", width=250)
+        self.tree.column("Added By User", width=100, anchor="center")
         self.tree.pack(side="left", fill="both", expand=True)
-
+        
         # Scrollbar for the Treeview
         scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
@@ -211,15 +209,20 @@ class ClientForm(BaseForm):
         button_frame.pack(fill=tk.X, pady=(5, 0))
 
         # Re-ordered and re-packed the buttons
-        self.update_button = ttk.Button(button_frame, text="Update Selected Client",
+        self.update_button = ttk.Button(button_frame, text="Update Selected Client", 
                                         image=self.update_icon_img, compound=tk.LEFT,
-                                        command=self._open_update_client_form, state="disabled")
+                                        style="Yellow.TButton", command=self._open_update_client_form, state="disabled")
         self.update_button.pack(side=tk.LEFT, padx=(0, 5))
-
-        self.delete_button = ttk.Button(button_frame, text="Delete Selected Client",
-                                        image=self.delete_icon_img, compound=tk.LEFT,
-                                        command=self._delete_client, state="disabled")
+        
+        self.delete_button = ttk.Button(button_frame, text="Delete Selected Client", 
+                                        image=self.delete_icon_img, compound=tk.LEFT, 
+                                        style="Red.TButton", command=self._delete_client, state="disabled")
         self.delete_button.pack(side=tk.RIGHT, padx=(5, 0))
+        
+        style.configure('Red.TButton', foreground='black',background='red', font=('Helvetica', 10, 'bold'))
+        style.map('Red.TButton', background=[('active', 'salmon')])
+        style.configure('Yellow.TButton', foreground='black',background='yellow', font=('Helvetica', 10, 'bold'))
+        style.map('Yellow.TButton', background=[('active', 'gold')])
 
         # --- Bottom Pane: Associated Activities ---
         bottom_pane = ttk.Frame(paned_window)
@@ -227,13 +230,11 @@ class ClientForm(BaseForm):
 
         notebook_activities = ttk.Notebook(bottom_pane)
         notebook_activities.pack(fill="both", expand=True, padx=5, pady=5)
-
+        
         # Land Purchases Tab
         land_frame = ttk.Frame(notebook_activities, padding="2")
         notebook_activities.add(land_frame, text="Associated Land Purchases")
-        self.land_tree = ttk.Treeview(land_frame,
-                                      columns=("Prop ID", "Title Deed", "Location", "Size", "Price", "Status",
-                                               "Purchase Date"), show="headings")
+        self.land_tree = ttk.Treeview(land_frame, columns=("Prop ID", "Title Deed", "Location", "Size", "Price", "Status", "Purchase Date"), show="headings")
         self.land_tree.heading("Prop ID", text="Property ID")
         self.land_tree.heading("Title Deed", text="Title Deed No.")
         self.land_tree.heading("Location", text="Location")
@@ -242,16 +243,18 @@ class ClientForm(BaseForm):
         self.land_tree.heading("Status", text="Status")
         self.land_tree.heading("Purchase Date", text="Purchase Date")
         self.land_tree.pack(fill="both", expand=True)
-
+        
         # Survey Jobs Tab
         survey_frame = ttk.Frame(notebook_activities, padding="2")
         notebook_activities.add(survey_frame, text="Associated Survey Jobs")
-        self.survey_tree = ttk.Treeview(survey_frame,
-                                        columns=("Job ID", "File Name", "Description", "Status"), show="headings")
+        self.survey_tree = ttk.Treeview(survey_frame, columns=("Job ID", "Location", "Job Type", "Fee", "Status", "Deadline", "Created At"), show="headings")
         self.survey_tree.heading("Job ID", text="Job ID")
-        self.survey_tree.heading("File Name", text="File Name")
-        self.survey_tree.heading("Description", text="Description")
+        self.survey_tree.heading("Location", text="Location")
+        self.survey_tree.heading("Job Type", text="Job Type")
+        self.survey_tree.heading("Fee", text="Fee")
         self.survey_tree.heading("Status", text="Status")
+        self.survey_tree.heading("Deadline", text="Deadline")
+        self.survey_tree.heading("Created At", text="Created At")
         self.survey_tree.pack(fill="both", expand=True)
 
     def _load_clients(self):
@@ -261,8 +264,7 @@ class ClientForm(BaseForm):
         clients = self.db_manager.get_all_clients()
         if clients:
             for client in clients:
-                self.tree.insert("", "end", values=(client['client_id'], client['name'], client['telephone_number'],
-                                                    client['email'], client['purpose'], client['added_by_username']))
+                self.tree.insert("", "end", values=(client['client_id'], client['name'], client['contact_info'], client['added_by_username']))
         self._clear_associated_data()
 
     def _filter_clients(self, event):
@@ -270,14 +272,12 @@ class ClientForm(BaseForm):
         search_term = self.search_var.get().lower()
         self.tree.delete(*self.tree.get_children())
         clients = self.db_manager.get_all_clients()
-
+        
         if clients:
             for client in clients:
-                client_id, name, telephone, email, purpose, user_id = client['client_id'], client['name'], client[
-                    'telephone_number'], client['email'], client['purpose'], client['added_by_username']
-                if search_term in str(
-                        client_id).lower() or search_term in name.lower() or search_term in telephone.lower() or search_term in email.lower() or search_term in purpose.lower() or search_term in user_id.lower():
-                    self.tree.insert("", "end", values=(client_id, name, telephone, email, purpose, user_id))
+                client_id, name, contact_info, user_id = client['client_id'], client['name'], client['contact_info'], client['added_by_username']
+                if search_term in str(client_id).lower() or search_term in name.lower() or search_term in contact_info.lower() or search_term in user_id.lower():
+                    self.tree.insert("", "end", values=(client_id, name, contact_info, user_id))
 
     def _open_add_client_form(self):
         """Opens a new modal window for adding a client."""
@@ -294,9 +294,7 @@ class ClientForm(BaseForm):
         client_data = {
             'client_id': values[0],
             'name': values[1],
-            'telephone_number': values[2],
-            'email': values[3],
-            'purpose': values[4]
+            'contact_info': values[2]
         }
         UpdateClientForm(self, self.db_manager, self.user_id, client_data, self.refresh_view, self.parent_icon_loader)
 
@@ -316,6 +314,7 @@ class ClientForm(BaseForm):
 
         client_id = self.tree.item(selected_item, "values")[0]
         client_name = self.tree.item(selected_item, "values")[1]
+
 
         confirm_msg = (
             f"Are you sure you want to delete client '{client_name}' (ID: {client_id})?\n\n"
@@ -359,30 +358,22 @@ class ClientForm(BaseForm):
         properties = self.db_manager.get_client_properties(client_id)
         if properties:
             for prop in properties:
-                self.land_tree.insert("", "end",
-                                      values=(prop['property_id'], prop['title_deed_number'], prop['location'],
-                                              prop['size'], prop['price'], prop['status'], prop['transaction_date']))
-
+                self.land_tree.insert("", "end", values=(prop['property_id'], prop['title_deed_number'], prop['location'], prop['size'], prop['price'], prop['status'], prop['transaction_date']))
         survey_jobs = self.db_manager.get_client_survey_jobs(client_id)
-        # Note: This code assumes the get_client_survey_jobs method now returns
-        # dictionaries with 'job_id', 'file_name', 'description', and 'status' keys.
         if survey_jobs:
             for job in survey_jobs:
-                self.survey_tree.insert("", "end",
-                                        values=(job['job_id'], job['file_name'], job['description'],
-                                                job['status']))
+                self.survey_tree.insert("", "end", values=(job['job_id'], job['property_location'], job['job_description'], job['fee'], job['status'], job['deadline'], job['created_at']))
 
 
 class AddClientForm(BaseForm):
     """A modal form for adding a new client."""
-
     def __init__(self, parent, db_manager, user_id, refresh_callback, icon_loader):
-        super().__init__(parent, "Add New Client", 400, 250, "client.png", icon_loader)
-
+        super().__init__(parent, "Add New Client", 400, 200, "client.png", icon_loader)
+        
         self.db_manager = db_manager
         self.user_id = user_id
         self.refresh_callback = refresh_callback
-
+        
         self._create_widgets()
 
     def _create_widgets(self):
@@ -393,23 +384,12 @@ class AddClientForm(BaseForm):
         self.name_entry = ttk.Entry(frame, width=30)
         self.name_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
 
-        ttk.Label(frame, text="Telephone Number:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
-        self.tel_entry = ttk.Entry(frame, width=30)
-        self.tel_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
-
-        ttk.Label(frame, text="Email:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
-        self.email_entry = ttk.Entry(frame, width=30)
-        self.email_entry.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
-
-        ttk.Label(frame, text="Purpose:").grid(row=3, column=0, padx=5, pady=5, sticky="w")
-        self.purpose_var = tk.StringVar(self)
-        self.purpose_var.set("N/A")  # default value
-        purpose_options = ["Survey", "Land Sales", "N/A"]
-        self.purpose_menu = ttk.Combobox(frame, textvariable=self.purpose_var, values=purpose_options, state="readonly")
-        self.purpose_menu.grid(row=3, column=1, padx=5, pady=5, sticky="ew")
+        ttk.Label(frame, text="Contact Info (Email/Phone):").grid(row=1, column=0, padx=5, pady=5, sticky="w")
+        self.contact_entry = ttk.Entry(frame, width=30)
+        self.contact_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
 
         button_frame = ttk.Frame(frame)
-        button_frame.grid(row=4, column=0, columnspan=2, pady=10)
+        button_frame.grid(row=2, column=0, columnspan=2, pady=10)
 
         self.save_button = ttk.Button(button_frame, text="Save Client", command=self._save_client)
         self.save_button.pack(side=tk.LEFT, padx=5)
@@ -419,17 +399,16 @@ class AddClientForm(BaseForm):
 
     def _save_client(self):
         name = self.name_entry.get().strip()
-        telephone = self.tel_entry.get().strip()
-        email = self.email_entry.get().strip()
-        purpose = self.purpose_var.get()
+        contact_info = self.contact_entry.get().strip()
         status = 'active'  # Default status for new clients
+        
 
-        if not name or not telephone or not email:
+        if not name or not contact_info:
             messagebox.showerror("Input Error", "All fields are required.")
             return
 
         try:
-            client_id = self.db_manager.add_client(name, telephone, email, purpose, status, self.user_id)
+            client_id = self.db_manager.add_client(name, contact_info, status, self.user_id)
             if client_id:
                 messagebox.showinfo("Success", f"Client '{name}' added successfully.")
                 self.refresh_callback()
@@ -442,15 +421,14 @@ class AddClientForm(BaseForm):
 
 class UpdateClientForm(BaseForm):
     """A modal form for updating an existing client."""
-
     def __init__(self, parent, db_manager, user_id, client_data, refresh_callback, icon_loader):
-        super().__init__(parent, "Update Client", 400, 250, "client.png", icon_loader)
-
+        super().__init__(parent, "Update Client", 400, 200, "client.png", icon_loader)
+        
         self.db_manager = db_manager
         self.user_id = user_id
         self.client_data = client_data
         self.refresh_callback = refresh_callback
-
+        
         self._create_widgets()
         self._load_data()
 
@@ -462,22 +440,12 @@ class UpdateClientForm(BaseForm):
         self.name_entry = ttk.Entry(frame, width=30)
         self.name_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
 
-        ttk.Label(frame, text="Telephone Number:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
-        self.tel_entry = ttk.Entry(frame, width=30)
-        self.tel_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
-
-        ttk.Label(frame, text="Email:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
-        self.email_entry = ttk.Entry(frame, width=30)
-        self.email_entry.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
-
-        ttk.Label(frame, text="Purpose:").grid(row=3, column=0, padx=5, pady=5, sticky="w")
-        self.purpose_var = tk.StringVar(self)
-        purpose_options = ["Survey", "Land Sales", "N/A"]
-        self.purpose_menu = ttk.Combobox(frame, textvariable=self.purpose_var, values=purpose_options, state="readonly")
-        self.purpose_menu.grid(row=3, column=1, padx=5, pady=5, sticky="ew")
+        ttk.Label(frame, text="Contact Info (Email/Phone):").grid(row=1, column=0, padx=5, pady=5, sticky="w")
+        self.contact_entry = ttk.Entry(frame, width=30)
+        self.contact_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
 
         button_frame = ttk.Frame(frame)
-        button_frame.grid(row=4, column=0, columnspan=2, pady=10)
+        button_frame.grid(row=2, column=0, columnspan=2, pady=10)
 
         self.save_button = ttk.Button(button_frame, text="Save Changes", command=self._save_changes)
         self.save_button.pack(side=tk.LEFT, padx=5)
@@ -487,32 +455,26 @@ class UpdateClientForm(BaseForm):
 
     def _load_data(self):
         self.name_entry.insert(0, self.client_data['name'])
-        self.tel_entry.insert(0, self.client_data['telephone_number'])
-        self.email_entry.insert(0, self.client_data['email'])
-        self.purpose_var.set(self.client_data['purpose'])
+        self.contact_entry.insert(0, self.client_data['contact_info'])
 
     def _save_changes(self):
         new_name = self.name_entry.get().strip()
-        new_tel = self.tel_entry.get().strip()
-        new_email = self.email_entry.get().strip()
-        new_purpose = self.purpose_var.get()
+        new_contact_info = self.contact_entry.get().strip()
         client_id = self.client_data['client_id']
 
-        if not new_name or not new_tel or not new_email:
+        if not new_name or not new_contact_info:
             messagebox.showerror("Input Error", "All fields are required.")
             return
 
         try:
             current_client = self.db_manager.get_client(client_id)
-            if current_client and (
-                    current_client['telephone_number'] != new_tel or current_client['email'] != new_email):
-                existing_client_by_contact = self.db_manager.get_client_by_contact(new_tel, new_email)
+            if current_client and current_client['contact_info'] != new_contact_info:
+                existing_client_by_contact = self.db_manager.get_client_by_contact_info(new_contact_info)
                 if existing_client_by_contact and existing_client_by_contact['client_id'] != client_id:
                     messagebox.showerror("Update Error", "Another client already uses this contact information.")
                     return
 
-            updated = self.db_manager.update_client(client_id, name=new_name, telephone_number=new_tel, email=new_email,
-                                                    purpose=new_purpose)
+            updated = self.db_manager.update_client(client_id, name=new_name, contact_info=new_contact_info)
             if updated:
                 messagebox.showinfo("Success", f"Client ID {client_id} updated successfully.")
                 self.refresh_callback()

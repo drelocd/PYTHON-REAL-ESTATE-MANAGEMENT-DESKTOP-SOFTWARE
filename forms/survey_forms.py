@@ -622,7 +622,7 @@ class UpdateStatusForm(FormBase):
         ttk.Label(main_frame, text=f"Updating Job ID: {self.job_id}", font=('Helvetica', 12, 'bold')).pack(pady=10)
         
         ttk.Label(main_frame, text="Select New Status:").pack(pady=5)
-        self.status_combobox = ttk.Combobox(main_frame, values=["Ongoing", "Completed"], state="readonly")
+        self.status_combobox = ttk.Combobox(main_frame, values=["Completed"], state="readonly")
         self.status_combobox.set("Ongoing")
         self.status_combobox.pack(pady=5)
         
@@ -632,6 +632,14 @@ class UpdateStatusForm(FormBase):
         new_status = self.status_combobox.get()
         if not new_status:
             messagebox.showerror("Error", "Please select a status.")
+            return
+        
+        confirmation = messagebox.askyesno(
+            "Irreversible Action",
+            "This action is irreversible and will permanently update the job status.\n\n"
+            "Do you want to proceed?"
+        )
+        if not confirmation:
             return
             
         success = self.db_manager.update_job_status(self.job_id, new_status)
@@ -769,9 +777,16 @@ class TrackJobsView(FormBase):
                 self.jobs_tree.insert("", tk.END, iid=job['job_id'], values=values)
     
     def _update_status_button_state(self, event=None):
-        """Enables/disables the update button based on row selection."""
-        if self.jobs_tree.selection():
-            self.update_status_btn['state'] = 'normal'
+        """Enables/disables the update button based on row selection and status."""
+        selected_item = self.jobs_tree.selection()
+        if selected_item:
+            # Get the status from the values of the selected row
+            item_values = self.jobs_tree.item(selected_item[0], 'values')
+            status = item_values[-1] # Status is the last element
+            if status.lower() == 'ongoing':
+                self.update_status_btn['state'] = 'normal'
+            else:
+                self.update_status_btn['state'] = 'disabled'
         else:
             self.update_status_btn['state'] = 'disabled'
 
@@ -834,18 +849,18 @@ class UpdatePaymentForm(FormBase):
 
         # Client Name (Left)
         ttk.Label(details_frame, text="Client Name:", font=('Helvetica', 10, 'bold')).grid(row=0, column=0, sticky="w", padx=(0, 5))
-        ttk.Label(details_frame, text=self.payment_data[1]).grid(row=1, column=0, sticky="w", pady=(0, 5))
+        ttk.Label(details_frame, text=self.payment_data[1].upper(),font=('Helvetica', 10, 'bold')).grid(row=1, column=0, sticky="w", pady=(0, 5))
 
         # Description (Center)
         ttk.Label(details_frame, text="Description:", font=('Helvetica', 10, 'bold')).grid(row=0, column=1, sticky="w", padx=(15, 5))
-        ttk.Label(details_frame, text=self.payment_data[3]).grid(row=1, column=1, sticky="w", pady=(0, 5))
+        ttk.Label(details_frame, text=self.payment_data[3].upper(),font=('Helvetica', 10, 'bold')).grid(row=1, column=1, sticky="w", pady=(0, 5))
 
         # Title Number (Right)
         ttk.Label(details_frame, text="Title Number:", font=('Helvetica', 10, 'bold')).grid(row=0, column=2, sticky="w", padx=(15, 5))
-        ttk.Label(details_frame, text=self.payment_data[4]).grid(row=1, column=2, sticky="w", pady=(0, 5))
+        ttk.Label(details_frame, text=self.payment_data[4],font=('Helvetica', 10, 'bold')).grid(row=1, column=2, sticky="w", pady=(0, 5))
 
         # Payment Type Dropdown
-        ttk.Label(main_frame, text="Payment Type:").pack(pady=(10, 5))
+        ttk.Label(main_frame, text="Payment Type:", font=('Helvetica', 10, 'bold')).pack(pady=(10, 5))
         self.payment_type_combobox = ttk.Combobox(main_frame, values=["cash", "mpesa", "bank"], state="readonly")
         self.payment_type_combobox.set("cash")  # Set a default value
         self.payment_type_combobox.pack(pady=(0, 20))
@@ -856,7 +871,7 @@ class UpdatePaymentForm(FormBase):
         
         # Load and store button icons to prevent garbage collection
         if self.parent_icon_loader:
-            self._submit_icon = self.parent_icon_loader("check.png", size=(16, 16))
+            self._submit_icon = self.parent_icon_loader("confirm.png", size=(16, 16))
             self._cancel_icon = self.parent_icon_loader("cancel.png", size=(16, 16))
         else:
             self._submit_icon = None
@@ -915,8 +930,10 @@ class ManagePaymentsView(FormBase):
         self.total_payments = 0
         self.total_pages = 0
 
+        # Load icons for the buttons
         self._apply_filters_icon = None
-        self._clear_filters_icon = None # New icon for clear filters
+        self._clear_filters_icon = None
+        self._update_icon = None
         self._prev_icon = None
         self._next_icon = None
         self._close_icon = None
@@ -929,7 +946,7 @@ class ManagePaymentsView(FormBase):
         main_frame = ttk.Frame(self, padding="10 10 10 10")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        title_label = ttk.Label(main_frame, text="Manage Payments", font=('Helvetica', 16, 'bold'))
+        title_label = ttk.Label(main_frame, text="MANAGE PAYMENTS", font=('Helvetica', 16, 'bold'))
         title_label.pack(pady=10)
 
         filter_frame = ttk.LabelFrame(main_frame, text="Filter Payments", padding="10")
@@ -974,19 +991,17 @@ class ManagePaymentsView(FormBase):
         self.title_number_search_entry.grid(row=2, column=1, padx=5, pady=2, sticky="ew")
 
         # Buttons for filters (Row 3)
-        # Buttons for filters (Row 3)
         if self.parent_icon_loader:
             self._apply_filters_icon = self.parent_icon_loader("filter.png", size=(20, 20))
-            self._clear_filters_icon = self.parent_icon_loader("clear_filter.png", size=(20, 20)) # Assuming you have a refresh.png icon
+            self._clear_filters_icon = self.parent_icon_loader("clear_filter.png", size=(20, 20))
 
-        # Note: Icon loading is skipped in this mock example
-        apply_button = ttk.Button(filter_frame, text="Apply Filters", command=self._apply_filters)
+        apply_button = ttk.Button(filter_frame, text="Apply Filters", command=self._apply_filters,
+                                  image=self._apply_filters_icon, compound=tk.LEFT)
         apply_button.grid(row=3, column=0, columnspan=3, pady=10)
-        apply_button.image = self._apply_filters_icon # Store reference for this button
 
-        clear_button = ttk.Button(filter_frame, text="Clear Filters", command=self._clear_filters)
+        clear_button = ttk.Button(filter_frame, text="Clear Filters", command=self._clear_filters,
+                                  image=self._clear_filters_icon, compound=tk.LEFT)
         clear_button.grid(row=3, column=3, columnspan=3, pady=10)
-        clear_button.image = self._clear_filters_icon # Store reference for this button
 
         # Treeview to display payments
         columns = ("payment_id", "client_name", "file_name", "description", "title_number", "amount", "status", "payment_type", "payment_date")
@@ -1029,19 +1044,35 @@ class ManagePaymentsView(FormBase):
         action_frame.pack(side="left")
 
         # Update Payment button - initially disabled
-        self.update_button = ttk.Button(action_frame, text="Update Payment", command=self._update_payment, state=tk.DISABLED)
-        self.update_button.pack(padx=5)
+        if self.parent_icon_loader:
+            self._update_icon = self.parent_icon_loader("edit.png", size=(20, 20))
+        self.update_button = ttk.Button(action_frame, text="Update Payment", command=self._update_payment,
+                                       image=self._update_icon, compound=tk.LEFT, state=tk.DISABLED)
+        self.update_button.pack(padx=5, side=tk.LEFT)
         
-        self.prev_button = ttk.Button(pagination_frame, text="Previous", command=self._go_previous_page, state=tk.DISABLED)
-        self.prev_button.pack(side="left", padx=5)
+        # Pagination controls
+        pagination_controls_frame = ttk.Frame(pagination_frame)
+        pagination_controls_frame.pack(side=tk.LEFT, expand=True, padx=20)
+        
+        if self.parent_icon_loader:
+            self._prev_icon = self.parent_icon_loader("arrow_left.png", size=(20, 20))
+            self._next_icon = self.parent_icon_loader("arrow_right.png", size=(20, 20))
+        
+        self.prev_button = ttk.Button(pagination_controls_frame, text="Previous", command=self._go_previous_page,
+                                      image=self._prev_icon, compound=tk.LEFT, state=tk.DISABLED)
+        self.prev_button.pack(side=tk.LEFT, padx=5)
 
-        self.page_info_label = ttk.Label(pagination_frame, text="Page 1 of 1")
-        self.page_info_label.pack(side="left", padx=10)
+        self.page_info_label = ttk.Label(pagination_controls_frame, text="Page 1 of 1")
+        self.page_info_label.pack(side=tk.LEFT, padx=10)
 
-        self.next_button = ttk.Button(pagination_frame, text="Next", command=self._go_next_page, state=tk.DISABLED)
-        self.next_button.pack(side="left", padx=5)
+        self.next_button = ttk.Button(pagination_controls_frame, text="Next", command=self._go_next_page,
+                                      image=self._next_icon, compound=tk.RIGHT, state=tk.DISABLED)
+        self.next_button.pack(side=tk.LEFT, padx=5)
 
-        close_btn = ttk.Button(pagination_frame, text="Close", command=self.destroy)
+        if self.parent_icon_loader:
+            self._close_icon = self.parent_icon_loader("cancel.png", size=(20, 20))
+        close_btn = ttk.Button(pagination_frame, text="Close", command=self.destroy,
+                               image=self._close_icon, compound=tk.LEFT)
         close_btn.pack(side="right", padx=5)
 
     def _deselect_all(self, event=None):
@@ -1082,14 +1113,14 @@ class ManagePaymentsView(FormBase):
                 # Create the display tuple
                 display_values = (
                     payment_id,
-                    client_name.upper(),
-                    file_name.upper(),
-                    description,
-                    title_number,
+                    client_name.upper() if isinstance(client_name, str) else client_name,
+                    file_name.upper() if isinstance(file_name, str) else file_name,
+                    description.upper() if isinstance(description, str) else description,
+                    title_number.upper() if isinstance(title_number, str) else title_number,
                     amount,
                     status.upper() if isinstance(status, str) else status,
                     payment_type.upper() if isinstance(payment_type, str) else payment_type,
-                    payment_date
+                    payment_date.upper() if isinstance(payment_date, str) else payment_date
                 )
                 
                 self.payments_tree.insert("", tk.END, values=display_values)
@@ -1181,6 +1212,7 @@ class ManagePaymentsView(FormBase):
             populate_callback=self._fetch_and_display_payments,
             parent_icon_loader=self.parent_icon_loader
         )
+
 
 
 

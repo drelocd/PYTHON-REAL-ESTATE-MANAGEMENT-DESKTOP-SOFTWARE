@@ -328,21 +328,7 @@ class AdminManageUsersPanel(tk.Toplevel):
             self.password_entry.delete(0, tk.END)
             self.role_combobox.set('')
 
-    def _add_user(self):
-        username = self.username_entry.get().strip()
-        password = self.password_entry.get().strip()
-        role = self.role_combobox.get()
-
-        if not username or not password or not role:
-            messagebox.showwarning("Input Error", "Username, Password, and Role are required to add a new user.")
-            return
-
-        if self.db_manager.add_user(username, password, role):
-            messagebox.showinfo("Success", f"User '{username}' added successfully.")
-            self.populate_user_list()
-            self._clear_fields()
-        else:
-            messagebox.showerror("Error", "Failed to add user. Username might already exist.")
+    
 
     def _update_user(self):
         user_id_str = self.user_id_entry.get()

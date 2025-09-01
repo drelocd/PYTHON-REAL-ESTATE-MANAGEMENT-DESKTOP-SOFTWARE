@@ -1,10 +1,18 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
-from datetime import datetime
+from datetime import datetime, timedelta, date
 import os
 import shutil
 import io
 from PIL import Image, ImageTk
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from tkcalendar import DateEntry
+import sqlite3
 
 # Assuming database.py is in the same directory or accessible via PYTHONPATH
 # The DatabaseManager class is now fully functional
@@ -15,7 +23,16 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASSETS_DIR = os.path.join(BASE_DIR, 'assets')
 ICONS_DIR = os.path.join(ASSETS_DIR, 'icons')
 
+# Data and Receipts
+DATA_DIR = os.path.join(BASE_DIR, 'data')
+RECEIPTS_DIR = os.path.join(DATA_DIR, 'receipts')
+os.makedirs(RECEIPTS_DIR, exist_ok=True)  # Ensure receipts directory exists
 
+try:
+    from tkcalendar import DateEntry
+except ImportError:
+    messagebox.showerror("Import Error", "The 'tkcalendar' library is not found. "
+                                         "Please install it using: pip install tkcalendar")
 
 class FormBase(tk.Toplevel):
     """
@@ -178,24 +195,24 @@ class DispatchDetailsForm(FormBase):
         data_frame.pack(fill="x")
 
         # Use fetched details to populate the labels
-        ttk.Label(data_frame, text=self.job_details.get('client_name', 'N/A',font=('Helvetica', 10, 'bold'))).pack(side="left", padx=10)
-        ttk.Label(data_frame, text=self.job_details.get('job_description', 'N/A',font=('Helvetica', 10, 'bold'))).pack(side="left", padx=10, expand=True)
-        ttk.Label(data_frame, text=self.job_details.get('title_number', 'N/A',font=('Helvetica', 10, 'bold'))).pack(side="right", padx=10)
+        ttk.Label(data_frame, text=self.job_details.get('client_name', 'N/A').upper()).pack(side="left", padx=10)
+        ttk.Label(data_frame, text=self.job_details.get('job_description', 'N/A').upper()).pack(side="left", padx=10, expand=True)
+        ttk.Label(data_frame, text=self.job_details.get('title_number', 'N/A').upper()).pack(side="right", padx=10)
         
         # --- Form input fields ---
         
         # Reason for Dispatch
-        ttk.Label(main_frame, text="Reason for Dispatch:").pack(anchor="w")
+        ttk.Label(main_frame, text="Reason for Dispatch:", font=('Helvetica', 8, 'bold')).pack(anchor="w")
         self.reason_entry = ttk.Entry(main_frame, width=50)
         self.reason_entry.pack(fill="x", pady=(0, 10))
 
         # Collected By
-        ttk.Label(main_frame, text="Collected By:").pack(anchor="w")
+        ttk.Label(main_frame, text="Collected By:", font=('Helvetica', 8, 'bold')).pack(anchor="w")
         self.collected_by_entry = ttk.Entry(main_frame, width=50)
         self.collected_by_entry.pack(fill="x", pady=(0, 10))
 
         # Collector Phone Number
-        ttk.Label(main_frame, text="Collector Phone Number:").pack(anchor="w")
+        ttk.Label(main_frame, text="Collector Phone Number:", font=('Helvetica', 8, 'bold')).pack(anchor="w")
         self.phone_entry = ttk.Entry(main_frame, width=50)
         self.phone_entry.pack(fill="x", pady=(0, 10))
         
@@ -206,7 +223,7 @@ class DispatchDetailsForm(FormBase):
         self.file_list_label = ttk.Label(file_frame, text="No files selected.")
         self.file_list_label.pack(side="left", padx=5)
         
-        upload_icon = self.parent_icon_loader("upload.png", size=(16, 16))
+        upload_icon = self.parent_icon_loader("folder.png", size=(16, 16))
         self.upload_btn = ttk.Button(file_frame, text="Select Files", image=upload_icon, compound="left", command=self._select_files)
         self.upload_btn.pack(side="right", padx=5)
         
@@ -214,7 +231,7 @@ class DispatchDetailsForm(FormBase):
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(pady=20)
         
-        submit_icon = self.parent_icon_loader("check.png", size=(16, 16))
+        submit_icon = self.parent_icon_loader("confirm.png", size=(16, 16))
         submit_btn = ttk.Button(button_frame, text="Submit", image=submit_icon, compound="left", command=self._submit_dispatch)
         submit_btn.pack(side="left", padx=5)
         
@@ -239,9 +256,9 @@ class DispatchDetailsForm(FormBase):
         
         if self.selected_files:
             file_names_text = ", ".join([os.path.basename(f) for f in self.selected_files])
-            self.file_list_label.config(text=f"Selected: {file_names_text}")
+            self.file_list_label.config(text=f"Selected: {file_names_text.upper()}")
         else:
-            self.file_list_label.config(text="No files selected.")
+            self.file_list_label.config(text="NO FILES SELECTED.")
         
     def _submit_dispatch(self):
         """Handles the submission of the dispatch details to the database."""
@@ -292,12 +309,19 @@ class DispatchJobsView(FormBase):
         self.user_id = user_id  # Store the user ID
         self.parent_icon_loader = parent_icon_loader
         self.update_icon = None
+        self.apply_icon = None
+        self.clear_icon = None
         
         self._create_widgets()
         self.populate_completed_jobs_table()
         self.populate_dispatch_records_table()
         self._update_dispatch_button_state()
         
+    def refresh_all_tables(self):
+        """Refreshes both the completed jobs and dispatch records tables."""
+        self.populate_completed_jobs_table()
+        self.populate_dispatch_records_table()
+
     def _create_widgets(self):
         # Create a notebook to hold the two tabs
         self.notebook = ttk.Notebook(self)
@@ -378,35 +402,101 @@ class DispatchJobsView(FormBase):
         self.dispatch_job_btn.pack(side="right")
         
     def _create_dispatch_records_tab(self):
-        """Creates the widgets for the 'Dispatch Records' tab."""
-        # Frame for the table
-        table_frame = ttk.Frame(self.dispatch_records_tab, padding="10")
-        table_frame.pack(fill="both", expand=True)
+        """
+        Creates the widgets for the 'Dispatch Records' tab, including the filter section
+        and the Treeview table with updated columns.
+        """
+        main_frame = ttk.Frame(self.dispatch_records_tab, padding="10")
+        main_frame.pack(fill="both", expand=True)
 
-        # Columns for the table
-        columns = ("dispatch_id", "job_id", "date", "collected_by", "phone", "reason")
+        # Filter Section
+        filter_frame = ttk.LabelFrame(main_frame, text="Filter Dispatch records", padding="10")
+        filter_frame.pack(fill="x", pady=(0, 10))
+        filter_frame.columnconfigure(1, weight=1)
+        filter_frame.columnconfigure(3, weight=1)
+
+        # Row 0 - Date Filters
+        ttk.Label(filter_frame, text="From Date:").grid(row=0, column=0, padx=5, pady=2, sticky="w")
+        self.from_date_entry = DateEntry(filter_frame, width=12, date_pattern='yyyy-mm-dd')
+        self.from_date_entry.grid(row=0, column=1, padx=5, pady=2, sticky="ew")
+        self.from_date_entry.set_date(date.today() - timedelta(days=30))
+
+        ttk.Label(filter_frame, text="To Date:").grid(row=0, column=2, padx=5, pady=2, sticky="w")
+        self.to_date_entry = DateEntry(filter_frame, width=12, date_pattern='yyyy-mm-dd')
+        self.to_date_entry.grid(row=0, column=3, padx=5, pady=2, sticky="ew")
+        self.to_date_entry.set_date(date.today())
+        
+        # Row 1 - Text Search Filters
+        ttk.Label(filter_frame, text="Title Number:").grid(row=1, column=0, padx=5, pady=2, sticky="w")
+        self.title_number_search_entry = ttk.Entry(filter_frame, width=20)
+        self.title_number_search_entry.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
+        
+        ttk.Label(filter_frame, text="Collected By:").grid(row=1, column=2, padx=5, pady=2, sticky="w")
+        self.collected_by_search_entry = ttk.Entry(filter_frame, width=20)
+        self.collected_by_search_entry.grid(row=1, column=3, padx=5, pady=2, sticky="ew")
+        
+        # Buttons for filters
+        if self.parent_icon_loader:
+            self.apply_icon = self.parent_icon_loader("confirm.png", size=(16, 16))
+            self.clear_icon = self.parent_icon_loader("cancel.png", size=(16, 16))
+        
+        apply_button = ttk.Button(
+            filter_frame, 
+            text="Apply Filters", 
+            image=self.apply_icon, 
+            compound="left",
+            command=self._apply_filters
+        )
+        apply_button.grid(row=2, column=0, columnspan=2, pady=10, sticky="e")
+
+        clear_button = ttk.Button(
+            filter_frame, 
+            text="Clear Filters", 
+            image=self.clear_icon, 
+            compound="left",
+            command=self._clear_filters
+        )
+        clear_button.grid(row=2, column=2, columnspan=2, pady=10, sticky="w")
+
+        # Table Section
+        table_frame = ttk.Frame(main_frame, padding="10")
+        table_frame.pack(fill="both", expand=True)
+        
+        columns = (
+            "job_id", "dispatch_date", "title_name", "title_number", "job_description", 
+            "collected_by", "collector_phone", "reason_for_dispatch"
+        )
         self.dispatch_records_tree = ttk.Treeview(table_frame, columns=columns, show="headings")
         
-        self.dispatch_records_tree.heading("dispatch_id", text="Dispatch ID")
-        self.dispatch_records_tree.heading("job_id", text="Job ID")
-        self.dispatch_records_tree.heading("date", text="Date")
+        # Hide the job_id column
+        self.dispatch_records_tree.column("job_id", width=0, stretch=tk.NO)
+
+        self.dispatch_records_tree.heading("dispatch_date", text="Date")
+        self.dispatch_records_tree.heading("title_name", text="Title Name")
+        self.dispatch_records_tree.heading("title_number", text="Title Number")
+        self.dispatch_records_tree.heading("job_description", text="Description")
         self.dispatch_records_tree.heading("collected_by", text="Collected By")
-        self.dispatch_records_tree.heading("phone", text="Phone Number")
-        self.dispatch_records_tree.heading("reason", text="Reason for Dispatch")
+        self.dispatch_records_tree.heading("collector_phone", text="Phone Number")
+        self.dispatch_records_tree.heading("reason_for_dispatch", text="Reason for Dispatch")
         
-        self.dispatch_records_tree.column("dispatch_id", width=80, anchor=tk.CENTER)
-        self.dispatch_records_tree.column("job_id", width=60, anchor=tk.CENTER)
-        self.dispatch_records_tree.column("date", width=120, anchor=tk.W)
+        self.dispatch_records_tree.column("dispatch_date", width=100, anchor=tk.W)
+        self.dispatch_records_tree.column("title_name", width=150, anchor=tk.W)
+        self.dispatch_records_tree.column("title_number", width=120, anchor=tk.W)
+        self.dispatch_records_tree.column("job_description", width=250, anchor=tk.W)
         self.dispatch_records_tree.column("collected_by", width=150, anchor=tk.W)
-        self.dispatch_records_tree.column("phone", width=120, anchor=tk.W)
-        self.dispatch_records_tree.column("reason", width=300, anchor=tk.W)
+        self.dispatch_records_tree.column("collector_phone", width=120, anchor=tk.W)
+        self.dispatch_records_tree.column("reason_for_dispatch", width=300, anchor=tk.W)
         
+        # Scrollbar for the table
         scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.dispatch_records_tree.yview)
         self.dispatch_records_tree.configure(yscrollcommand=scrollbar.set)
         
         self.dispatch_records_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
+        
+        # Bind double-click event to save signature file
+        self.dispatch_records_tree.bind("<Double-1>", self._save_signature_file)
+        
     def _on_search_change(self, event):
         """Calls the filter function whenever the search entry changes."""
         search_text = self.search_entry.get().strip()
@@ -441,32 +531,169 @@ class DispatchJobsView(FormBase):
                 values = (
                     job['job_id'],
                     job['timestamp'],
-                    job['job_description'],
-                    job['title_name'],
-                    job['title_number'],
-                    job['file_name'],
-                    job['client_name'],
-                    job['status']
+                    str(job['job_description']).upper(),
+                    str(job['title_name']).upper(),
+                    str(job['title_number']).upper(),
+                    str(job['file_name']).upper(),
+                    str(job['client_name']).upper(),
+                    str(job['status']).upper()
                 )
                 self.completed_jobs_tree.insert("", tk.END, values=values)
             
     def populate_dispatch_records_table(self):
         """Populates the 'Dispatch Records' table with dispatched jobs."""
+        # This now uses the _load_dispatch_records method with no filters
+        self._load_dispatch_records()
+        
+    def _load_dispatch_records(self, filters=None):
+        """
+        Fetches dispatch records from the database with an INNER JOIN to get job details.
+        Applies filters if they are provided.
+        """
+        # Clear existing items
         for item in self.dispatch_records_tree.get_children():
             self.dispatch_records_tree.delete(item)
-            
-        dispatched_jobs = self.db_manager.get_dispatched_jobs()
         
-        for record in dispatched_jobs:
-            values = (
-                record['dispatch_id'],
-                record['job_id'],
-                record['dispatch_date'],
-                record['collected_by'],
-                record['collector_phone'],
-                record['reason_for_dispatch']
+        conn = None
+        try:
+            conn = self.db_manager._get_connection()
+            # Set row_factory to sqlite3.Row to get dictionary-like objects
+            conn.row_factory = sqlite3.Row 
+            cursor = conn.cursor()
+            
+            # Use an INNER JOIN to get the details from the service_jobs table
+            query = """
+            SELECT
+                sd.job_id,
+                sd.dispatch_date,
+                sj.title_name,
+                sj.title_number,
+                sj.job_description,
+                sd.collected_by,
+                sd.collector_phone,
+                sd.reason_for_dispatch
+            FROM
+                service_dispatch AS sd
+            INNER JOIN
+                service_jobs AS sj ON sd.job_id = sj.job_id
+            WHERE 1=1
+            """
+            params = []
+            
+            # Add filters to the query if they exist
+            if filters:
+                if 'from_date' in filters and filters['from_date']:
+                    query += " AND date(sd.dispatch_date) >= date(?)"
+                    params.append(filters['from_date'])
+                if 'to_date' in filters and filters['to_date']:
+                    query += " AND date(sd.dispatch_date) <= date(?)"
+                    params.append(filters['to_date'])
+                if 'title_number' in filters and filters['title_number']:
+                    query += " AND sj.title_number LIKE ?"
+                    params.append(f"%{filters['title_number']}%")
+                if 'collected_by' in filters and filters['collected_by']:
+                    query += " AND sd.collected_by LIKE ?"
+                    params.append(f"%{filters['collected_by']}%")
+            
+            cursor.execute(query, tuple(params))
+            records = cursor.fetchall()
+            
+            for record in records:
+                # The record is now a sqlite3.Row object, which can be accessed by column name
+                values = (
+                    record['job_id'],
+                    record['dispatch_date'],
+                    str(record['title_name']).upper(),
+                    str(record['title_number']).upper(),
+                    str(record['job_description']).upper(),
+                    str(record['collected_by']).upper(),
+                    str(record['collector_phone']).upper(),
+                    str(record['reason_for_dispatch']).upper()
+                )
+                self.dispatch_records_tree.insert("", "end", values=values)
+                
+        except Exception as e:
+            messagebox.showerror("Database Error", f"Failed to load records: {e}")
+        finally:
+            if conn:
+                conn.close()
+
+    def _apply_filters(self):
+        """Applies filters to the dispatch records table."""
+        try:
+            filters = {
+                'from_date': self.from_date_entry.get_date().strftime('%Y-%m-%d'),
+                'to_date': self.to_date_entry.get_date().strftime('%Y-%m-%d'),
+                'title_number': self.title_number_search_entry.get().strip(),
+                'collected_by': self.collected_by_search_entry.get().strip()
+            }
+            self._load_dispatch_records(filters)
+        except Exception as e:
+            messagebox.showerror("Filter Error", f"An error occurred while applying filters: {e}")
+
+    def _clear_filters(self):
+        """Clears all filter entries and reloads the full table."""
+        if self.from_date_entry:
+            self.from_date_entry.set_date(date.today() - timedelta(days=30))
+        if self.to_date_entry:
+            self.to_date_entry.set_date(date.today())
+        if self.title_number_search_entry:
+            self.title_number_search_entry.delete(0, tk.END)
+        if self.collected_by_search_entry:
+            self.collected_by_search_entry.delete(0, tk.END)
+        
+        self._load_dispatch_records()
+        
+    def _save_signature_file(self, event):
+        """Handles the double-click event to save the digital signature file."""
+        selected_item = self.dispatch_records_tree.focus()
+        if not selected_item:
+            return
+        
+        values = self.dispatch_records_tree.item(selected_item)['values']
+        job_id = values[0] # The hidden job_id column
+        
+        # Now fetch the signature BLOB from the database using the job_id
+        conn = None
+        try:
+            conn = self.db_manager._get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute(
+                "SELECT sign FROM service_dispatch WHERE job_id = ?",
+                (job_id,)
             )
-            self.dispatch_records_tree.insert("", tk.END, values=values)
+            result = cursor.fetchone()
+            
+            if result and result[0]:
+                signature_data = result[0]
+                
+                # Get the relevant data for the filename from the Treeview
+                title_name = values[2]
+                job_description = values[4]
+                title_number = values[3]
+                
+                # Construct a default filename
+                default_filename = f"{title_name}_{job_description}_{title_number}_signature.pdf"
+                
+                file_path = filedialog.asksaveasfilename(
+                    defaultextension=".pdf",
+                    initialfile=default_filename,
+                    filetypes=[("PDF files", "*.pdf")]
+                )
+                
+                if file_path:
+                    with open(file_path, "wb") as f:
+                        f.write(signature_data)
+                    messagebox.showinfo("Success", "Digital signature saved successfully!")
+            else:
+                messagebox.showinfo("Not Found", "No digital signature file found for this record.")
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"An error occurred while saving the file: {e}")
+        finally:
+            if conn:
+                conn.close()
 
     def _update_dispatch_button_state(self, event=None):
         """Enables/disables the dispatch button based on row selection."""
@@ -490,6 +717,6 @@ class DispatchJobsView(FormBase):
             self,
             self.db_manager,
             job_id,
-            self.populate_completed_jobs_table, # This callback will refresh the main list
+            self.refresh_all_tables, # This callback will refresh the main list
             self.parent_icon_loader
         )

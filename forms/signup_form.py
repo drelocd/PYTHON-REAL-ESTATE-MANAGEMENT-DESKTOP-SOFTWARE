@@ -196,7 +196,7 @@ class SignupForm(tk.Toplevel):
                 messagebox.showwarning("Signup Failed", f"User '{username}' already exists. Please choose a different username.", parent=self)
                 return
 
-            user_id = self.db_manager.add_user(username, password, role,is_agent)
+            user_id = self.db_manager.add_user(username, password,is_agent,role)
 
             if user_id:
                 messagebox.showinfo("Signup Successful",

@@ -162,9 +162,6 @@ class SalesSectionView(ttk.Frame):
              "roles": ['admin', 'property_manager', 'sales_agent', 'accountant']},
             {"text": "Transfer Property", "icon": "transfer.png", "command": self._open_property_transfer_form,
              "roles": ['admin', 'property_manager']},
-            {"text": "View Properties To Transfer", "icon": "view_transfer_properties.png",
-             "command": self._open_view_property_to_transfer_form,
-             "roles": ['admin', 'property_manager']},
             {"text": "Land Division & Records", "icon": "subdivide.png", "command": self._open_land_division_form,
              "roles": ['admin', 'property_manager']}
         ]
@@ -238,17 +235,6 @@ class SalesSectionView(ttk.Frame):
     # NEW METHOD to open the PropertyTransferForm
     def _open_property_transfer_form(self):
         PropertyTransferForm(
-            self.master,
-            self.db_manager,
-            self.populate_system_overview,
-            user_id=self.user_id,
-            # No dummy_property_data is passed now
-            parent_icon_loader=self.load_icon_callback,
-            window_icon_name="transfer.png"
-        )
-
-    def _open_view_property_to_transfer_form(self):
-        ViewPropertiesToTransferForm(
             self.master,
             self.db_manager,
             self.populate_system_overview,
