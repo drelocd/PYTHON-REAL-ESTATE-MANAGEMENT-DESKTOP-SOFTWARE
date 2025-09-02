@@ -374,10 +374,9 @@ class ClientFileDashboard(FormBase):
             self.button_icon = None
 
         style = ttk.Style()
-        style.configure("Red.TButton", background="green", foreground="black")
 
         # Add New Task button
-        btn = ttk.Button(top_frame, text="Add New Task", command=self._open_add_task_form, image=self.button_icon, compound=tk.LEFT, style="Red.TButton")
+        btn = ttk.Button(top_frame, text="Add New Task", command=self._open_add_task_form, image=self.button_icon, compound=tk.LEFT)
         btn.pack(side="right", padx=10)
 
         # --- Separator ---
@@ -480,12 +479,20 @@ class AddClientAndFileForm(FormBase):
         self.name_entry = ttk.Entry(self.new_client_frame)
         self.name_entry.pack(fill="x", pady=(0, 10))
 
-        new_contact_label_frame = ttk.Frame(self.new_client_frame)
-        new_contact_label_frame.pack(fill="x")
-        ttk.Label(new_contact_label_frame, text="Contact:").pack(side="left", fill="x", expand=True)
-        self.contact_entry = ttk.Entry(self.new_client_frame)
-        self.contact_entry.pack(fill="x", pady=(0, 10))
-        
+        # Telephone number
+        new_telephone_label_frame = ttk.Frame(self.new_client_frame)
+        new_telephone_label_frame.pack(fill="x")
+        ttk.Label(new_telephone_label_frame, text="Telephone Number:").pack(side="left", fill="x", expand=True)
+        self.telephone_entry = ttk.Entry(self.new_client_frame)
+        self.telephone_entry.pack(fill="x", pady=(0, 10))
+
+        # Email address
+        new_email_label_frame = ttk.Frame(self.new_client_frame)
+        new_email_label_frame.pack(fill="x")
+        ttk.Label(new_email_label_frame, text="Email Address:").pack(side="left", fill="x", expand=True)
+        self.email_entry = ttk.Entry(self.new_client_frame)
+        self.email_entry.pack(fill="x", pady=(0, 10))
+
         new_brought_by_label_frame = ttk.Frame(self.new_client_frame)
         new_brought_by_label_frame.pack(fill="x")
         ttk.Label(new_brought_by_label_frame, text="Brought By:").pack(side="left", fill="x", expand=True)
@@ -506,13 +513,15 @@ class AddClientAndFileForm(FormBase):
         self.search_entry.pack(fill="x", pady=(0, 10))
         self.search_entry.bind("<KeyRelease>", self._filter_clients_table)
 
-        columns = ("client_name", "contact")
+        columns = ("client_name", "telephone", "email")
         self.client_tree = ttk.Treeview(self.existing_client_frame, columns=columns, show="headings", height=10)
         self.client_tree.heading("client_name", text="Client Name")
-        self.client_tree.heading("contact", text="Contact")
+        self.client_tree.heading("telephone", text="Telephone")
+        self.client_tree.heading("email", text="Email")
         self.client_tree.column("client_name", width=150, anchor=tk.W)
-        self.client_tree.column("contact", width=150, anchor=tk.W)
-        
+        self.client_tree.column("telephone", width=120, anchor=tk.W)
+        self.client_tree.column("email", width=180, anchor=tk.W)
+
         scrollbar = ttk.Scrollbar(self.existing_client_frame, orient=tk.VERTICAL, command=self.client_tree.yview)
         self.client_tree.configure(yscrollcommand=scrollbar.set)
         
@@ -528,8 +537,7 @@ class AddClientAndFileForm(FormBase):
         
         # Submit button with green color
         style = ttk.Style()
-        style.configure("Green.TButton", background="green", foreground="black")
-        self.submit_btn = ttk.Button(self.main_frame, text="Submit", command=self._submit_form, style="Green.TButton")
+        self.submit_btn = ttk.Button(self.main_frame, text="Submit", command=self._submit_form)
         self.submit_btn.pack(pady=20)
         
         # Initial population of the table
@@ -539,10 +547,12 @@ class AddClientAndFileForm(FormBase):
         """Populates the client table with all clients."""
         for item in self.client_tree.get_children():
             self.client_tree.delete(item)
-        
+
         self.all_clients = self.db_manager.get_all_service_clients()
         for client in self.all_clients:
-            self.client_tree.insert("", tk.END, values=(client['name'], client['contact']), iid=client['client_id'])
+            self.client_tree.insert("", tk.END,
+                                    values=(client['name'], client['telephone_number'], client['email']),
+                                    iid=client['client_id'])
 
     def _filter_clients_table(self, event=None):
         """Filters the client table based on the search entry."""
@@ -551,10 +561,10 @@ class AddClientAndFileForm(FormBase):
         for item in self.client_tree.get_children():
             self.client_tree.delete(item)
         
-        filtered_clients = [c for c in self.all_clients if search_query in c['name'].lower() or search_query in c['contact'].lower()]
+        filtered_clients = [c for c in self.all_clients if search_query in c['name'].lower() or search_query in c['telephone_number'].lower()]
         
         for client in filtered_clients:
-            self.client_tree.insert("", tk.END, values=(client['name'], client['contact']), iid=client['client_id'])
+            self.client_tree.insert("", tk.END, values=(client['name'], client['telephone_number']), iid=client['client_id'])
 
     def _on_client_select(self, event):
         """Saves the selected client's ID."""
@@ -566,18 +576,27 @@ class AddClientAndFileForm(FormBase):
     def _submit_form(self):
         """Handles the submission logic based on the currently selected tab."""
         current_tab_id = self.notebook.index(self.notebook.select())
-        
-        if current_tab_id == 0: # "Add New Client" tab
-            name = self.name_entry.get().strip().upper()
-            contact = self.contact_entry.get().strip().upper()
-            brought_by = self.brought_by_entry.get().strip().upper()
+
+        if current_tab_id == 0:  # "Add New Client" tab
+            name = self.name_entry.get().strip().title()
+            telephone_number = self.telephone_entry.get().strip()
+            email = self.email_entry.get().strip().lower()
+            brought_by = self.brought_by_entry.get().strip().title()
             file_name = self.new_client_file_name_entry.get().strip().upper()
-            
-            if not all([name, contact, brought_by, file_name]):
+
+            if not all([name, telephone_number, email, brought_by, file_name]):
                 messagebox.showerror("Validation Error", "All fields are required for a new client.")
                 return
 
-            client_id = self.db_manager.add_service_client(name, contact, brought_by, self.user_id)
+            if not telephone_number.isdigit():
+                messagebox.showerror("Validation Error", "Telephone number must be numeric.")
+                return
+
+            if "@" not in email or "." not in email:
+                messagebox.showerror("Validation Error", "Please enter a valid email address.")
+                return
+
+            client_id = self.db_manager.add_service_client(name, telephone_number, email, brought_by, self.user_id)
             if client_id:
                 file_id = self.db_manager.add_client_file(client_id, file_name, self.user_id)
                 if file_id:

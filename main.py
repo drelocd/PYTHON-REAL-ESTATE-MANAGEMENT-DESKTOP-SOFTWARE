@@ -401,7 +401,7 @@ class SurveySectionView(ttk.Frame):
         for file in files_data:
             client_name = file['client_name'].upper()
             file_name = file['file_name'].upper()
-            contact = file['contact'].upper()
+            contact = file['telephone_number'].upper()
             
             self.client_tree.insert("", tk.END, values=(client_name,file_name,contact), 
                                         tags=('client_row',), iid=file['file_id'])
@@ -509,6 +509,119 @@ class SurveySectionView(ttk.Frame):
             parent_icon_loader=self.load_icon_callback
         )
 
+
+class ReceptionSectionView(ttk.Frame):
+    def __init__(self, master, db_manager, load_icon_callback, user_id, user_type):
+        super().__init__(master, padding="10 10 10 10")
+        self.db_manager = db_manager
+        self.load_icon_callback = load_icon_callback
+        self.user_id = user_id
+        self.user_type = user_type
+        self.button_icons = []
+        self._create_widgets()
+        self.populate_client_table()
+
+    def _create_widgets(self):
+        # Client search and add buttons at the top
+        client_frame = ttk.Frame(self)
+        client_frame.pack(pady=20, padx=20, fill="x")
+
+        ttk.Label(client_frame, text="Search for a Client:").pack(side="left", padx=(0, 10))
+        self.client_search_entry = ttk.Entry(client_frame)
+        self.client_search_entry.pack(side="left", expand=True, fill="x", padx=(0, 10))
+        self.client_search_entry.bind("<KeyRelease>", self._filter_clients)
+
+        ttk.Button(client_frame, text="Add New Client", command=self._open_add_client_form).pack(side="left",
+                                                                                                 padx=(10, 0))
+
+        # Client Table View
+        client_table_frame = ttk.Frame(self)
+        client_table_frame.pack(pady=10, padx=20, fill="both", expand=True)
+
+        columns = ("client_name", "telephone_number", "last_interaction")
+        self.client_tree = ttk.Treeview(client_table_frame, columns=columns, show="headings")
+        self.client_tree.heading("client_name", text="Client Name")
+        self.client_tree.heading("telephone_number", text="Contact Information")
+        self.client_tree.heading("last_interaction", text="Last Interaction")
+
+        scrollbar = ttk.Scrollbar(client_table_frame, orient=tk.VERTICAL, command=self.client_tree.yview)
+        self.client_tree.configure(yscrollcommand=scrollbar.set)
+
+        self.client_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.client_tree.bind("<Double-1>", self._open_client_details)
+
+        # Action buttons for reception tasks
+        button_grid_container = ttk.Frame(self, padding="20")
+        button_grid_container.pack(pady=20, padx=20, fill="x", anchor="n")
+
+        # Define the buttons for the reception section
+        buttons_data = [
+            {"text": "Add a New Service Job", "icon": "add_job.png", "command": self._open_add_service_job_form,
+             "roles": ['admin', 'field_worker']},
+            {"text": "Register a New Land Client", "icon": "add_client.png", "command": self._open_add_land_client_form,
+             "roles": ['admin', 'sales_agent']},
+        ]
+
+        row, col = 0, 0
+        for data in buttons_data:
+            state = 'normal' if self.user_type in data["roles"] else 'disabled'
+            icon_img = self.load_icon_callback(data["icon"], size=(64, 64))
+            self.button_icons.append(icon_img)
+
+            btn = ttk.Button(
+                button_grid_container,
+                text=data["text"],
+                image=icon_img,
+                compound=tk.TOP,
+                command=data["command"],
+                state=state
+            )
+            btn.image = icon_img
+            ToolTip(btn, data["text"])
+            btn.grid(row=row, column=col, padx=10, pady=10, sticky="nsew")
+
+            col += 1
+            if col > 1:
+                col = 0
+                row += 1
+
+    def populate_client_table(self):
+        # Clear existing table data
+        for item in self.client_tree.get_children():
+            self.client_tree.delete(item)
+
+        # Fetch and insert all clients (both land sales and service clients)
+        all_clients = self.db_manager.get_all_clients()  # Assuming a new method in DatabaseManager
+        for client in all_clients:
+            self.client_tree.insert("", tk.END, values=(client['name'], client['telephone_number'], client['last_interaction']))
+
+    def _filter_clients(self, event=None):
+        # Implementation for client filtering
+        pass
+
+    def _open_add_client_form(self):
+        # Opens a form to add a new general client
+        ClientForm(self.master, self.db_manager, self.user_id, parent_icon_loader=self.load_icon_callback)
+
+    def _open_add_service_job_form(self):
+        # Opens the form to add a new service job (like a survey)
+        AddClientAndFileForm(self.master, self.db_manager, self.populate_client_table, self.user_id,
+                             parent_icon_loader=self.load_icon_callback)
+
+    def _open_add_land_client_form(self):
+        # Can reuse a client form or open a specific one for land sales
+        ClientForm(self.master, self.db_manager, self.user_id, parent_icon_loader=self.load_icon_callback)
+
+    def _open_client_details(self, event):
+        # Open a detailed view for the selected client
+        selected_item = self.client_tree.selection()
+        if selected_item:
+            client_data = self.db_manager.get_client_by_id(selected_item[0])  # Placeholder
+            # A new form to display client details
+            # ClientDetailsForm(self.master, client_data, ...)
+            messagebox.showinfo("Client Details", "Opening details for selected client.")
 
 
 class LoginPage(tk.Toplevel):
@@ -858,6 +971,8 @@ class RealEstateApp(tk.Tk):
         selected_tab_widget = self.notebook.nametowidget(selected_tab_id)
         if isinstance(selected_tab_widget, DashboardForm):
             selected_tab_widget.populate_dashboard()
+        elif isinstance(selected_tab_widget, ReceptionSectionView):  # NEW condition
+            selected_tab_widget.populate_client_table()
         elif isinstance(selected_tab_widget, SalesSectionView):
             selected_tab_widget.populate_system_overview()
         elif isinstance(selected_tab_widget, SurveySectionView):
@@ -1154,6 +1269,12 @@ class RealEstateApp(tk.Tk):
         self.dashboard_section = DashboardForm(self.notebook, self.db_manager, self._load_icon,
                                                user_type=self.user_type)
         self.notebook.add(self.dashboard_section, text="   Dashboard   ")
+
+        # NEW: Reception Tab
+
+        self.reception_section = ReceptionSectionView(self.notebook, self.db_manager, self._load_icon,
+                                                      user_id=self.user_id, user_type=self.user_type)
+        self.notebook.add(self.reception_section, text="   Reception   ")
 
         self.sales_section = SalesSectionView(self.notebook, self.db_manager, self._load_icon, user_id=self.user_id,
                                               user_type=self.user_type)

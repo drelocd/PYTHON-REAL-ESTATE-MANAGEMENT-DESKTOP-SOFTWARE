@@ -107,7 +107,7 @@ class ClientForm(BaseForm):
     associated land purchases and survey jobs.
     """
 
-    def __init__(self, parent, db_manager, user_id=None, parent_icon_loader=None):
+    def __init__(self, parent, db_manager, user_id=None, user_type=None, parent_icon_loader=None):
         """
         Initializes the ClientForm window.
 
@@ -121,6 +121,7 @@ class ClientForm(BaseForm):
 
         self.db_manager = db_manager
         self.user_id = user_id
+        self.user_type = user_type
         self.parent_icon_loader = parent_icon_loader
 
         self._load_button_icons()

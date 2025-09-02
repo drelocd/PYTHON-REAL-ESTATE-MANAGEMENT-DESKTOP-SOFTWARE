@@ -318,19 +318,27 @@ class AddPropertyForm(tk.Toplevel):
             (client for client in self.all_clients_data if client['name'] == selected_name),
         )
         if selected_client:
-            self.entry_contact.delete(0, tk.END)
-            self.entry_contact.insert(0, selected_client['contact_info'])
+            # Fill telephone
+            self.entry_telephone.delete(0, tk.END)
+            self.entry_telephone.insert(0, selected_client.get('telephone_number', ''))
 
-    def _on_contact_edit(self, event):
+            # Fill email
+            self.entry_email.delete(0, tk.END)
+            self.entry_email.insert(0, selected_client.get('email', ''))
+
+    def _on_telephone_edit(self, event):
         current_name = self.client_name_var.get()
-        current_contact = self.entry_contact.get()
-        matching_client = next(
-            (client for client in self.all_clients_data if client['name'] == current_name),
-            None
-        )
-        if matching_client and matching_client['contact_info'] != current_contact:
-            self.client_name_var.set('')  # Clear client name if contact info is edited
+        current_telephone = self.entry_telephone.get()
+        matching_client = next((c for c in self.all_clients_data if c['name'] == current_name), None)
+        if matching_client and matching_client.get('telephone_number') != current_telephone:
+            self.client_name_var.set('')
 
+    def _on_email_edit(self, event):
+        current_name = self.client_name_var.get()
+        current_email = self.entry_email.get()
+        matching_client = next((c for c in self.all_clients_data if c['name'] == current_name), None)
+        if matching_client and matching_client.get('email') != current_email:
+            self.client_name_var.set('')
 
     def _update_client_list(self, event=None):
         """Updates the Combobox dropdown based on the user's input."""
@@ -472,11 +480,19 @@ class AddPropertyForm(tk.Toplevel):
         self.client_combobox.bind('<KeyRelease>', self._update_client_list)  # Bind for real-time filtering
         self.client_combobox.bind('<<ComboboxSelected>>', self._on_client_select)
         row += 1
-        
-        ttk.Label(main_frame, text="Contact Info:").grid(row=row, column=0, sticky="w", pady=2, padx=5)
-        self.entry_contact = ttk.Entry(main_frame, width=40)
-        self.entry_contact.grid(row=row, column=1, sticky="ew", pady=2, padx=5)
-        self.entry_contact.bind('<KeyRelease>', self._on_contact_edit)
+
+        # Telephone
+        ttk.Label(main_frame, text="Telephone Number:").grid(row=row, column=0, sticky="w", pady=2, padx=5)
+        self.entry_telephone = ttk.Entry(main_frame, width=40)
+        self.entry_telephone.grid(row=row, column=1, sticky="ew", pady=2, padx=5)
+        self.entry_telephone.bind('<KeyRelease>', self._on_telephone_edit)
+        row += 1
+
+        # Email
+        ttk.Label(main_frame, text="Email Address:").grid(row=row, column=0, sticky="w", pady=2, padx=5)
+        self.entry_email = ttk.Entry(main_frame, width=40)
+        self.entry_email.grid(row=row, column=1, sticky="ew", pady=2, padx=5)
+        self.entry_email.bind('<KeyRelease>', self._on_email_edit)
         row += 1
 
         ttk.Label(main_frame, text="Title Deed Number:").grid(row=row, column=0, sticky="w", pady=2, padx=5)
@@ -597,7 +613,8 @@ class AddPropertyForm(tk.Toplevel):
         # Retrieve all data from the form fields
         property_type = self.property_type_combobox.get().strip()  # Retrieve the selected property type
         client_name = self.client_name_var.get().strip()  # Get the text from the combobox
-        contact = self.entry_contact.get().strip()
+        telephone_number = self.entry_telephone.get().strip()
+        email = self.entry_email.get().strip()
         title_deed = self.entry_title_deed.get().strip()
         location = self.entry_location.get().strip()
         size_str = self.entry_size.get().strip()
@@ -641,7 +658,8 @@ class AddPropertyForm(tk.Toplevel):
                 size=size, 
                 description=description, 
                 owner=client_name,
-                contact=contact,
+                telephone_number=telephone_number,
+                email=email,
                 price=price,
                 image_paths=saved_property_image_paths_str, 
                 title_image_paths=saved_title_image_paths_str, 
@@ -836,10 +854,15 @@ class AddPropertyForTransferForm(tk.Toplevel):
         self.client_combobox['values'] = self.all_clients  # Populate with initial list
         self.client_combobox.bind('<KeyRelease>', self._update_client_list) # Bind for real-time filtering
         row += 1
-       
-        ttk.Label(main_frame, text="Contact Info:").grid(row=row, column=0, sticky="w", pady=2, padx=5)
-        self.entry_contact = ttk.Entry(main_frame, width=40)
-        self.entry_contact.grid(row=row, column=1, sticky="ew", pady=2, padx=5)
+
+        ttk.Label(main_frame, text="Telephone:").grid(row=row, column=0, sticky="w", pady=2, padx=5)
+        self.entry_phone = ttk.Entry(main_frame, width=40)
+        self.entry_phone.grid(row=row, column=1, sticky="ew", pady=2, padx=5)
+        row += 1
+
+        ttk.Label(main_frame, text="Email:").grid(row=row, column=0, sticky="w", pady=2, padx=5)
+        self.entry_email = ttk.Entry(main_frame, width=40)
+        self.entry_email.grid(row=row, column=1, sticky="ew", pady=2, padx=5)
         row += 1
 
         ttk.Label(main_frame, text="Title Deed Number:").grid(row=row, column=0, sticky="w", pady=2, padx=5)
@@ -952,7 +975,8 @@ class AddPropertyForTransferForm(tk.Toplevel):
     def _add_property(self):
         # Retrieve all data from the form fields
         client_name = self.client_name_var.get().strip()  # Get the text from the combobox
-        contact = self.entry_contact.get().strip()
+        telephone_number = self.entry_phone.get().strip()
+        email = self.entry_email.get().strip()
         title_deed = self.entry_title_deed.get().strip()
         location = self.entry_location.get().strip()
         size_str = self.entry_size.get().strip()
@@ -984,7 +1008,8 @@ class AddPropertyForTransferForm(tk.Toplevel):
                 size=size, 
                 description=description, 
                 owner=client_name,  # Pass the client_name here
-                contact=contact,
+                telephone_number=telephone_number,
+                email=email,
                 image_paths=saved_property_image_paths_str, 
                 title_image_paths=saved_title_image_paths_str, 
                 added_by_user_id=self.user_id
@@ -1905,7 +1930,7 @@ class CashPaymentWindow(tk.Toplevel):
             prop_size = property_data.get('size', 'N/A')
             prop_price = float(property_data.get('price', 0.0))
             buyer_name = client_data.get('name', 'N/A')
-            buyer_contact = client_data.get('contact_info', 'N/A')
+            buyer_contact = client_data.get('telephone_number', 'N/A')
             payment_mode = transaction_data.get('payment_mode', 'N/A')
             amount_paid = float(transaction_data.get('amount_paid', 0.0))
             discount = float(transaction_data.get('discount', 0.0))
@@ -4718,7 +4743,7 @@ class ViewAllPropertiesForm(tk.Toplevel):
 
         # --- Treeview for Displaying Properties ---
         # UPDATED: Added "Added By" column
-        columns = ("Property Type", "Title Deed", "Location", "Price", "Size", "Status", "Contact", "Added By","Owner")
+        columns = ("Property Type", "Title Deed", "Location", "Price", "Size", "Status", "telephone_number", "Added By","Owner")
         self.properties_tree = ttk.Treeview(main_frame, columns=columns, show="headings", style='Treeview') # Default style
 
         self.properties_tree.heading("Property Type", text="Type")
@@ -4727,7 +4752,7 @@ class ViewAllPropertiesForm(tk.Toplevel):
         self.properties_tree.heading("Price", text="Price (KES)")
         self.properties_tree.heading("Size", text="Size (Acres)")
         self.properties_tree.heading("Status", text="Status")
-        self.properties_tree.heading("Contact", text="Contact") # This column will indicate images presence
+        self.properties_tree.heading("telephone_number", text="Telephone Number") # This column will indicate images presence
         self.properties_tree.heading("Added By", text="Added By") # NEW HEADING
         self.properties_tree.heading("Owner", text="Owner")
 
@@ -4737,7 +4762,7 @@ class ViewAllPropertiesForm(tk.Toplevel):
         self.properties_tree.column("Price", width=120, anchor="e")
         self.properties_tree.column("Size", width=90, anchor="e")
         self.properties_tree.column("Status", width=90, anchor="center")
-        self.properties_tree.column("Contact", width=80, anchor="center") # Small column for image indicator
+        self.properties_tree.column("telephone_number", width=80, anchor="center") # Small column for image indicator
         self.properties_tree.column("Added By", width=120, anchor="center") # NEW COLUMN WIDTH
         self.properties_tree.column("Owner", width=90, anchor="center")
 
@@ -4934,7 +4959,7 @@ class ViewAllPropertiesForm(tk.Toplevel):
                 f"KES {prop['price']:,.2f}",
                 f"{prop['size']:.2f}",
                 prop['status'].upper(),
-                prop['contact'].upper(),
+                prop['telephone_number'].upper(),
                 prop.get('added_by_username', 'N/A').upper(),
                 prop['owner'].upper(),
             ), iid=prop['property_id'], tags=tags)

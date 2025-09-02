@@ -47,7 +47,8 @@ class DatabaseManager:
                         size REAL NOT NULL,
                         description TEXT,
                         owner TEXT NOT NULL,
-                        contact TEXT NOT NULL, -- New column for contact info
+                        telephone_number TEXT NOT NULL,
+                        email TEXT NOT NULL, -- New column for contact info
                         price REAL NOT NULL,
                         image_paths TEXT,      -- Stores comma-separated paths
                         title_image_paths TEXT, -- Stores comma-separated paths
@@ -66,7 +67,8 @@ class DatabaseManager:
                         size REAL NOT NULL,
                         description TEXT,
                         owner TEXT NOT NULL,
-                        contact TEXT NOT NULL, -- New column for contact info
+                        telephone_number TEXT NOT NULL,
+                        email TEXT NOT NULL, -- New column for contact info
                         image_paths TEXT,      -- Stores comma-separated paths
                         title_image_paths TEXT, -- Stores comma-separated paths
                         added_by_user_id INTEGER, -- New column
@@ -80,7 +82,7 @@ class DatabaseManager:
                         client_id INTEGER PRIMARY KEY AUTOINCREMENT,
                         name TEXT NOT NULL,
                         telephone_number TEXT NOT NULL UNIQUE,
-                        email TEXT NOT NULL UNIQUE,
+                        email TEXT NOT NULL,
                         purpose TEXT NOT NULL,
                         status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'inactive')),
                         added_by_user_id INTEGER, -- New column
@@ -162,6 +164,7 @@ class DatabaseManager:
                          timestamp DATETIME NOT NULL
                      )
                 ''')
+                # 9. Payment Plan
                 cursor.execute('''
                                CREATE TABLE IF NOT EXISTS payment_plans (
                                       plan_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -172,16 +175,19 @@ class DatabaseManager:
                                       created_by TEXT NOT NULL
                                  )
                                  ''')
+                # 10. Service Client
                 cursor.execute('''
                                CREATE TABLE IF NOT EXISTS service_clients (
                                       client_id INTEGER PRIMARY KEY AUTOINCREMENT,
                                       name TEXT NOT NULL,
-                                      contact TEXT UNIQUE NOT NULL,
+                                      telephone_number TEXT NOT NULL UNIQUE,
+                                      email TEXT NOT NULL,
                                       brought_by TEXT,
                                       added_by TEXT NOT NULL,
                                       timestamp DATETIME NOT NULL
                                 )
                                ''')
+                # 11. Client files
                 cursor.execute('''
                -- NEW TABLE: Links a specific file (e.g., for a land parcel) to a client.
                -- Each client can have multiple files.
@@ -194,6 +200,7 @@ class DatabaseManager:
                                       FOREIGN KEY (client_id) REFERENCES service_clients(client_id)
                              )
                             ''')
+                # 12. Job File
                 cursor.execute('''
                -- The jobs table now links to a specific file (file_id) instead of the
                -- general client (client_id). This ensures each job is tied to the
@@ -213,6 +220,7 @@ class DatabaseManager:
                                      FOREIGN KEY (file_id) REFERENCES client_files(file_id)
                                 )
                           ''')
+                # 13. Job Payment
                 cursor.execute('''
                -- The payments table correctly links to the job_id, which is now
                -- linked to a specific file.
@@ -226,20 +234,21 @@ class DatabaseManager:
                                      FOREIGN KEY (job_id) REFERENCES service_jobs(job_id)
                )
             ''')
+                #14. Service Dispatch
                 cursor.execute('''
-            CREATE TABLE IF NOT EXISTS service_dispatch (
-                dispatch_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                job_id INTEGER NOT NULL,
-                dispatch_date TEXT NOT NULL,
-                reason_for_dispatch TEXT,
-                collected_by TEXT,
-                collector_phone TEXT,
-                sign BLOB, -- Stores the digital signature file.
-                          -- Note: For large files, it's often better to store a path/URL
-                          -- to a file storage system instead of storing the BLOB directly.
-                FOREIGN KEY (job_id) REFERENCES service_jobs(job_id)
-            )
-        ''')
+                             CREATE TABLE IF NOT EXISTS service_dispatch (
+                                     dispatch_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                     job_id INTEGER NOT NULL,
+                                     dispatch_date TEXT NOT NULL,
+                                     reason_for_dispatch TEXT,
+                                     collected_by TEXT,
+                                     collector_phone TEXT,
+                                     sign BLOB, -- Stores the digital signature file.
+                                              -- Note: For large files, it's often better to store a path/URL
+                                              -- to a file storage system instead of storing the BLOB directly.
+                                     FOREIGN KEY (job_id) REFERENCES service_jobs(job_id)
+                )
+            ''')
 
                 # 15. Activity Log Table
                 cursor.execute('''
@@ -460,7 +469,7 @@ class DatabaseManager:
         results_rows = self._execute_query(query, (title_deed_number,), fetch_all=True)
         return [dict(row) for row in results_rows] if results_rows else [] # Explicitly convert
 
-    def add_property(self, property_type, title_deed_number, location, size, description, owner, contact, price, image_paths=None, title_image_paths=None, status='Available', added_by_user_id=None):
+    def add_property(self, property_type, title_deed_number, location, size, description, owner, telephone_number, email, price, image_paths=None, title_image_paths=None, status='Available', added_by_user_id=None):
         """
         Adds a new property to the database and ensures the owner is in the clients table.
         """
@@ -474,19 +483,19 @@ class DatabaseManager:
 
         # --- Logic to add owner to clients table ---
         # Step 1: Check if the client already exists using their contact info (since it's unique).
-        client_exists = self.get_client_by_contact_info(contact)
+        client_exists = self.get_client_by_contact_info(telephone_number)
         client_status = 'active'
         
         # Step 2: If the client doesn't exist, insert them.
         if not client_exists:
             # You must have an 'add_client' method in your class to do this.
-            self.add_client(name=owner, contact_info=contact, status=client_status, added_by_user_id=added_by_user_id)
+            self.add_client(name=owner, contact_info=telephone_number, status=client_status, added_by_user_id=added_by_user_id)
 
         # Step 3: Insert the property.
         # This part remains the same after the client is handled.
-        query = '''INSERT INTO properties (property_type,title_deed_number, location, size, description, owner, contact, price, image_paths, title_image_paths, status, added_by_user_id)
-                     VALUES (?,?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'''
-        return self._execute_query(query, (property_type,title_deed_number, location, size, description, owner, contact, price, image_paths, title_image_paths, status, added_by_user_id))
+        query = '''INSERT INTO properties (property_type,title_deed_number, location, size, description, owner, telephone_number, email, price, image_paths, title_image_paths, status, added_by_user_id)
+                     VALUES (?,?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'''
+        return self._execute_query(query, (property_type,title_deed_number, location, size, description, owner, telephone_number, email, price, image_paths, title_image_paths, status, added_by_user_id))
 
 
     def get_propertiesfortransfer_by_title_deed(self, title_deed_number):
@@ -499,7 +508,7 @@ class DatabaseManager:
         return [dict(row) for row in results_rows] if results_rows else [] # Explicitly convert
 
 
-    def add_propertyForTransfer(self, title_deed_number, location, size, description, owner, contact,  image_paths=None, title_image_paths=None, added_by_user_id=None):
+    def add_propertyForTransfer(self, title_deed_number, location, size, description, owner, telephone_number, email,  image_paths=None, title_image_paths=None, added_by_user_id=None):
         """
         Adds a new property to the database and ensures the owner is in the clients table.
         """
@@ -513,18 +522,18 @@ class DatabaseManager:
 
         # --- Logic to add owner to clients table ---
         # Step 1: Check if the client already exists using their contact info (since it's unique).
-        client_exists = self.get_client_by_contact_info(contact)
+        client_exists = self.get_client_by_contact_info(telephone_number)
         
         # Step 2: If the client doesn't exist, insert them.
         if not client_exists:
             # You must have an 'add_client' method in your class to do this.
-            self.add_client(name=owner, contact_info=contact, status=client_status, added_by_user_id=added_by_user_id)
+            self.add_client(name=owner, contact_info=telephone_number, status=client_status, added_by_user_id=added_by_user_id)
 
         # Step 3: Insert the property.
         # This part remains the same after the client is handled.
-        query = '''INSERT INTO propertiesForTransfer (title_deed_number, location, size, description, owner, contact, image_paths, title_image_paths,  added_by_user_id)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'''
-        return self._execute_query(query, (title_deed_number, location, size, description, owner, contact,  image_paths, title_image_paths, added_by_user_id))
+        query = '''INSERT INTO propertiesForTransfer (title_deed_number, location, size, description, owner, telephone_number, email, image_paths, title_image_paths,  added_by_user_id)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'''
+        return self._execute_query(query, (title_deed_number, location, size, description, owner, telephone_number, email, image_paths, title_image_paths, added_by_user_id))
         
 
     def get_property(self, property_id):
@@ -635,7 +644,7 @@ class DatabaseManager:
             p.size,
             p.description,
             p.price,
-            p.contact,
+            p.telephone_number,
             p.image_paths,
             p.title_image_paths,
             p.status,
@@ -689,7 +698,7 @@ class DatabaseManager:
         Adds a new client to the database, tracking the user who added them.
         Returns: The ID of the new client, or None on error/duplicate contact_info.
         """
-        query = "INSERT INTO clients (name, telephone_number, email, purpose,status, added_by_user_id) VALUES (?, ?, ?, ?)"
+        query = "INSERT INTO clients (name, telephone_number, email, purpose,status, added_by_user_id) VALUES (?, ?, ?, ?, ?, ?)"
         return self._execute_query(query, (name, telephone_number, email, purpose, status, added_by_user_id))
 
 
@@ -1042,7 +1051,7 @@ class DatabaseManager:
         return result_row[0] if result_row else 0
 
 
-    def add_service_client(self, name, contact, brought_by, added_by):
+    def add_service_client(self, name, telephone_number, email, brought_by, added_by):
         """
         Adds a new client to the database. The 'file_name' is now handled
         separately in the `client_files` table.
@@ -1052,9 +1061,9 @@ class DatabaseManager:
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         try:
             cursor.execute('''
-                INSERT INTO service_clients (name, contact, brought_by, added_by, timestamp)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (name, contact, brought_by, added_by, timestamp))
+                INSERT INTO service_clients (name, telephone_number, email, brought_by, added_by, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (name, telephone_number, email, brought_by, added_by, timestamp))
             conn.commit()
             return cursor.lastrowid
         except sqlite3.IntegrityError:
@@ -1094,7 +1103,7 @@ class DatabaseManager:
                     cf.file_id,
                     cf.file_name,
                     sc.name AS client_name,
-                    sc.contact AS contact
+                    sc.telephone_number AS telephone_number
                 FROM
                     client_files cf
                 JOIN
@@ -1118,8 +1127,8 @@ class DatabaseManager:
         """
         conn = self._get_connection()
         cursor = conn.cursor()
-        cursor.execute('SELECT client_id, name, contact FROM service_clients ORDER BY name')
-        clients = [{'client_id': row[0], 'name': row[1], 'contact': row[2]}
+        cursor.execute('SELECT client_id, name, telephone_number, email FROM service_clients ORDER BY name')
+        clients = [{'client_id': row[0], 'name': row[1], 'telephone_number': row[2], 'email': row[3]}
                    for row in cursor.fetchall()]
         return clients
 
@@ -1235,7 +1244,7 @@ class DatabaseManager:
                     sj.*,
                     cf.file_name,
                     sc.name AS client_name,
-                    sc.contact AS contact
+                    sc.telephone_number AS telephone_number
                 FROM
                     service_jobs sj
                 JOIN
@@ -2326,7 +2335,7 @@ class DatabaseManager:
             p.size,
             p.description,
             p.price,
-            p.contact,
+            p.telephone_number,
             p.image_paths,
             p.title_image_paths,
             p.status,
@@ -2347,7 +2356,7 @@ class DatabaseManager:
             pt.size,
             pt.description,
             NULL AS price, -- This table doesn't have a price column
-            pt.contact,
+            pt.telephone_number,
             pt.image_paths,
             pt.title_image_paths,
             NULL AS status, -- This table doesn't have a status column
@@ -2398,7 +2407,7 @@ class DatabaseManager:
            query = """
            SELECT
                p.property_id, p.title_deed_number, p.location, p.size, p.description,
-               p.price, p.contact, p.image_paths, p.title_image_paths, p.status,
+               p.price, p.telephone_number, p.image_paths, p.title_image_paths, p.status,
                p.added_by_user_id, p.owner, u.username AS added_by_username
            FROM properties p
            LEFT JOIN users u ON p.added_by_user_id = u.user_id
@@ -2409,7 +2418,7 @@ class DatabaseManager:
            query = """
            SELECT
                pt.property_id, pt.title_deed_number, pt.location, pt.size, pt.description,
-               NULL AS price, pt.contact, pt.image_paths, pt.title_image_paths, NULL AS status,
+               NULL AS price, pt.telephone_number, pt.image_paths, pt.title_image_paths, NULL AS status,
                pt.added_by_user_id, pt.owner, u.username AS added_by_username
            FROM propertiesForTransfer pt
            LEFT JOIN users u ON pt.added_by_user_id = u.user_id
@@ -2420,6 +2429,7 @@ class DatabaseManager:
             results_row = None
     
         return dict(results_row) if results_row else None
+
     def execute_property_transfer(self, property_id, from_client_id, to_client_id, transfer_price, transfer_date, executed_by_user_id, supervising_agent_id, document_path, source_table):
         """
         Executes a property transfer transaction:
@@ -2522,6 +2532,54 @@ class DatabaseManager:
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             query = "INSERT INTO activity_logs (timestamp, user_id, action_type, details) VALUES (?, ?, ?, ?)"
             self._execute_query(query, (timestamp, user_id, action_type, details))
+
+    def get_activity_logs(self, user_id=None, action_type=None, start_date=None, end_date=None, limit=None,
+                          offset=None):
+        """
+        Retrieves activity logs with optional filters,
+        joining with the users table to get the username.
+        Returns: A list of dictionaries, each representing an activity log.
+        """
+        query = """
+        SELECT
+            l.log_id,
+            l.timestamp,
+            l.action_type,
+            l.details,
+            u.username
+        FROM
+            activity_logs l
+        LEFT JOIN
+            users u ON l.user_id = u.user_id
+        WHERE 1=1
+        """
+        params = []
+
+        if user_id:
+            query += " AND l.user_id = ?"
+            params.append(user_id)
+        if action_type:
+            query += " AND l.action_type = ?"
+            params.append(action_type)
+        if start_date:
+            query += " AND l.timestamp >= ?"
+            params.append(f"{start_date} 00:00:00")
+        if end_date:
+            query += " AND l.timestamp <= ?"
+            params.append(f"{end_date} 23:59:59")
+
+        query += " ORDER BY l.timestamp DESC"
+
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+
+        if offset is not None:
+            query += " OFFSET ?"
+            params.append(offset)
+
+        results_rows = self._execute_query(query, params, fetch_all=True)
+        return [dict(row) for row in results_rows] if results_rows else []
 
     def get_all_users_for_log_viewer(self):
             """

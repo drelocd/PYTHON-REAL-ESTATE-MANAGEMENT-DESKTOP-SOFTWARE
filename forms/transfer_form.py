@@ -207,19 +207,18 @@ class PropertyTransferForm(tk.Toplevel):
         self.client_search_entry.grid(row=0, column=1, sticky="ew")
         self.client_search_entry.bind('<KeyRelease>', lambda e: self._filter_clients_by_name())
 
-        columns = ("id", "name", "contact")
+        columns = ("id", "name", "telephone_number")
         self.client_tree = ttk.Treeview(details_frame, columns=columns, show="headings", height=4)
         self.client_tree.grid(row=1, column=0, sticky="ew", pady=(0, 5), columnspan=2)
         client_tree_scrollbar = ttk.Scrollbar(details_frame, orient="vertical", command=self.client_tree.yview)
         self.client_tree.configure(yscrollcommand=client_tree_scrollbar.set)
         client_tree_scrollbar.grid(row=1, column=2, sticky="ns")
-
         self.client_tree.heading("id", text="ID")
         self.client_tree.heading("name", text="Client Name")
-        self.client_tree.heading("contact", text="Contact Info")
+        self.client_tree.heading("telephone_number", text="Telephone Number")
         self.client_tree.column("id", width=30, stretch=tk.NO)
         self.client_tree.column("name", width=150)
-        self.client_tree.column("contact", width=100)
+        self.client_tree.column("telephone_number", width=100)
         self.client_tree.bind("<<TreeviewSelect>>", self._on_client_select_from_tree)
         self._populate_client_tree()
 
@@ -541,7 +540,7 @@ class PropertyTransferForm(tk.Toplevel):
         try:
             clients_data = self.db_manager.get_all_clients()
             for client in clients_data:
-                self.client_tree.insert("", "end", values=(client['client_id'], client['name'], client['contact_info']))
+                self.client_tree.insert("", "end", values=(client['client_id'], client['name'], client['telephone_number']))
         except Exception as e:
             messagebox.showerror("Database Error", f"Failed to fetch client list: {e}")
     def _filter_clients_by_name(self):
@@ -558,10 +557,10 @@ class PropertyTransferForm(tk.Toplevel):
             filtered_clients = self.all_clients
 
         for client in filtered_clients:
-            # Use .get() to safely access 'contact' and provide a default value
+            # Use .get() to safely access 'telephone_number' and provide a default value
             client_id = client.get('client_id')
             client_name = client.get('name', 'N/A')
-            client_contact = client.get('contact', 'N/A')
+            client_contact = client.get('telephone_number', 'N/A')
             
             if client_id is not None:
                 self.client_tree.insert("", "end", values=(client_id, client_name, client_contact))
