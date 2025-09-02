@@ -79,7 +79,7 @@ class DatabaseManager:
                     CREATE TABLE IF NOT EXISTS clients (
                         client_id INTEGER PRIMARY KEY AUTOINCREMENT,
                         name TEXT NOT NULL,
-                        telephone_number TEXT NOT NULL UNIQUE 
+                        telephone_number TEXT NOT NULL UNIQUE,
                         email TEXT NOT NULL UNIQUE,
                         purpose TEXT NOT NULL,
                         status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'inactive')),
@@ -2511,7 +2511,7 @@ class DatabaseManager:
             return []
 
         ## --- NEW METHODS FOR ACTIVITY LOGS ---
-        def add_activity_log(self, user_id, action_type, details):
+    def add_activity_log(self, user_id, action_type, details):
             """
             Logs a user action in the activity_logs table.
             Args:
@@ -2523,7 +2523,7 @@ class DatabaseManager:
             query = "INSERT INTO activity_logs (timestamp, user_id, action_type, details) VALUES (?, ?, ?, ?)"
             self._execute_query(query, (timestamp, user_id, action_type, details))
 
-        def get_all_users_for_log_viewer(self):
+    def get_all_users_for_log_viewer(self):
             """
             Retrieves a list of usernames to populate the user filter.
             Returns: A list of usernames.
@@ -2535,7 +2535,7 @@ class DatabaseManager:
                 print(f"Error fetching users for log viewer: {e}")
                 return []
 
-        def get_all_action_types(self):
+    def get_all_action_types(self):
             """
             Retrieves a list of unique action types from the activity logs to populate the filter.
             Returns: A list of unique action type strings.
@@ -2548,7 +2548,7 @@ class DatabaseManager:
                 print(f"Error fetching action types: {e}")
                 return []
 
-        def get_total_activity_logs_count(self, user_id=None, action_type=None, start_date=None, end_date=None):
+    def get_total_activity_logs_count(self, user_id=None, action_type=None, start_date=None, end_date=None):
             """
             Returns the total count of activity logs, with optional filters.
             """
@@ -2571,7 +2571,7 @@ class DatabaseManager:
             result_row = self._execute_query(query, params, fetch_one=True)
             return result_row[0] if result_row else 0
 
-        def get_activity_logs_paginated(self, user_id=None, action_type=None, start_date=None, end_date=None,
+    def get_activity_logs_paginated(self, user_id=None, action_type=None, start_date=None, end_date=None,
                                         limit=None, offset=None):
             """
             Fetches a paginated list of activity logs with optional filters,

@@ -4,13 +4,17 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="ab879b42-ea8e-4a65-bde8-c956ccf687ec" name="Changes" comment="unstaged">
+    <list default="true" id="ab879b42-ea8e-4a65-bde8-c956ccf687ec" name="Changes" comment="improved">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/data/real_estate.db" beforeDir="false" afterPath="$PROJECT_DIR$/data/real_estate.db" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/database.py" beforeDir="false" afterPath="$PROJECT_DIR$/database.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/forms/client_form.py" beforeDir="false" afterPath="$PROJECT_DIR$/forms/client_form.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/forms/survey_forms.py" beforeDir="false" afterPath="$PROJECT_DIR$/forms/survey_forms.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/forms/Clients.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/forms/MySQL.txt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/forms/SoldProperties.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/forms/TotalProperties.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/forms/TotalSurveyJobs.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/forms/main.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/forms/main1.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/forms/real_estate.db" beforeDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -33,6 +37,7 @@
         <option value="Xploit1017 &lt;99198707+drelocd@users.noreply.github.com&gt;" />
       </list>
     </option>
+    <option name="PUSH_AUTO_UPDATE" value="true" />
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
     <option name="RESET_MODE" value="HARD" />
   </component>
@@ -57,20 +62,20 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "Python.main.executor": "Run",
-    "Python.property_forms.executor": "Run",
-    "Python.signup_form.executor": "Run",
-    "Python.survey_forms.executor": "Run",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "git-widget-placeholder": "main",
-    "ignore.virus.scanning.warn.message": "true",
-    "last_opened_file_path": "C:/Users/osund/PycharmProjects/PYTHON-REAL-ESTATE-MANAGEMENT-",
-    "settings.editor.selected.configurable": "vcs.Git"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;Python.main.executor&quot;: &quot;Run&quot;,
+    &quot;Python.property_forms.executor&quot;: &quot;Run&quot;,
+    &quot;Python.signup_form.executor&quot;: &quot;Run&quot;,
+    &quot;Python.survey_forms.executor&quot;: &quot;Run&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
+    &quot;ignore.virus.scanning.warn.message&quot;: &quot;true&quot;,
+    &quot;last_opened_file_path&quot;: &quot;C:/Users/osund/PycharmProjects/PYTHON-REAL-ESTATE-MANAGEMENT-&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;vcs.Git&quot;
   }
-}]]></component>
+}</component>
   <component name="RecentsManager">
     <key name="CopyFile.RECENT_KEYS">
       <recent name="C:\Users\osund\PycharmProjects\PYTHON-REAL-ESTATE-MANAGEMENT-\forms" />
@@ -79,7 +84,7 @@
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
-        <option value="bundled-python-sdk-4c141bd692a7-e2d783800521-com.jetbrains.pycharm.community.sharedIndexes.bundled-PC-251.26927.90" />
+        <option value="bundled-python-sdk-d9fa9deec7cb-d902c0275401-com.jetbrains.pycharm.community.sharedIndexes.bundled-PC-252.23892.515" />
       </set>
     </attachedChunks>
   </component>
@@ -164,7 +169,23 @@
       <option name="project" value="LOCAL" />
       <updated>1751855418651</updated>
     </task>
-    <option name="localTasksCounter" value="10" />
+    <task id="LOCAL-00010" summary="added changes">
+      <option name="closed" value="true" />
+      <created>1756808045588</created>
+      <option name="number" value="00010" />
+      <option name="presentableId" value="LOCAL-00010" />
+      <option name="project" value="LOCAL" />
+      <updated>1756808045588</updated>
+    </task>
+    <task id="LOCAL-00011" summary="improved">
+      <option name="closed" value="true" />
+      <created>1756808415064</created>
+      <option name="number" value="00011" />
+      <option name="presentableId" value="LOCAL-00011" />
+      <option name="project" value="LOCAL" />
+      <updated>1756808415064</updated>
+    </task>
+    <option name="localTasksCounter" value="12" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -175,12 +196,12 @@
             <list>
               <RecentGroup>
                 <option name="FILTER_VALUES">
-                  <option value="origin/main" />
+                  <option value="main" />
                 </option>
               </RecentGroup>
               <RecentGroup>
                 <option name="FILTER_VALUES">
-                  <option value="main" />
+                  <option value="origin/main" />
                 </option>
               </RecentGroup>
               <RecentGroup>
@@ -229,6 +250,8 @@
     <MESSAGE value="Add files via upload" />
     <MESSAGE value="stash1" />
     <MESSAGE value="client form" />
-    <option name="LAST_COMMIT_MESSAGE" value="client form" />
+    <MESSAGE value="added changes" />
+    <MESSAGE value="improved" />
+    <option name="LAST_COMMIT_MESSAGE" value="improved" />
   </component>
 </project>
