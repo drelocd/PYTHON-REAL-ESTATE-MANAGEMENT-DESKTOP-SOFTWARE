@@ -15,6 +15,7 @@ import sys  # Used to get the executable path
 import logging  # For structured logging
 # from packaging.version import parse as parse_version # REMOVED: Causing import issues
 
+from utils.tooltips import ToolTip
 # Import your DatabaseManager
 from database import DatabaseManager
 from forms.transfer_form import PropertyTransferForm  # Import the transfer form
@@ -163,7 +164,7 @@ class SalesSectionView(ttk.Frame):
             {"text": "Transfer Property", "icon": "transfer.png", "command": self._open_property_transfer_form,
              "roles": ['admin', 'property_manager']},
             {"text": "Land Division & Records", "icon": "subdivide.png", "command": self._open_land_division_form,
-             "roles": ['admin', 'property_manager']}
+             "roles": ['admin', 'property_manager']},
         ]
 
         row, col = 0, 0
@@ -189,6 +190,8 @@ class SalesSectionView(ttk.Frame):
             )
             btn.pack(expand=True, fill="both", ipadx=20, ipady=20)
             btn.image = icon_img  # Store reference on the button itself
+
+            ToolTip(btn, data["text"]) #Icon hover effect
 
             col += 1
             if col > 2:
@@ -368,6 +371,8 @@ class SurveySectionView(ttk.Frame):
             )
             btn.pack(expand=True, fill="both", ipadx=20, ipady=20)
             btn.image = icon_img
+
+            ToolTip(btn, data["text"]) # hover icon effect
 
             col += 1
             if col > 1:
@@ -780,7 +785,7 @@ class RealEstateApp(tk.Tk):
         """
         Downloads the update file to a temporary directory.
         """
-        download_dir = os.path.join(os.path.expanduser("~"), "Downloads", "Mathenge_App_Updates")
+        download_dir = os.path.join(BASE_DIR, "REMS_updates")
         os.makedirs(download_dir, exist_ok=True)
         temp_filepath = os.path.join(download_dir, filename)
 
@@ -922,7 +927,7 @@ class RealEstateApp(tk.Tk):
 
         title_label = tk.Label(
             title_bar,
-            text="Mathenge's Real Estate Management System",
+            text="Real Estate Management System",
             bg='#003366',
             fg='white',
             font=('Helvetica', 10)
@@ -1006,6 +1011,7 @@ class RealEstateApp(tk.Tk):
 
         file_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="File", menu=file_menu)
+        file_menu.add_command(label="Log Out", command=self.logout)
         file_menu.add_command(label="Exit", command=self.on_exit)
 
         # Clients Menu - Now with role-based access
@@ -1170,6 +1176,25 @@ class RealEstateApp(tk.Tk):
         if messagebox.askyesno("Exit Application", "Are you sure you want to exit?"):
             # self.db_manager.close() # Close database connection
             self.destroy()
+
+    def logout(self):
+        """Logs out the current user and returns to the login page."""
+        if messagebox.askyesno("Log Out", "Are you sure you want to log out?"):
+            # Clear user session
+            self.login_successful = False
+            self.user_type = None
+            self.user_id = None
+
+            # Hide the main window
+            self.withdraw()
+
+            # Destroy existing notebook and menu (to reset state)
+            if hasattr(self, "notebook"):
+                self.notebook.destroy()
+            self.config(menu=None)
+
+            # Show login window again
+            self.show_login_page()
 
 
 if __name__ == "__main__":

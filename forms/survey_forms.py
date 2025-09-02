@@ -27,6 +27,7 @@ ICONS_DIR = os.path.join(ASSETS_DIR, 'icons')
 DATA_DIR = os.path.join(BASE_DIR, 'data')
 RECEIPTS_DIR = os.path.join(DATA_DIR, 'receipts')
 os.makedirs(RECEIPTS_DIR, exist_ok=True)  # Ensure receipts directory exists
+REPORTS_DIR = os.path.join(BASE_DIR, 'reports')
 
 try:
     from tkcalendar import DateEntry
@@ -1452,7 +1453,7 @@ class JobReportsView(FormBase):
             self.report_text_widget.insert("1.0", f"Error: {e}")
 
     def _generate_pdf_report(self, report_name, content, report_type, start_date, end_date):
-        """Generates PDF report using ReportLab and returns the file path."""
+        """Generates PDF report using ReportLab (with logo, word wrap, footer) and returns the file path."""
         if not _REPORTLAB_AVAILABLE:
             return None  # Error message already shown by calling function
 
@@ -1476,28 +1477,38 @@ class JobReportsView(FormBase):
             styles = getSampleStyleSheet()
             story = []
 
-            # Business Header with Timestamp
+            # --- Business Header with Logo ---
+            logo_path = os.path.join("assets", "SURVEY.jpg")  # Adjust path as needed
+            if os.path.exists(logo_path):
+                logo = Image(logo_path, 1 * inch, 1 * inch)
+            else:
+                logo = Paragraph("", styles['Normal'])  # Empty if no logo found
+
             header_table = Table([
-                ["MATHENGE REAL ESTATE", datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
-            ], colWidths=[4 * inch, 2 * inch])
+                [logo, "NDIRITU MATHENGE & ASSOCIATES", datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
+            ], colWidths=[1.2 * inch, 3.5 * inch, 2 * inch])
 
             header_table.setStyle(TableStyle([
-                ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (0, -1), 14),
-                ('FONTSIZE', (1, 0), (1, -1), 10),
-                ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+                ('FONTNAME', (1, 0), (1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (1, 0), (1, 0), 14),
+                ('ALIGN', (2, 0), (2, 0), 'RIGHT'),
                 ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
             ]))
             story.append(header_table)
+            story.append(Spacer(1, 12))
 
-            # Report Title
+            # --- Report Title & Period ---
             story.append(Paragraph(f"<b>{report_name.upper()}</b>", styles['Heading2']))
             story.append(Paragraph(f"Period: {start_date} to {end_date}", styles['Normal']))
             story.append(Spacer(1, 12))
 
+            # --- Table Content ---
             if content.get('data'):
                 headers = ["Job ID", "Date", "Client Name", "File Name", "Description", "Status"]
                 table_data = [headers]
+
+                # Style for wrapping text inside cells
+                wrap_style = ParagraphStyle('wrap', fontSize=8, leading=10)
 
                 for job in content['data']:
                     date_part = job['timestamp'].split(' ')[0] if ' ' in job['timestamp'] else job['timestamp']
@@ -1506,12 +1517,14 @@ class JobReportsView(FormBase):
                         date_part,
                         job['client_name'],
                         job['file_name'],
-                        job['job_description'],
+                        Paragraph(job['job_description'], wrap_style),
                         job['status']
                     ])
 
-                # Adjust column widths dynamically or provide fixed widths
-                col_widths = [0.8 * inch, 1.2 * inch, 1.5 * inch, 1.5 * inch, 1.8 * inch, 1 * inch]
+                # Dynamic column widths
+                col_widths = [doc.width * 0.1, doc.width * 0.15, doc.width * 0.2,
+                              doc.width * 0.2, doc.width * 0.25, doc.width * 0.1]
+
                 t = Table(table_data, colWidths=col_widths)
                 t.setStyle(TableStyle([
                     ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
@@ -1520,13 +1533,20 @@ class JobReportsView(FormBase):
                     ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
                     ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
                     ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                    ('VALIGN', (0, 0), (-1, -1), 'TOP'),
                 ]))
                 story.append(t)
             else:
                 story.append(Paragraph("No jobs found for this period and status.", styles['Normal']))
 
-            # Build the PDF
-            doc.build(story)
+            # --- Footer with Page Number ---
+            def add_page_number(canvas, doc):
+                page_num = canvas.getPageNumber()
+                canvas.setFont("Helvetica", 8)
+                canvas.drawRightString(7.5 * inch, 0.5 * inch, f"Page {page_num}")
+
+            # Build PDF
+            doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
             return file_path
 
         except Exception as e:

@@ -9,6 +9,7 @@ import bcrypt
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, 'data')
 DB_FILE = os.path.join(DATA_DIR, 'real_estate.db')
+REPORTS_DIR = os.path.join(BASE_DIR, 'reports')
 
 
 class DatabaseManager:
@@ -25,6 +26,10 @@ class DatabaseManager:
         if not os.path.exists(DATA_DIR):
             os.makedirs(DATA_DIR)
             print(f"Created data directory: {DATA_DIR}")
+
+        if not os.path.exists(REPORTS_DIR):
+            os.makedirs(REPORTS_DIR)
+            print(f"Created reports directory: {REPORTS_DIR}")
 
     def _create_tables(self):
         """Initializes the database by creating tables if they don't exist."""
@@ -74,7 +79,9 @@ class DatabaseManager:
                     CREATE TABLE IF NOT EXISTS clients (
                         client_id INTEGER PRIMARY KEY AUTOINCREMENT,
                         name TEXT NOT NULL,
-                        contact_info TEXT UNIQUE NOT NULL, -- Can be phone, email, etc.
+                        telephone_number TEXT NOT NULL UNIQUE 
+                        email TEXT NOT NULL UNIQUE,
+                        purpose TEXT NOT NULL,
                         status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'inactive')),
                         added_by_user_id INTEGER, -- New column
                         FOREIGN KEY (added_by_user_id) REFERENCES users(user_id)
@@ -233,6 +240,18 @@ class DatabaseManager:
                 FOREIGN KEY (job_id) REFERENCES service_jobs(job_id)
             )
         ''')
+
+                # 15. Activity Log Table
+                cursor.execute('''
+                                    CREATE TABLE IF NOT EXISTS activity_logs (
+                                        log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                        timestamp TEXT NOT NULL,
+                                        user_id INTEGER NOT NULL,
+                                        action_type TEXT NOT NULL,
+                                        details TEXT,
+                                        FOREIGN KEY (user_id) REFERENCES users(user_id)
+                                    )
+                                ''')
 
 
                 conn.commit()
@@ -665,13 +684,14 @@ class DatabaseManager:
 
     ## CRUD Operations for Clients
 
-    def add_client(self, name, contact_info, status, added_by_user_id=None):
+    def add_client(self, name, telephone_number, email, purpose, status, added_by_user_id=None):
         """
         Adds a new client to the database, tracking the user who added them.
         Returns: The ID of the new client, or None on error/duplicate contact_info.
         """
-        query = "INSERT INTO clients (name, contact_info, status, added_by_user_id) VALUES (?, ?, ?, ?)"
-        return self._execute_query(query, (name, contact_info, status, added_by_user_id))
+        query = "INSERT INTO clients (name, telephone_number, email, purpose,status, added_by_user_id) VALUES (?, ?, ?, ?)"
+        return self._execute_query(query, (name, telephone_number, email, purpose, status, added_by_user_id))
+
 
     def get_client(self, client_id):
         """
@@ -682,13 +702,13 @@ class DatabaseManager:
         client_data_row = self._execute_query(query, (client_id,), fetch_one=True)
         return dict(client_data_row) if client_data_row else None # Explicitly convert
 
-    def get_client_by_contact_info(self, contact_info):
+    def get_client_by_telephone_number(self, telephone_number):
         """
         Retrieves a client by their contact information.
         Returns: The client details as a dict, or None if not found.
         """
-        query = "SELECT * FROM clients WHERE contact_info = ?"
-        client_data_row = self._execute_query(query, (contact_info,), fetch_one=True)
+        query = "SELECT * FROM clients WHERE telephone_number = ?"
+        client_data_row = self._execute_query(query, (telephone_number,), fetch_one=True)
         return dict(client_data_row) if client_data_row else None # Explicitly convert
 
     def get_all_clients(self):
@@ -700,7 +720,9 @@ class DatabaseManager:
         SELECT
             c.client_id,
             c.name,
-            c.contact_info,
+            c.telephone_number,
+            c.email,
+            c.purpose,
             c.status,
             c.added_by_user_id,
             u.username AS added_by_username
@@ -724,7 +746,7 @@ class DatabaseManager:
         SELECT
             c.client_id,
             c.name,
-            c.contact_info,
+            c.telephone_number,
             c.status,
             c.added_by_user_id,
             u.username AS added_by_username
@@ -2454,4 +2476,145 @@ class DatabaseManager:
             print(f"Database error during property transfer: {e}")
             return False
 
+    def get_service_jobs_for_report(self, start_date, end_date, status=None):
+        """
+        Retrieves service jobs for a specified date range and optional status.
 
+        Args:
+            start_date (str): The start date of the report range in 'YYYY-MM-DD' format.
+            end_date (str): The end date of the report range in 'YYYY-MM-DD' format.
+            status (str, optional): The status to filter by (e.g., 'Completed'). Defaults to None.
+
+        Returns:
+            list: A list of dictionaries, where each dictionary represents a service job
+                  record. Returns an empty list on error.
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                query = """
+                    SELECT * FROM service_jobs
+                    WHERE completion_date BETWEEN ? AND ?
+                """
+                params = [start_date, end_date]
+
+                if status:
+                    query += " AND status = ?"
+                    params.append(status)
+
+                query += " ORDER BY completion_date"
+
+                cursor.execute(query, tuple(params))
+                return cursor.fetchall()
+        except Exception as e:
+            print(f"Database error retrieving service jobs for report: {e}")
+            return []
+
+        ## --- NEW METHODS FOR ACTIVITY LOGS ---
+        def add_activity_log(self, user_id, action_type, details):
+            """
+            Logs a user action in the activity_logs table.
+            Args:
+                user_id (int): The ID of the user performing the action.
+                action_type (str): A brief, descriptive type of action (e.g., 'Login', 'Property Added').
+                details (str): A more detailed description of the action.
+            """
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            query = "INSERT INTO activity_logs (timestamp, user_id, action_type, details) VALUES (?, ?, ?, ?)"
+            self._execute_query(query, (timestamp, user_id, action_type, details))
+
+        def get_all_users_for_log_viewer(self):
+            """
+            Retrieves a list of usernames to populate the user filter.
+            Returns: A list of usernames.
+            """
+            try:
+                rows = self._execute_query("SELECT username FROM users ORDER BY username ASC", fetch_all=True)
+                return [row['username'] for row in rows] if rows else []
+            except Exception as e:
+                print(f"Error fetching users for log viewer: {e}")
+                return []
+
+        def get_all_action_types(self):
+            """
+            Retrieves a list of unique action types from the activity logs to populate the filter.
+            Returns: A list of unique action type strings.
+            """
+            try:
+                rows = self._execute_query("SELECT DISTINCT action_type FROM activity_logs ORDER BY action_type ASC",
+                                           fetch_all=True)
+                return [row['action_type'] for row in rows] if rows else []
+            except Exception as e:
+                print(f"Error fetching action types: {e}")
+                return []
+
+        def get_total_activity_logs_count(self, user_id=None, action_type=None, start_date=None, end_date=None):
+            """
+            Returns the total count of activity logs, with optional filters.
+            """
+            query = "SELECT COUNT(*) FROM activity_logs WHERE 1=1"
+            params = []
+
+            if user_id:
+                query += " AND user_id = ?"
+                params.append(user_id)
+            if action_type:
+                query += " AND action_type = ?"
+                params.append(action_type)
+            if start_date:
+                query += " AND timestamp >= ?"
+                params.append(f"{start_date} 00:00:00")
+            if end_date:
+                query += " AND timestamp <= ?"
+                params.append(f"{end_date} 23:59:59")
+
+            result_row = self._execute_query(query, params, fetch_one=True)
+            return result_row[0] if result_row else 0
+
+        def get_activity_logs_paginated(self, user_id=None, action_type=None, start_date=None, end_date=None,
+                                        limit=None, offset=None):
+            """
+            Fetches a paginated list of activity logs with optional filters,
+            joining with the users table to get the username.
+            Returns: A list of dictionaries, each representing an activity log.
+            """
+            query = """
+            SELECT
+                l.log_id,
+                l.timestamp,
+                l.action_type,
+                l.details,
+                u.username
+            FROM
+                activity_logs l
+            LEFT JOIN
+                users u ON l.user_id = u.user_id
+            WHERE 1=1
+            """
+            params = []
+
+            if user_id:
+                query += " AND l.user_id = ?"
+                params.append(user_id)
+            if action_type:
+                query += " AND l.action_type = ?"
+                params.append(action_type)
+            if start_date:
+                query += " AND l.timestamp >= ?"
+                params.append(f"{start_date} 00:00:00")
+            if end_date:
+                query += " AND l.timestamp <= ?"
+                params.append(f"{end_date} 23:59:59")
+
+            query += " ORDER BY l.timestamp DESC"
+
+            if limit is not None:
+                query += " LIMIT ?"
+                params.append(limit)
+
+            if offset is not None:
+                query += " OFFSET ?"
+                params.append(offset)
+
+            results_rows = self._execute_query(query, params, fetch_all=True)
+            return [dict(row) for row in results_rows] if results_rows else []

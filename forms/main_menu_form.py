@@ -15,6 +15,7 @@ try:
     from forms.admin_manage_agents_form import AdminManageAgentsPanel
     from forms.agents_signup_form import AgentSignupForm
     from forms.admin_manage_payments_form import ManagePaymentPlansForm
+    from forms.activity_log_viewer_form import ActivityLogViewerForm
 except ImportError as e:
     messagebox.showerror("Import Error", f"Could not import required modules. "
                                          f"Please ensure admin_panel.py and signup_form.py are in the 'forms' directory. Error: {e}")
@@ -291,4 +292,8 @@ class MainMenuForm(tk.Toplevel):
 
     def _open_activity_logs(self):
         """payment for opening the Activity Logs window."""
-        messagebox.showinfo("Activity Logs", "This function is not yet implemented.")
+        if ActivityLogViewerForm:
+            ActivityLogViewerForm(self, self.db_manager, self.user_id, parent_icon_loader=self._load_icon_for_button)
+        else:
+            messagebox.showerror("Error", "ManagePaymentPlansForm module is not available.")
+

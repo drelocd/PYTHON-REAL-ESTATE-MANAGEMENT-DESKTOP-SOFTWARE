@@ -5516,10 +5516,17 @@ class SalesReportsForm(tk.Toplevel):
             doc = SimpleDocTemplate(file_path, pagesize=letter)
             styles = getSampleStyleSheet()
             story = []
+
+            # --- Business Header with Logo ---
+            logo_path = os.path.join("assets", "NEWCITY.png")  # Adjust path as needed
+            if os.path.exists(logo_path):
+                logo = Image(logo_path, 1 * inch, 1 * inch)
+            else:
+                logo = Paragraph("", styles['Normal'])  # Empty if no logo found
             
             # Business Header with Timestamp
             header_table = Table([
-                ["MATHENGE REAL ESTATE", datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
+                [logo,"NEW CITY REAL ESTATE", datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
             ], colWidths=[4*inch, 2*inch])
             
             header_table.setStyle(TableStyle([
