@@ -449,12 +449,13 @@ class AddClientAndFileForm(FormBase):
     """
     def __init__(self, master, db_manager, refresh_callback, user_id, parent_icon_loader=None):
         # Increased window height to accommodate the tabbed layout
-        super().__init__(master, 750, 500, "Add Client or File", "add_client.png", parent_icon_loader)
+        super().__init__(master, 950, 500, "Add Client or File", "add_client.png", parent_icon_loader)
         self.db_manager = db_manager
         self.refresh_callback = refresh_callback
         self.user_id = user_id
         
         self.selected_client_id = None # Tracks the selected client from the table
+        self.all_clients = self._fetch_clients()
 
         self.main_frame = ttk.Frame(self, padding="20")
         self.main_frame.pack(expand=True, fill="both")
@@ -476,8 +477,12 @@ class AddClientAndFileForm(FormBase):
         new_client_label_frame = ttk.Frame(self.new_client_frame)
         new_client_label_frame.pack(fill="x")
         ttk.Label(new_client_label_frame, text="Client Name:").pack(side="left", fill="x", expand=True)
-        self.name_entry = ttk.Entry(self.new_client_frame)
-        self.name_entry.pack(fill="x", pady=(0, 10))
+        self.client_name_var = tk.StringVar()
+        self.client_combobox = ttk.Combobox(self.new_client_frame, textvariable=self.client_name_var)
+        self.client_combobox.pack(fill="x", pady=(0, 10))
+        self.client_combobox['values'] = self.all_clients  # Populate with initial list
+        self.client_combobox.bind('<KeyRelease>', self._update_client_list)
+        self.client_combobox.bind('<<ComboboxSelected>>', self._on_client_select1)
 
         # Telephone number
         new_telephone_label_frame = ttk.Frame(self.new_client_frame)
@@ -485,6 +490,7 @@ class AddClientAndFileForm(FormBase):
         ttk.Label(new_telephone_label_frame, text="Telephone Number:").pack(side="left", fill="x", expand=True)
         self.telephone_entry = ttk.Entry(self.new_client_frame)
         self.telephone_entry.pack(fill="x", pady=(0, 10))
+        self.telephone_entry.bind('<KeyRelease>', self._on_telephone_edit)
 
         # Email address
         new_email_label_frame = ttk.Frame(self.new_client_frame)
@@ -492,6 +498,7 @@ class AddClientAndFileForm(FormBase):
         ttk.Label(new_email_label_frame, text="Email Address:").pack(side="left", fill="x", expand=True)
         self.email_entry = ttk.Entry(self.new_client_frame)
         self.email_entry.pack(fill="x", pady=(0, 10))
+        self.email_entry.bind('<KeyRelease>', self._on_email_edit)
 
         new_brought_by_label_frame = ttk.Frame(self.new_client_frame)
         new_brought_by_label_frame.pack(fill="x")
@@ -542,6 +549,71 @@ class AddClientAndFileForm(FormBase):
         
         # Initial population of the table
         self._populate_clients_table()
+        
+
+    def _fetch_clients(self):
+        """Fetches all existing client names from the database."""
+        try:
+            # Assumes db_manager.get_all_clients() returns a list of dictionaries
+            # like [{'name': 'Client A', ...}, {'name': 'Client B', ...}]
+            self.all_clients_data = self.db_manager.get_all_clients()
+            self.all_clients_data.sort(key=lambda x: x.get('name', ''))
+            
+            # Extract only the 'name' from each dictionary
+            client_names = [client.get('name', '') for client in self.all_clients_data]
+            
+            return client_names
+        except Exception as e:
+            messagebox.showerror("Database Error", f"Failed to fetch client list: {e}")
+            return []
+        
+
+    def _on_client_select1(self, event):
+        print("DEBUG: <<ComboboxSelected>> event triggered!")
+        selected_name = self.client_name_var.get()
+        print(f"DEBUG: Selected client name: {selected_name}")
+        selected_client = next(
+            (client for client in self.all_clients_data if client.get('name') == selected_name),
+            None
+        )
+        if selected_client:
+            # Fill telephone
+            telephone = selected_client.get('telephone_number', '')
+            self.telephone_entry.delete(0, tk.END)
+            self.telephone_entry.insert(0, telephone)
+            print(f"Filled telephone with: {telephone}")
+
+            # Fill email
+            email = selected_client.get('email', '')
+            self.email_entry.delete(0, tk.END)
+            self.email_entry.insert(0, email)
+            print(f"Filled email with: {email}")
+
+    def _on_telephone_edit(self, event):
+        current_name = self.client_name_var.get()
+        current_telephone = self.telephone_entry.get()
+        matching_client = next((c for c in self.all_clients_data if c['name'] == current_name), None)
+        if matching_client and matching_client.get('telephone_number') != current_telephone:
+            self.client_name_var.set('')
+
+    def _on_email_edit(self, event):
+        current_name = self.client_name_var.get()
+        current_email = self.email_entry.get()
+        matching_client = next((c for c in self.all_clients_data if c['name'] == current_name), None)
+        if matching_client and matching_client.get('email') != current_email:
+            self.client_name_var.set('')
+
+    def _update_client_list(self, event=None):
+        """Updates the Combobox dropdown based on the user's input."""
+        current_text = self.client_name_var.get()
+        if current_text == '':
+            self.client_combobox['values'] = self.all_clients
+        else:
+            filtered_clients = [
+                client for client in self.all_clients
+                if current_text.lower() in client.lower()
+            ]
+            self.client_combobox['values'] = filtered_clients
 
     def _populate_clients_table(self):
         """Populates the client table with all clients."""
@@ -578,7 +650,7 @@ class AddClientAndFileForm(FormBase):
         current_tab_id = self.notebook.index(self.notebook.select())
 
         if current_tab_id == 0:  # "Add New Client" tab
-            name = self.name_entry.get().strip().title()
+            name = self.client_name_var.get().strip().title()
             telephone_number = self.telephone_entry.get().strip()
             email = self.email_entry.get().strip().lower()
             brought_by = self.brought_by_entry.get().strip().title()
