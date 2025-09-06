@@ -149,22 +149,30 @@ class SalesSectionView(ttk.Frame):
 
         buttons_data = [
             {"text": "Add New Property", "icon": "add_property.png", "command": self._open_add_property_form,
-             "roles": ['admin', 'property_manager']},
+             "roles": ['admin', 'property_manager'],
+             "tooltip_text" : "Click to add property in terms of blocks and lots."},
             {"text": "Sell Property", "icon": "manage_sales.png", "command": self._open_sell_property_form,
-             "roles": ['admin', 'property_manager', 'sales_agent']},
+             "roles": ['admin', 'property_manager', 'sales_agent'],
+             "tooltip_text" : "Click to Sell property in terms of blocks and Lots."},
             {"text": "Track Payments", "icon": "track_payments.png", "command": self._open_track_payments_view,
-             "roles": ['admin', 'sales_agent', 'accountant']},
+             "roles": ['admin', 'sales_agent', 'accountant'],
+             "tooltip_text" : "Click to Track payment and Manage payment of property."},
             {"text": "Sold Properties", "icon": "sold_properties.png", "command": self._open_sold_properties_view,
-             "roles": ['admin', 'property_manager', 'sales_agent', 'accountant']},
+             "roles": ['admin', 'property_manager', 'sales_agent', 'accountant'],
+             "tooltip_text" : "Click to view Record listing of Sold Properties."},
             {"text": "View All Properties", "icon": "view_all_properties.png",
-             "command": self._open_view_all_properties, "roles": ['admin', 'property_manager', 'sales_agent']},
+             "command": self._open_view_all_properties, "roles": ['admin', 'property_manager', 'sales_agent'],
+             "tooltip_text" : "Click to view Record listing of All properties."},
             {"text": "Reports & Receipts", "icon": "reports_receipts.png",
              "command": self._open_sales_reports_receipts_view,
-             "roles": ['admin', 'property_manager', 'sales_agent', 'accountant']},
+             "roles": ['admin', 'property_manager', 'sales_agent', 'accountant'],
+             "tooltip_text":"Click to generate a PDF report of sales within the specified date range."},
             {"text": "Transfer Property", "icon": "transfer.png", "command": self._open_property_transfer_form,
-             "roles": ['admin', 'property_manager']},
+             "roles": ['admin', 'property_manager'],
+             "tooltip_text" : "Click to Transfer of Property from Original Owner to New Owner."},
             {"text": "Land Division & Records", "icon": "subdivide.png", "command": self._open_land_division_form,
-             "roles": ['admin', 'property_manager']},
+             "roles": ['admin', 'property_manager'],
+             "tooltip_text" : "Click to Records of Subdivided of Blocks and Lots."},
         ]
 
         row, col = 0, 0
@@ -191,7 +199,7 @@ class SalesSectionView(ttk.Frame):
             btn.pack(expand=True, fill="both", ipadx=20, ipady=20)
             btn.image = icon_img  # Store reference on the button itself
 
-            ToolTip(btn, data["text"]) #Icon hover effect
+            ToolTip(btn, data["tooltip_text"]) #Icon hover effect
 
             col += 1
             if col > 2:
@@ -341,13 +349,17 @@ class SurveySectionView(ttk.Frame):
 
         buttons_data = [
             {"text": "Track Jobs", "icon": "track_jobs.png", "command": self._open_track_jobs_view,
-             "roles": ['admin', 'field_worker']},
+             "roles": ['admin', 'field_worker'],
+             "tooltip_text" : "Click to Track all the Survey Jobs."},
             {"text": "Manage Payments", "icon": "manage_payments.png",
-             "command": self._open_manage_payments_view, "roles": ['admin', 'accountant']},
+             "command": self._open_manage_payments_view, "roles": ['admin', 'accountant'],
+             "tooltip_text" : "Click to Manage payment fo all Survey Jobs."},
             {"text": "Job Reports", "icon": "survey_reports.png", "command": self._open_job_reports_view,
-             "roles": ['admin', 'accountant']},
+             "roles": ['admin', 'accountant'],
+             "tooltip_text" : "Click to generate a PDF report of jobs based on the selected period."},
              {"text": "Dispatch Completed Jobs", "icon": "dispatch.png", "command": self._open_job_dispatch_view,
-             "roles": ['admin', 'accountant']}
+             "roles": ['admin', 'accountant'],
+             "tooltip_text" : "Click to show Survey jobs available for Dispatch and their records."}
         ]
 
         row, col = 0, 0
@@ -372,7 +384,7 @@ class SurveySectionView(ttk.Frame):
             btn.pack(expand=True, fill="both", ipadx=20, ipady=20)
             btn.image = icon_img
 
-            ToolTip(btn, data["text"]) # hover icon effect
+            ToolTip(btn, data["tooltip_text"]) # hover icon effect
 
             col += 1
             if col > 1:
@@ -1422,6 +1434,7 @@ class RealEstateApp(tk.Tk):
 
     def logout(self):
         """Logs out the current user and returns to the login page."""
+
         if messagebox.askyesno("Log Out", "Are you sure you want to log out?"):
             # Clear user session
             self.login_successful = False
@@ -1435,6 +1448,7 @@ class RealEstateApp(tk.Tk):
             if hasattr(self, "notebook"):
                 self.notebook.destroy()
             self.config(menu=None)
+            self.deiconify()
 
             # Show login window again
             self.show_login_page()
