@@ -428,6 +428,14 @@ class AddClientForm(BaseForm):
         if not name or not telephone or not email:
             messagebox.showerror("Input Error", "All fields are required.")
             return
+        
+        if not telephone.isdigit():
+                messagebox.showerror("Validation Error", "Telephone number must be numeric.")
+                return
+
+        if "@" not in email or "." not in email:
+                messagebox.showerror("Validation Error", "Please enter a valid email address.")
+                return
 
         try:
             client_id = self.db_manager.add_client(name, telephone, email, purpose, status, self.user_id)
@@ -507,7 +515,7 @@ class UpdateClientForm(BaseForm):
             current_client = self.db_manager.get_client(client_id)
             if current_client and (
                     current_client['telephone_number'] != new_tel or current_client['email'] != new_email):
-                existing_client_by_contact = self.db_manager.get_client_by_contact(new_tel, new_email)
+                existing_client_by_contact = self.db_manager.get_client_by_telephone_number(new_tel, new_email)
                 if existing_client_by_contact and existing_client_by_contact['client_id'] != client_id:
                     messagebox.showerror("Update Error", "Another client already uses this contact information.")
                     return

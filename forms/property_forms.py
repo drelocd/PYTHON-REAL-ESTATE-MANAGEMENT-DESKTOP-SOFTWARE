@@ -1863,7 +1863,7 @@ class CashPaymentWindow(tk.Toplevel):
             if client_data['name'] != buyer_name:
                 self.db_manager.update_client(client_id, name=buyer_name)
         else:
-            client_id = self.db_manager.add_client(buyer_name, buyer_contact,client_status, added_by_user_id)
+            client_id = self.db_manager.add_buyer(buyer_name, buyer_contact, added_by_user_id)
             if not client_id:
                 messagebox.showerror("Database Error", "Failed to add new client.")
                 return

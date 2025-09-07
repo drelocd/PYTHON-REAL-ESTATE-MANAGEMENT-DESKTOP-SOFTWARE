@@ -230,7 +230,7 @@ class AddNewTaskForm(FormBase):
     """
     def __init__(self, master, db_manager, client_data, user_id, refresh_callback, parent_icon_loader=None):
         # The icon_name 'add_task.png' is passed to the FormBase constructor
-        super().__init__(master, 450, 310, "Add New Task", "add_task.png", parent_icon_loader)
+        super().__init__(master, 450, 340, "Add New Task", "add_task.png", parent_icon_loader)
         self.db_manager = db_manager
         self.client_data = client_data
         self.user_id = user_id
@@ -278,7 +278,7 @@ class AddNewTaskForm(FormBase):
         # We need to make sure the reference is explicitly held
         self.button_icon_ref = self.button_icon
         
-        ttk.Button(main_frame, text="Submit Task", image=self.button_icon, compound=tk.LEFT, command=self._submit_task).grid(row=8, column=0, columnspan=2, pady=15)
+        ttk.Button(main_frame, text="Submit Task", image=self.button_icon, compound=tk.LEFT, command=self._submit_task).grid(row=9, column=0, columnspan=2, pady=15)
         
         main_frame.grid_columnconfigure(1, weight=1)
 
@@ -288,11 +288,21 @@ class AddNewTaskForm(FormBase):
         title_name = self.title_name_entry.get().strip()
         title_number = self.title_number_entry.get().strip()
         price_str = self.price_entry.get().strip()
+        amountpaid_str = '0.0'
 
-        if not all([job_description, title_name, title_number, price_str]):
+        if not all([job_description, title_name, title_number, price_str, amountpaid_str]):
             messagebox.showerror("Input Error", "All fields are required.")
             return
 
+        try:
+            amountpaid_val = float(amountpaid_str)
+            if amountpaid_val < 0:
+                messagebox.showerror("Input Error", "Price must be a positive number.") 
+                return
+        except ValueError:
+            messagebox.showerror("Input Error", "Price must be a valid number.")
+            return
+        
         try:
             price_val = float(price_str)
             if price_val < 0:
@@ -305,6 +315,8 @@ class AddNewTaskForm(FormBase):
         added_by = self.db_manager.get_username_by_id(self.user_id)
         if not added_by:
             added_by = "Unknown User"
+
+        balance_val = price_val - amountpaid_val
             
         success = self.db_manager.add_job(
             file_id=self.client_data['file_id'],
@@ -312,7 +324,6 @@ class AddNewTaskForm(FormBase):
             title_name=title_name,
             title_number=title_number,
             fee=price_val,
-            amount_paid=price_val,
             added_by=added_by,
             brought_by=self.client_data['brought_by']
         )
@@ -320,7 +331,9 @@ class AddNewTaskForm(FormBase):
         if success:
             payment_success = self.db_manager.add_payment(
                 job_id=success,
-                amount=price_val
+                amount=amountpaid_val,
+                fee=price_val,
+                balance=balance_val
             )
 
             if payment_success:
@@ -899,6 +912,7 @@ class UpdatePaymentForm(FormBase):
     """
     A form for updating a specific payment's details and status.
     """
+
     def __init__(self, master, db_manager, payment_data, populate_callback, parent_icon_loader=None):
         """
         Initializes the form with a specific payment's data.
@@ -911,56 +925,102 @@ class UpdatePaymentForm(FormBase):
             parent_icon_loader: A function to load icons.
         """
         # FormBase already handles transient and grab_set, so we remove them here.
-        super().__init__(master, 450, 300, "Update Payment", "update.png", parent_icon_loader)
+        super().__init__(master, 450, 370, "Update Payment", "update.png", parent_icon_loader)
         self.db_manager = db_manager
         self.payment_data = payment_data
         self.populate_callback = populate_callback
-        
         self._create_widgets()
 
     def _create_widgets(self):
         """
         Creates the UI widgets for the update form.
-        
-        This method is updated to use a grid layout for the client details
-        and to add icons to the buttons.
         """
         main_frame = ttk.Frame(self, padding="20")
         main_frame.pack(fill="both", expand=True)
 
         ttk.Label(main_frame, text="Update Payment", font=('Helvetica', 14, 'bold')).pack(pady=(0, 15))
 
-        # We now use a grid for the details to keep them aligned horizontally
+        # --- Client Details Section ---
         details_frame = ttk.Frame(main_frame)
         details_frame.pack(fill="x", pady=10)
 
-        # Configure columns to expand equally
         details_frame.columnconfigure(0, weight=1)
         details_frame.columnconfigure(1, weight=1)
         details_frame.columnconfigure(2, weight=1)
 
-        # Client Name (Left)
-        ttk.Label(details_frame, text="Client Name:", font=('Helvetica', 10, 'bold')).grid(row=0, column=0, sticky="w", padx=(0, 5))
-        ttk.Label(details_frame, text=self.payment_data[1].upper(),font=('Helvetica', 10, 'bold')).grid(row=1, column=0, sticky="w", pady=(0, 5))
+        ttk.Label(details_frame, text="Client Name:", font=('Helvetica', 10, 'bold')).grid(row=0, column=0, sticky="w",
+                                                                                            padx=(0, 5))
+        ttk.Label(details_frame, text=self.payment_data[1].upper(), font=('Helvetica', 12, 'bold')).grid(row=1,
+                                                                                                        column=0,
+                                                                                                        sticky="w",
+                                                                                                        pady=(0, 5))
 
-        # Description (Center)
-        ttk.Label(details_frame, text="Description:", font=('Helvetica', 10, 'bold')).grid(row=0, column=1, sticky="w", padx=(15, 5))
-        ttk.Label(details_frame, text=self.payment_data[3].upper(),font=('Helvetica', 10, 'bold')).grid(row=1, column=1, sticky="w", pady=(0, 5))
+        ttk.Label(details_frame, text="Description:", font=('Helvetica', 10, 'bold')).grid(row=0, column=1, sticky="w",
+                                                                                            padx=(15, 5))
+        ttk.Label(details_frame, text=self.payment_data[3].upper(), font=('Helvetica', 12, 'bold')).grid(row=1,
+                                                                                                        column=1,
+                                                                                                        sticky="w",
+                                                                                                        pady=(0, 5))
 
-        # Title Number (Right)
-        ttk.Label(details_frame, text="Title Number:", font=('Helvetica', 10, 'bold')).grid(row=0, column=2, sticky="w", padx=(15, 5))
-        ttk.Label(details_frame, text=self.payment_data[4],font=('Helvetica', 10, 'bold')).grid(row=1, column=2, sticky="w", pady=(0, 5))
+        ttk.Label(details_frame, text="Title Number:", font=('Helvetica', 10, 'bold')).grid(row=0, column=2, sticky="w",
+                                                                                             padx=(15, 5))
+        ttk.Label(details_frame, text=self.payment_data[4], font=('Helvetica', 12, 'bold')).grid(row=1, column=2,
+                                                                                                sticky="w",
+                                                                                                pady=(0, 5))
+        # --- End Client Details Section ---
 
-        # Payment Type Dropdown
-        ttk.Label(main_frame, text="Payment Type:", font=('Helvetica', 10, 'bold')).pack(pady=(10, 5))
-        self.payment_type_combobox = ttk.Combobox(main_frame, values=["cash", "mpesa", "bank"], state="readonly")
+        # --- Balance & Fee Section ---
+        financial_frame = ttk.Frame(main_frame)
+        financial_frame.pack(fill="x", pady=10)
+        financial_frame.columnconfigure(0, weight=1)
+        financial_frame.columnconfigure(1, weight=1)
+
+        # Balance (Left Side)
+        ttk.Label(financial_frame, text="Balance:", font=('Helvetica', 10, 'bold')).grid(row=0, column=0, sticky="w")
+        balance_value = self.payment_data[7]
+        self.balance_label = ttk.Label(financial_frame,
+                                       text=f"KES {balance_value:,.2f}" if isinstance(balance_value, (int, float)) else balance_value,
+                                       font=('Helvetica', 16, 'bold'))
+        self.balance_label.grid(row=1, column=0, sticky="w", pady=(0, 5))
+
+        # Fee (Right Side)
+        ttk.Label(financial_frame, text="Fee:", font=('Helvetica', 10, 'bold')).grid(row=0, column=1, sticky="e")
+        fee_value = self.payment_data[5]
+        self.fee_label = ttk.Label(financial_frame,
+                                   text=f"KES {fee_value:,.2f}" if isinstance(fee_value, (int, float)) else fee_value,
+                                   font=('Helvetica', 16, 'bold'))
+        self.fee_label.grid(row=1, column=1, sticky="e", pady=(0, 5))
+        
+        # --- End Balance & Fee Section ---
+
+        # --- Payment Input Section ---
+        payment_input_frame = ttk.Frame(main_frame)
+        payment_input_frame.pack(fill="x", pady=10)
+        payment_input_frame.columnconfigure(0, weight=1)
+        payment_input_frame.columnconfigure(1, weight=1)
+
+        # Payment Amount (Left)
+        ttk.Label(payment_input_frame, text="Payment Amount (KES):", font=('Helvetica', 10, 'bold')).grid(row=0,
+                                                                                                         column=0,
+                                                                                                         sticky="w",
+                                                                                                         padx=(0, 5))
+        self.entry_payment_amount = ttk.Entry(payment_input_frame)
+        self.entry_payment_amount.grid(row=1, column=0, sticky="ew", padx=(0, 5))
+
+        # Payment Type (Right)
+        ttk.Label(payment_input_frame, text="Payment Type:", font=('Helvetica', 10, 'bold')).grid(row=0, column=1,
+                                                                                                  sticky="w",
+                                                                                                  padx=(15, 5))
+        self.payment_type_combobox = ttk.Combobox(payment_input_frame, values=["cash", "mpesa", "bank"], state="readonly")
         self.payment_type_combobox.set("cash")  # Set a default value
-        self.payment_type_combobox.pack(pady=(0, 20))
+        self.payment_type_combobox.grid(row=1, column=1, sticky="ew", padx=(15, 0))
+
+        # --- End Payment Input Section ---
 
         # Action Buttons
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(pady=10)
-        
+
         # Load and store button icons to prevent garbage collection
         if self.parent_icon_loader:
             self._submit_icon = self.parent_icon_loader("confirm.png", size=(16, 16))
@@ -969,36 +1029,115 @@ class UpdatePaymentForm(FormBase):
             self._submit_icon = None
             self._cancel_icon = None
 
-        submit_btn = ttk.Button(button_frame, text="Submit", image=self._submit_icon, compound=tk.LEFT, command=self._submit_update_action)
+        submit_btn = ttk.Button(button_frame, text="Submit", image=self._submit_icon, compound=tk.LEFT,
+                                command=self._submit_update_action)
         submit_btn.pack(side="left", padx=5)
 
-        cancel_btn = ttk.Button(button_frame, text="Cancel", image=self._cancel_icon, compound=tk.LEFT, command=self.destroy)
+        cancel_btn = ttk.Button(button_frame, text="Cancel", image=self._cancel_icon, compound=tk.LEFT,
+                                command=self.destroy)
         cancel_btn.pack(side="left", padx=5)
 
     def _submit_update_action(self):
         """
-        Handles the submission of the payment update.
+        Handles the submission of the payment update, checking for full or partial payment.
         """
         selected_type = self.payment_type_combobox.get()
+        payment_amount_str = self.entry_payment_amount.get()
+
         if not selected_type:
             messagebox.showwarning("Invalid Selection", "Please select a payment type.")
             return
 
+        try:
+            payment_amount = float(payment_amount_str)
+            if payment_amount <= 0:
+                messagebox.showwarning("Invalid Amount", "Please enter a valid positive payment amount.")
+                return
+        except ValueError:
+            messagebox.showwarning("Invalid Amount", "Please enter a valid positive payment amount.")
+            return
+        
+        try:
+            current_balance = float(self.payment_data[7]) # Corrected index
+            total_fee = float(self.payment_data[5])
+            job_description = self.payment_data[3]
+            job_title = self.payment_data[4] # Get the job description
+        except (ValueError, IndexError) as e:
+            messagebox.showerror("Data Error", f"Could not retrieve valid fee or balance amount: {e}")
+            return
+        
+        # Correct calculation: total_amount_paid + current_payment
+        total_paid_after_update = (total_fee - current_balance) + payment_amount
+
+        if total_paid_after_update > total_fee:
+            remaining_due = total_fee - (total_fee - current_balance)
+            messagebox.showwarning(
+                "Invalid Amount",
+                f"Payment of KES {payment_amount:,.2f} exceeds the remaining balance of KES {remaining_due:,.2f}."
+            )
+            return
+        new_balance = total_fee - total_paid_after_update
+        
+        # Determine the new status
+        if abs(total_paid_after_update - total_fee) < 0.01:
+            new_status = 'paid'
+            final_balance = 0.0
+        else:
+            new_status = 'partially Paid'
+            final_balance = new_balance
+            
+        final_payment_amount = payment_amount
+
         confirmation = messagebox.askyesno(
             "Confirm Action",
-            f"Are you sure you want to update this payment to 'paid' with payment type '{selected_type}'? This action is irreversible."
+            f"Are you sure you want to update this payment with amount KES {final_payment_amount:,.2f} and type '{selected_type}'? This will set the status to '{new_status}'."
         )
 
         if confirmation:
             payment_id = self.payment_data[0]
-            new_status = 'paid'
             
-            if self.db_manager.update_payment_record(payment_id, new_status, selected_type):
+            # The update_payment_record function should handle adding to the total amount paid
+            if self.db_manager.update_payment_record(payment_id, new_status, final_payment_amount, selected_type):
                 messagebox.showinfo("Success", "Payment updated successfully.")
+                self.generate_and_save_receipt(job_description, job_title, total_fee, payment_amount, final_balance)
                 self.populate_callback()
                 self.destroy()
             else:
                 messagebox.showerror("Error", "Failed to update payment.")
+
+    def generate_and_save_receipt(self, service_description, service_title, fee, amount_paid, balance):
+        receipt_content = f"""
+    Ndiritu Mathenge Associates
+    Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+    --------------------------------------
+    SERVICE:
+    {service_description} for {service_title}
+
+    FEE:
+    KES {fee:,.2f}
+
+    AMOUNT PAID:
+    KES {amount_paid:,.2f}
+
+    BALANCE:
+    KES {balance:,.2f}
+    --------------------------------------
+    """
+        
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            filetypes=[("Text files", "*.txt")],
+            title="Save Receipt As"
+        )
+
+        if file_path:
+            try:
+                with open(file_path, "w") as file:
+                    file.write(receipt_content)
+                    messagebox.showinfo("Receipt Saved", f"Receipt successfully saved to:\n{file_path}")
+            except Exception as e:
+                messagebox.showerror("Save Error", f"Failed to save receipt: {e}")
 
 
 # --- Original ManagePaymentsView with modifications ---
@@ -1049,7 +1188,7 @@ class ManagePaymentsView(FormBase):
 
         # Row 0
         ttk.Label(filter_frame, text="Status:").grid(row=0, column=0, padx=5, pady=2, sticky="w")
-        self.status_filter_combobox = ttk.Combobox(filter_frame, values=["All", "paid", "unpaid"], state="readonly", width=10)
+        self.status_filter_combobox = ttk.Combobox(filter_frame, values=["All", "paid", "unpaid", "partially paid"], state="readonly", width=10)
         self.status_filter_combobox.set("All")
         self.status_filter_combobox.grid(row=0, column=1, padx=5, pady=2, sticky="ew")
 
@@ -1096,7 +1235,7 @@ class ManagePaymentsView(FormBase):
         clear_button.grid(row=3, column=3, columnspan=3, pady=10)
 
         # Treeview to display payments
-        columns = ("payment_id", "client_name", "file_name", "description", "title_number", "amount", "status", "payment_type", "payment_date")
+        columns = ("payment_id", "client_name", "file_name", "description", "title_number", "fee", "Total Amount Paid", "balance", "payment_date")
         self.payments_tree = ttk.Treeview(main_frame, columns=columns, show="headings")
 
         # Define headings and columns
@@ -1109,9 +1248,9 @@ class ManagePaymentsView(FormBase):
         self.payments_tree.column("file_name", width=120, anchor=tk.W)
         self.payments_tree.column("description", width=250, anchor=tk.W)
         self.payments_tree.column("title_number", width=120, anchor=tk.CENTER)
-        self.payments_tree.column("amount", width=80, anchor=tk.CENTER)
-        self.payments_tree.column("status", width=100, anchor=tk.CENTER)
-        self.payments_tree.column("payment_type", width=100, anchor=tk.CENTER)
+        self.payments_tree.column("fee", width=80, anchor=tk.CENTER)
+        self.payments_tree.column("Total Amount Paid", width=100, anchor=tk.CENTER)
+        self.payments_tree.column("balance", width=100, anchor=tk.CENTER)
         self.payments_tree.column("payment_date", width=120, anchor=tk.CENTER)
         
         # Bind the selection event
@@ -1149,6 +1288,8 @@ class ManagePaymentsView(FormBase):
         if self.parent_icon_loader:
             self._prev_icon = self.parent_icon_loader("arrow_left.png", size=(20, 20))
             self._next_icon = self.parent_icon_loader("arrow_right.png", size=(20, 20))
+
+        self.payments_tree.bind('<Double-1>', self._on_double_click_payment)
         
         self.prev_button = ttk.Button(pagination_controls_frame, text="Previous", command=self._go_previous_page,
                                       image=self._prev_icon, compound=tk.LEFT, state=tk.DISABLED)
@@ -1166,6 +1307,20 @@ class ManagePaymentsView(FormBase):
         close_btn = ttk.Button(pagination_frame, text="Close", command=self.destroy,
                                image=self._close_icon, compound=tk.LEFT)
         close_btn.pack(side="right", padx=5)
+    
+    def _on_double_click_payment(self, event):
+        selected_items = self.payments_tree.selection()
+        if selected_items:
+            item = selected_items[0]
+            payment_data = self.payments_tree.item(item)['values']
+            payment_id = payment_data[0]
+
+            PaymentHistoryView(
+                master=self,
+                db_manager=self.db_manager,
+                payment_id=payment_id,
+                parent_icon_loader=self.parent_icon_loader
+            )
 
     def _deselect_all(self, event=None):
         """Deselects all items in the client Treeview when the Escape key is pressed."""
@@ -1200,7 +1355,8 @@ class ManagePaymentsView(FormBase):
 
             for payment in payments:
                 # Get individual values
-                payment_id, client_name, file_name, description, title_number, amount, status, payment_type, payment_date = payment
+                payment_id, client_name, file_name, description, title_number, fee, amount, balance, payment_date = payment
+                
                 
                 # Create the display tuple
                 display_values = (
@@ -1209,9 +1365,9 @@ class ManagePaymentsView(FormBase):
                     file_name.upper() if isinstance(file_name, str) else file_name,
                     description.upper() if isinstance(description, str) else description,
                     title_number.upper() if isinstance(title_number, str) else title_number,
+                    fee,
                     amount,
-                    status.upper() if isinstance(status, str) else status,
-                    payment_type.upper() if isinstance(payment_type, str) else payment_type,
+                    balance,
                     payment_date.upper() if isinstance(payment_date, str) else payment_date
                 )
                 
@@ -1275,20 +1431,21 @@ class ManagePaymentsView(FormBase):
             # Get the dictionary of values for the selected item
             item_data = self.payments_tree.item(selected_items[0])
             self.selected_item = item_data['values']
-            
-            # Check the status of the selected item
-            current_status = self.selected_item[6].lower()
-            
-            # Disable the button if the status is 'paid'
-            if current_status == 'paid':
-                self.update_button.config(state=tk.DISABLED)
-                print(f"Payment with ID {self.selected_item[0]} is already paid. Update button disabled.")
-            else:
+
+            try:
+                current_balance = float(self.selected_item[7])
+            except (ValueError, IndexError):
+                current_balance = 0.0
+            if current_balance > 0:
                 self.update_button.config(state=tk.NORMAL)
-                print(f"Selected payment with Title Number: {self.selected_item[4]}")
+                print(f"Selected payment with Title Number: {self.selected_item[4]} has a balance of KES {current_balance:,.2f}. Update button enabled.")
+            else:
+                self.update_button.config(state=tk.DISABLED)
+                print(f"Payment with ID {self.selected_item[0]} has a zero balance. Update button disabled.")
         else:
             self.selected_item = None
             self.update_button.config(state=tk.DISABLED)
+    
 
     def _update_payment(self):
         """Opens a new window to handle the payment update."""
@@ -1305,6 +1462,80 @@ class ManagePaymentsView(FormBase):
             parent_icon_loader=self.parent_icon_loader
         )
 
+class PaymentHistoryView(FormBase):
+    """
+    A form to display the history of micro-payments for a specific service job.
+    """
+    def __init__(self, master, db_manager, payment_id, parent_icon_loader=None):
+        super().__init__(master, 600, 400, "Payment History", "history.png", parent_icon_loader)
+        self.db_manager = db_manager
+        self.payment_id = payment_id
+        self.parent_icon_loader = parent_icon_loader
+        self._create_widgets()
+        self._fetch_and_display_history()
+
+    def _create_widgets(self):
+        main_frame = ttk.Frame(self, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(main_frame, text="PAYMENT HISTORY", font=('Helvetica', 14, 'bold')).pack(pady=10)
+
+        # Treeview to display history
+        columns = ("history_id", "Payment Amount", "Payment Type", "Payment Date")
+        self.history_tree = ttk.Treeview(main_frame, columns=columns, show="headings")
+        
+        for col in columns:
+            self.history_tree.heading(col, text=col.replace('_', ' ').title())
+
+        # Hide the history_id column
+        self.history_tree.column("history_id", width=0, stretch=tk.NO)
+        self.history_tree.column("Payment Amount", width=150, anchor=tk.CENTER)
+        self.history_tree.column("Payment Type", width=100, anchor=tk.CENTER)
+        self.history_tree.column("Payment Date", width=180, anchor=tk.CENTER)
+        
+        self.history_tree.pack(fill=tk.BOTH, expand=True, pady=10)
+
+        # Scrollbar
+        tree_scrollbar = ttk.Scrollbar(main_frame, orient=tk.VERTICAL, command=self.history_tree.yview)
+        self.history_tree.configure(yscrollcommand=tree_scrollbar.set)
+        tree_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Close Button
+        if self.parent_icon_loader:
+            self._close_icon = self.parent_icon_loader("cancel.png", size=(20, 20))
+        close_btn = ttk.Button(self, text="Close", command=self.destroy,
+                               image=self._close_icon, compound=tk.LEFT)
+        close_btn.pack(pady=5)
+
+    def _fetch_and_display_history(self):
+        """Fetches and displays payment history from the database."""
+        try:
+            # Clear existing items
+            for item in self.history_tree.get_children():
+                self.history_tree.delete(item)
+
+            history_records = self.db_manager.get_payment_history(self.payment_id)
+
+            for record in history_records:
+                processed_values = []
+                for i, value in enumerate(record):
+                    if i == 0:  # history_id - usually an int, keep as is (or str)
+                        processed_values.append(str(value))
+                    elif i == 1: # payment_amount - usually a float, keep as is (or str)
+                        processed_values.append(str(f"{value:,.2f}")) # Format as currency
+                    elif isinstance(value, str): # Payment Type, other text fields
+                        processed_values.append(value.upper())
+                    elif value is not None: # For dates and other non-string, non-None values
+                        # Convert to string first, then uppercase if it makes sense (like month names)
+                        # For dates, it's often better to control formatting than just .upper()
+                        processed_values.append(str(value).upper())
+                    else: # Handle None values
+                        processed_values.append("") # Or 'N/A'.upper()
+
+                self.history_tree.insert("", tk.END, values=processed_values)
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load payment history: {e}")
 
 
 
