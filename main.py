@@ -305,7 +305,7 @@ class SurveySectionView(ttk.Frame):
         # This button will now open the unified form
         style = ttk.Style()
         # Configure a new style named "Red.TButton"
-        style.configure("Red.TButton", background="green", foreground="black")
+        style.configure("Red.TButton", background="white", foreground="black")
         ttk.Button(client_frame, text="Add Client/File", command=self._open_add_client_and_file_form, style="Red.TButton").pack(side="left", padx=(10, 0))
 
         # Client Table

@@ -89,6 +89,15 @@ class DatabaseManager:
                         FOREIGN KEY (added_by_user_id) REFERENCES users(user_id)
                     )
                 ''')
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS buyers (
+                        buyer_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL,
+                        contact TEXT NOT NULL,
+                        added_by_user_id INTEGER, -- New column
+                        FOREIGN KEY (added_by_user_id) REFERENCES users(user_id)
+                    )
+                ''')
 
                 # 4. Transactions Table - ADDED 'added_by_user_id'
                 cursor.execute('''
@@ -212,7 +221,6 @@ class DatabaseManager:
                                      title_name TEXT NOT NULL,
                                      title_number TEXT NOT NULL,
                                      fee REAL NOT NULL,
-                                     amount_paid REAL DEFAULT 0.0,
                                      status TEXT NOT NULL DEFAULT 'Ongoing' CHECK(status IN ('Ongoing', 'Completed', 'Dispatched')),
                                      added_by TEXT NOT NULL,
                                      brought_by TEXT NOT NULL,
@@ -226,15 +234,29 @@ class DatabaseManager:
                -- linked to a specific file.
                               CREATE TABLE IF NOT EXISTS service_payments (
                                      payment_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                                     job_id INTEGER NOT NULL,
+                                     job_id INTEGER NOT NULL UNIQUE,
+                                     fee REAL NOT NULL,
                                      amount REAL NOT NULL,
+                                     balance REAL NOT NULL,
                                      payment_date TEXT NOT NULL,
-                                     payment_type TEXT CHECK (payment_type IN ('cash','bank','mpesa')),
-                                     status TEXT DEFAULT 'unpaid' CHECK (status IN ('paid', 'unpaid')),
+                                     status TEXT DEFAULT 'unpaid' CHECK (status IN ('paid', 'unpaid','partially Paid')),
                                      FOREIGN KEY (job_id) REFERENCES service_jobs(job_id)
                )
             ''')
-                #14. Service Dispatch
+                # 14 Service Payments History
+                cursor.execute('''
+               -- The payments table correctly links to the job_id, which is now
+               -- linked to a specific file.
+                              CREATE TABLE IF NOT EXISTS service_payments_history (
+                                     history_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                     payment_id INTEGER NOT NULL,
+                                     payment_amount REAL NOT NULL,
+                                     payment_type TEXT CHECK (payment_type IN ('cash', 'bank', 'mpesa')),
+                                     payment_date TEXT NOT NULL,
+                                     FOREIGN KEY (payment_id) REFERENCES service_payments(payment_id)
+               )
+            ''')
+                #15. Service Dispatch
                 cursor.execute('''
                              CREATE TABLE IF NOT EXISTS service_dispatch (
                                      dispatch_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -514,6 +536,7 @@ class DatabaseManager:
         """
         existing_properties = self.get_propertiesfortransfer_by_title_deed(title_deed_number)
         client_status = 'active'
+        purpose = 'Land Sales'
 
         for prop in existing_properties:
                 print(f"Property with title deed '{title_deed_number}' already exists and is 'Available'. Cannot add duplicate.")
@@ -527,7 +550,7 @@ class DatabaseManager:
         # Step 2: If the client doesn't exist, insert them.
         if not client_exists:
             # You must have an 'add_client' method in your class to do this.
-            self.add_client(name=owner, contact_info=telephone_number, status=client_status, added_by_user_id=added_by_user_id)
+            self.add_client(name=owner, telephone_number=telephone_number,email=email, purpose=purpose,  status=client_status, added_by_user_id=added_by_user_id)
 
         # Step 3: Insert the property.
         # This part remains the same after the client is handled.
@@ -688,6 +711,10 @@ class DatabaseManager:
         results_rows = self._execute_query(query, tuple(params), fetch_all=True)
         return [dict(row) for row in results_rows] if results_rows else [] # Explicitly convert
     
+    def add_buyer(self,name,contact,added_by_user_id=None):
+        query = "INSERT INTO buyers (name,contact,added_by_user_id) VALUES (?,?,?)"
+        return self._execute_query(query,(name,contact,added_by_user_id))
+    
 
 
 
@@ -725,16 +752,26 @@ class DatabaseManager:
         query = "SELECT * FROM clients WHERE client_id = ?"
         client_data_row = self._execute_query(query, (client_id,), fetch_one=True)
         return dict(client_data_row) if client_data_row else None # Explicitly convert
-
-    def get_client_by_telephone_number(self, telephone_number):
+    
+    def get_client_by_contact_info(self, contact_info):
         """
         Retrieves a client by their contact information.
         Returns: The client details as a dict, or None if not found.
         """
         query = "SELECT * FROM clients WHERE telephone_number = ?"
-        client_data_row = self._execute_query(query, (telephone_number,), fetch_one=True)
+        client_data_row = self._execute_query(query, (contact_info,), fetch_one=True)
         return dict(client_data_row) if client_data_row else None # Explicitly convert
 
+    def get_client_by_telephone_number(self, telephone_number,email):
+        """
+        Retrieves a client by their contact information.
+        Returns: The client details as a dict, or None if not found.
+        """
+        query = "SELECT * FROM clients WHERE telephone_number = ? AND email = ?"
+        client_data_row = self._execute_query(query, (telephone_number,email), fetch_one=True)
+        return dict(client_data_row) if client_data_row else None # Explicitly convert
+    
+    
     def get_all_clients(self):
         """
         Retrieves all clients from the database, including the username of the user who added them.
@@ -938,7 +975,7 @@ class DatabaseManager:
             t.balance,
             t.receipt_path,
             c.name AS client_name,
-            c.contact_info AS client_contact_info,
+            c.telephone_number AS client_contact_info,
             p.property_id,
             p.title_deed_number,
             p.location,
@@ -1030,7 +1067,7 @@ class DatabaseManager:
             t.discount,
             t.balance,
             c.name AS name,
-            c.contact_info AS client_contact_info
+            c.telephone_number AS client_contact_info
         FROM
             properties p
         JOIN
@@ -1228,7 +1265,7 @@ class DatabaseManager:
 
     # --- CRUD for Service Jobs ---
 
-    def add_job(self, file_id, job_description, title_name, title_number, fee, amount_paid, added_by,brought_by):
+    def add_job(self, file_id, job_description, title_name, title_number, fee, added_by,brought_by):
         """
         Adds a new job for a specific file. This method now takes 'file_id'
         instead of 'client_id'.
@@ -1238,9 +1275,9 @@ class DatabaseManager:
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         try:
             cursor.execute('''
-                INSERT INTO service_jobs (file_id, job_description, title_name, title_number,fee, amount_paid, added_by, brought_by, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (file_id, job_description, title_name, title_number, fee, amount_paid , added_by, brought_by, timestamp))
+                INSERT INTO service_jobs (file_id, job_description, title_name, title_number,fee,  added_by, brought_by, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (file_id, job_description, title_name, title_number, fee, added_by, brought_by, timestamp))
             conn.commit()
             return cursor.lastrowid
         finally:
@@ -1469,16 +1506,16 @@ class DatabaseManager:
 
     # --- CRUD for Service Payments ---
 
-    def add_payment(self, job_id, amount):
+    def add_payment(self, job_id, amount,fee,balance):
         """Records a new payment for a job and updates the job's balance."""
         conn = self._get_connection()
         cursor = conn.cursor()
         payment_date = datetime.now().strftime('%Y-%m-%d')
         try:
             cursor.execute('''
-                INSERT INTO service_payments (job_id, amount, payment_date)
-                VALUES (?, ?, ?)
-            ''', (job_id, amount, payment_date))
+                INSERT INTO service_payments (job_id, amount, fee,balance,payment_date)
+                VALUES (?, ?, ?,?,?)
+            ''', (job_id, amount,fee,balance, payment_date))
             conn.commit()
             return cursor.lastrowid
         except sqlite3.Error as e:
@@ -1601,9 +1638,9 @@ class DatabaseManager:
                     cf.file_name,
                     sj.job_description,
                     sj.title_number,
+                    sp.fee,
                     sp.amount,
-                    sp.status,
-                    sp.payment_type,
+                    sp.balance,
                     sp.payment_date
                 {base_query}{where_clause}
                 ORDER BY sp.payment_date DESC
@@ -1622,13 +1659,14 @@ class DatabaseManager:
         finally:
             conn.close()
 
-    def update_payment_record(self, payment_id, new_status, payment_type):
+    def update_payment_record(self, payment_id, new_status, final_payment_amount, payment_type):
         """
         Updates the status and payment type of a specific payment.
 
         Args:
             payment_id (int): The ID of the payment to update.
             new_status (str): The new status ('paid' or 'unpaid').
+            final_payment_amount (float): The amount of this specific payment.
             payment_type (str): The method of payment ('cash', 'mpesa', 'bank').
         
         Returns:
@@ -1640,17 +1678,79 @@ class DatabaseManager:
 
         try:
             cursor = conn.cursor()
+            conn.isolation_level = 'DEFERRED'  # Start a transaction
+
+
+            cursor.execute("SELECT amount, balance FROM service_payments WHERE payment_id = ?", (payment_id,))
+            result = cursor.fetchone()
+            if result is None:
+                print(f"Error: Payment record with ID {payment_id} not found.")
+                conn.rollback()
+                return False
+
+            current_amount, current_balance = result
+            current_amount = float(current_amount)
+            current_balance = float(current_balance)
+
+            # Step 2: Calculate new amounts and update the service_payments table
+            new_amount = current_amount + final_payment_amount
+            new_balance = current_balance - final_payment_amount
+
             cursor.execute(
-                "UPDATE service_payments SET status = ?, payment_type = ? WHERE payment_id = ?",
-                (new_status, payment_type, payment_id)
+                "UPDATE service_payments SET status = ?, amount = ?, balance = ? WHERE payment_id = ?",
+                (new_status, new_amount, new_balance, payment_id)
             )
+
+            # Step 3: Insert a new record into the service_payments_history table
+            payment_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            cursor.execute(
+                "INSERT INTO service_payments_history (payment_id, payment_amount, payment_type, payment_date) VALUES (?, ?, ?, ?)",
+                (payment_id, final_payment_amount, payment_type, payment_date)
+            )
+
             conn.commit()
-            return cursor.rowcount > 0
+            return True
+            
+
         except sqlite3.Error as e:
-            print(f"Error updating payment record: {e}")
+            print(f"Error during payment update transaction: {e}")
+            if conn:
+                conn.rollback() # Rollback the transaction on error
             return False
         finally:
+            if conn:
+                conn.close()
+
+
+    def get_payment_history(self, payment_id):
+        """
+        Fetches all payment history records for a given payment ID.
+
+        Args:
+            payment_id (int): The ID of the parent payment record.
+
+        Returns:
+            list: A list of tuples, where each tuple is a payment history record.
+        """
+        conn = self._get_connection()
+        if not conn:
+            return []
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT history_id, payment_amount, payment_type, payment_date "
+                "FROM service_payments_history WHERE payment_id = ? ORDER BY payment_date DESC",
+                (payment_id,)
+            )
+            history_records = cursor.fetchall()
+            return history_records
+        except sqlite3.Error as e:
+            print(f"Error fetching payment history: {e}")
+            return []
+        finally:
             conn.close()
+            
 
 
 
