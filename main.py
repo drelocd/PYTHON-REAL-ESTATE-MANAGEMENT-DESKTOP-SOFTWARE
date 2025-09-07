@@ -640,6 +640,17 @@ class ReceptionSectionView(ttk.Frame):
                 self.tree.insert("", "end", values=(client['client_id'], client['name'], client['telephone_number'],
                                                     client['email'], client['purpose'], client['added_by_username']))
 
+    def populate_client_table(self):
+        # Clear existing table data
+        for item in self.client_tree.get_children():
+            self.client_tree.delete(item)
+
+        # Fetch and insert all clients (both land sales and service clients)
+        all_clients = self.db_manager.get_all_clients()  # Assuming a new method in DatabaseManager
+        for client in all_clients:
+            self.client_tree.insert("", tk.END, values=(client['name'], client['telephone_number'], client['purpose']))
+
+
     def _filter_clients(self, event):
         """Filters the client list in real-time based on search input."""
         search_term = self.search_var.get().lower()
@@ -1434,15 +1445,18 @@ class RealEstateApp(tk.Tk):
 
     def logout(self):
         """Logs out the current user and returns to the login page."""
-
+        self.deiconify()
         if messagebox.askyesno("Log Out", "Are you sure you want to log out?"):
             # Clear user session
             self.login_successful = False
             self.user_type = None
             self.user_id = None
 
-            # Hide the main window
-            self.withdraw()
+
+            #Closes open child windows
+            for window in self.winfo_children():
+                if isinstance(window, tk.Toplevel):
+                    window.destroy()
 
             # Destroy existing notebook and menu (to reset state)
             if hasattr(self, "notebook"):
