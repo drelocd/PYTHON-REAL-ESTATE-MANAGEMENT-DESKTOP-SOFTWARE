@@ -2,7 +2,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import os
 import datetime
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import menubar
 from PIL import Image, ImageTk
 import matplotlib.pyplot as plt
@@ -13,6 +13,7 @@ import threading  # Used to run update checks and downloads in the background
 import webbrowser  # Used for opening download links (as a fallback)
 import sys  # Used to get the executable path
 import logging  # For structured logging
+import os, shutil, zipfile, subprocess
 # from packaging.version import parse as parse_version # REMOVED: Causing import issues
 
 from utils.tooltips import ToolTip
@@ -923,11 +924,51 @@ class RealEstateApp(tk.Tk):
         # Removed the initial update check here. It will now run after login.
         # self.after(5000, self.check_for_updates)
 
+    def backup_app_data(self):
+        """
+        Creates a timestamped backup of the database and data folder.
+        Returns the path to the backup directory.
+        """
+        now = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_dir = os.path.join(BASE_DIR, "backups", f"backup_{now}")
+        os.makedirs(backup_dir, exist_ok=True)
+
+        # --- Backup database ---
+        db_file = os.path.join(DATA_DIR, "rems_database.db")  # adjust if your DB filename differs
+        if os.path.exists(db_file):
+            shutil.copy(db_file, os.path.join(backup_dir, "rems_database.db"))
+
+        # --- Backup the entire data folder into a ZIP ---
+        zip_path = os.path.join(backup_dir, f"data_backup_{now}.zip")
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+            for root, _, files in os.walk(DATA_DIR):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    arcname = os.path.relpath(file_path, DATA_DIR)
+                    zipf.write(file_path, arcname)
+
+        logging.info(f"Backup created at {backup_dir}")
+        return backup_dir
+
+    def _manual_backup(self):
+        try:
+            backup_path = self.backup_app_data()
+            messagebox.showinfo("Backup Complete", f"Backup created at:\n{backup_path}")
+        except Exception as e:
+            self.logger.error(f"Manual backup failed: {e}")
+            messagebox.showerror("Backup Failed", f"An error occurred while creating the backup:\n{e}")
+
     def check_for_updates(self):
         """
         Initiates a version update check in a separate thread to avoid freezing the UI.
         Implements rate limiting to avoid excessive API calls.
         """
+        try:
+            backup_path = self.backup_app_data()
+            self.logger.info(f"Automatic backup completed at {backup_path}")
+        except Exception as e:
+            self.logger.error(f"Backup failed before update check: {e}")
+
         now = datetime.now()
         if self.last_update_check_time and (now - self.last_update_check_time) < self.update_check_interval:
             self.logger.info("Skipping update check: last check was too recent.")
@@ -958,7 +999,7 @@ class RealEstateApp(tk.Tk):
 
             assets = release_info.get("assets", [])
             for asset in assets:
-                if  asset["name"].lower().endswith(".exe"):
+                if asset["name"].lower().endswith(".exe"):
                     download_url = asset["browser_download_url"]
                     asset_filename = asset["name"]
                     break
@@ -1360,6 +1401,7 @@ class RealEstateApp(tk.Tk):
         menubar.add_cascade(label="Help", menu=help_menu)
         # Add the 'Check for Updates' option
         help_menu.add_command(label="Check for Updates...", command=self.check_for_updates)
+        help_menu.add_command(label="Back Up Now", command=self._manual_backup)
         help_menu.add_command(label="About", command=self.show_about_dialog)
 
     def _open_admin_Users_panel(self):
