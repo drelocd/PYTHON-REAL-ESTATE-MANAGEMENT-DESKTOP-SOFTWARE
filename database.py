@@ -1161,6 +1161,135 @@ class DatabaseManager:
 
         results_rows = self._execute_query(full_query, tuple(params), fetch_all=True)
         return results_rows if results_rows else []
+    
+    def get_property_by_source(self, property_id, source_table):
+        if source_table == 'Main':
+            query = """
+            SELECT
+                p.property_id, p.title_deed_number, p.location, p.size, p.description,
+                p.price, p.telephone_number, p.image_paths, p.title_image_paths, p.status,
+                p.added_by_user_id, p.owner, u.username AS added_by_username
+            FROM properties p
+            LEFT JOIN users u ON p.added_by_user_id = u.user_id
+            WHERE p.property_id = %s
+            """
+            results_row = self._execute_query(query, (property_id,), fetch_one=True)
+        elif source_table == 'Transfer':
+            query = """
+            SELECT
+                pt.property_id, pt.title_deed_number, pt.location, pt.size, pt.description,
+                NULL AS price, pt.telephone_number, pt.image_paths, pt.title_image_paths, NULL AS status,
+                pt.added_by_user_id, pt.owner, u.username AS added_by_username
+            FROM propertiesForTransfer pt
+            LEFT JOIN users u ON pt.added_by_user_id = u.user_id
+            WHERE pt.property_id = %s
+            """
+            results_row = self._execute_query(query, (property_id,), fetch_one=True)
+        else:
+            results_row = None
+        return results_row if results_row else None
+    
+    def get_proposed_lots_with_details(self):
+        query = '''
+            SELECT 
+                p.title_deed_number,
+                pl.lot_id,
+                pl.size,
+                pl.location,
+                pl.surveyor_name,
+                pl.created_by,
+                pl.status
+            FROM proposed_lots pl
+            INNER JOIN properties p ON pl.parent_block_id = p.property_id
+        '''
+        return self._execute_query(query, fetch_all=True)
+    
+    def propose_new_lot(self, proposed_lot_data):
+        query = '''
+            INSERT INTO proposed_lots (parent_block_id, size, location, surveyor_name, created_by, title_deed_number, price, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        '''
+        params = (
+            proposed_lot_data['parent_block_id'],
+            proposed_lot_data['size'],
+            proposed_lot_data['location'],
+            proposed_lot_data['surveyor_name'],
+            proposed_lot_data['created_by'],
+            proposed_lot_data.get('title_deed_number', 'N/A'),
+            str(proposed_lot_data.get('price', 0)),
+            proposed_lot_data.get('status', 'Proposed')
+        )
+        self._execute_query(query, params)
+
+    def get_lot_details_for_rejection(self, lot_id):        
+        query = """
+        SELECT parent_block_id, size
+        FROM proposed_lots
+        WHERE lot_id = ?
+        """
+        row = self._execute_query(query, (lot_id,), fetch_one=True)
+        if row:
+            return dict(row)
+        return None
+    
+    def finalize_lot(self, lot_id):
+        query = '''
+            UPDATE proposed_lots
+            SET status = 'Confirmed'
+            WHERE lot_id = %s
+        '''
+        self._execute_query(query, (lot_id,))
+
+    def reject_lot(self, lot_id):
+        query = '''
+            UPDATE proposed_lots
+            SET status = 'Rejected'
+            WHERE lot_id = %s
+        '''
+        self._execute_query(query, (lot_id,))
+
+    def return_size_to_block(self, block_id, size_to_add):
+        try:
+            query_select = "SELECT size, status FROM properties WHERE property_id = %s"
+            result = self._execute_query(query_select, (block_id,), fetch_one=True)
+            if result:
+                current_size = result['size']
+                current_status = result['status']
+                new_size = current_size + size_to_add
+                new_status = 'Available' if current_status == 'Unavailable' else current_status
+                query_update = "UPDATE properties SET size = %s, status = %s WHERE property_id = %s"
+                success = self._execute_query(query_update, (new_size, new_status, block_id))
+                if success:
+                    print(f"Size {size_to_add} successfully returned to block {block_id}. New size: {new_size}. New status: {new_status}.")
+                else:
+                    print(f"Failed to update block with ID {block_id}.")
+            else:
+                print(f"Block with ID {block_id} not found.")
+        except Exception as e:
+            print(f"An unexpected error occurred: {e}")
+
+    def update_block_status(self, block_id, status):
+        query = "UPDATE properties SET status = %s WHERE property_id = %s"
+        self._execute_query(query, (status, block_id))
+        print(f"Status for block {block_id} successfully updated to '{status}'.")
+
+    def update_block_size(self, block_id, new_size):
+        query = '''
+            UPDATE properties
+            SET size = %s
+            WHERE property_id = %s
+        '''
+        self._execute_query(query, (new_size, block_id))
+
+    def get_lots_for_update(self):
+        query = '''
+            SELECT lot_id, title_deed_number, size, status, location
+            FROM proposed_lots
+            WHERE status IN ('Proposed')
+        '''
+        return self._execute_query(query, fetch_all=True)
+
+
 
     
     def get_survey_job_status_counts(self):
