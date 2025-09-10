@@ -3,6 +3,7 @@ import os
 from datetime import datetime
 from tkinter import messagebox
 import bcrypt
+import sys
 
 # Define the path for the database file
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -11,8 +12,8 @@ REPORTS_DIR = os.path.join(BASE_DIR, 'reports')
 # MySQL database configuration
 db_config = {
     'host': 'localhost',
-    'user': 'root',
-    'password': '',
+    'user': 'REMS',
+    'password': '123',
     'database': 'real_estate_db'
 }
 
@@ -24,7 +25,7 @@ class DatabaseManager:
         self.db_config = db_config
         self._create_reports_directory()
         self._create_tables() 
-        self._create_tables()
+        self.load_settings()
 
     def _create_reports_directory(self):
         """Ensures the 'reports' directory exists."""
@@ -58,30 +59,53 @@ class DatabaseManager:
                 cursor.execute(query, params)
                 
                 # Check if the query is a SELECT statement and fetch results
-                if query.strip().upper().startswith("SELECT"):
-                    if fetch_one:
-                        return cursor.fetchone()
-                    if fetch_all:
-                        return cursor.fetchall()
-                
-                # Commit changes for INSERT, UPDATE, and DELETE
-                conn.commit()
-                
-                # Return last inserted ID for INSERT
                 if query.strip().upper().startswith("INSERT"):
+                    conn.commit()
                     return cursor.lastrowid
                 
-                # Return True/False for UPDATE/DELETE success
                 if query.strip().upper().startswith(("UPDATE", "DELETE")):
+                    conn.commit()
                     return cursor.rowcount > 0
+                
+                # For SELECT, fetch and return the results
+                if fetch_one:
+                    return cursor.fetchone()
+                
+                if fetch_all:
+                    return cursor.fetchall()
                 
                 return None
         except mysql.connector.Error as err:
-            print(f"Database error: {err}")
+            print(f"Database error: {err}", file=sys.stderr)
             return None
         except Exception as e:
-            print(f"An unexpected error occurred in _execute_query: {e}")
+            print(f"An unexpected error occurred in _execute_query: {e}", file=sys.stderr)
             return None
+        finally:
+            if conn and conn.is_connected():
+                conn.close()
+
+    def _execute_transaction(self, *queries_and_params):
+        conn = None
+        try:
+            conn = self._get_connection()
+            if not conn:
+                return False
+            with conn.cursor() as cursor:
+                for query, params in queries_and_params:
+                    cursor.execute(query, params)
+                conn.commit()
+                return True
+        except mysql.connector.Error as err:
+            print(f"Database transaction error: {err}", file=sys.stderr)
+            if conn:
+                conn.rollback()
+            return False
+        except Exception as e:
+            print(f"An unexpected error occurred in _execute_transaction: {e}", file=sys.stderr)
+            if conn:
+               conn.rollback()
+            return False
         finally:
             if conn and conn.is_connected():
                 conn.close()
@@ -90,6 +114,17 @@ class DatabaseManager:
         """Initializes the database by creating tables if they don't exist."""
         try:
             queries = [
+                '''
+                CREATE TABLE IF NOT EXISTS system_settings (
+                    setting_id INT AUTO_INCREMENT PRIMARY KEY,
+                    setting_name VARCHAR(255) UNIQUE NOT NULL,
+                    setting_value VARCHAR(255),
+                    description TEXT,
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    updated_by_user_id VARCHAR(255),
+                    updated_by_username VARCHAR(255)
+                )
+                ''',
                 '''
                 CREATE TABLE IF NOT EXISTS users (
                     user_id INT PRIMARY KEY AUTO_INCREMENT,
@@ -140,10 +175,20 @@ class DatabaseManager:
                     name VARCHAR(255) NOT NULL,
                     telephone_number VARCHAR(255) NOT NULL UNIQUE,
                     email VARCHAR(255) NOT NULL,
-                    purpose VARCHAR(255) NOT NULL,
                     status VARCHAR(255) NOT NULL DEFAULT 'active',
                     added_by_user_id INT,
                     FOREIGN KEY (added_by_user_id) REFERENCES users(user_id)
+                )
+                ''',
+                '''
+                CREATE TABLE IF NOT EXISTS daily_clients (
+                visit_id INT PRIMARY KEY AUTO_INCREMENT,
+                client_id INT NOT NULL,
+                purpose VARCHAR(255),
+                brought_by VARCHAR(255),
+                added_by_user_id INT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (client_id) REFERENCES clients(client_id)
                 )
                 ''',
                 '''
@@ -164,6 +209,7 @@ class DatabaseManager:
                     total_amount_paid FLOAT NOT NULL,
                     discount FLOAT DEFAULT 0.0,
                     balance FLOAT DEFAULT 0.0,
+                    brought_by VARCHAR(255),
                     transaction_date DATETIME NOT NULL,
                     receipt_path TEXT,
                     added_by_user_id INT,
@@ -255,7 +301,7 @@ class DatabaseManager:
                     fee FLOAT NOT NULL,
                     status VARCHAR(255) NOT NULL DEFAULT 'Ongoing',
                     added_by VARCHAR(255) NOT NULL,
-                    brought_by VARCHAR(255) NOT NULL,
+                    brought_by VARCHAR(255) DEFAULT 'self',
                     timestamp DATETIME NOT NULL,
                     FOREIGN KEY (file_id) REFERENCES client_files(file_id)
                 )
@@ -461,7 +507,7 @@ class DatabaseManager:
         client_exists = self.get_client_by_contact_info(telephone_number)
         
         if not client_exists:
-            self.add_client(name=owner, telephone_number=telephone_number, email=email, purpose='Property Owner', status=client_status, added_by_user_id=added_by_user_id)
+            self.add_client(name=owner, telephone_number=telephone_number, email=email, status=client_status, added_by_user_id=added_by_user_id)
 
         query = '''INSERT INTO properties (property_type, title_deed_number, location, size, description, owner, telephone_number, email, price, image_paths, title_image_paths, status, added_by_user_id)
                      VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)'''
@@ -481,7 +527,8 @@ class DatabaseManager:
         """
         existing_properties = self.get_propertiesfortransfer_by_title_deed(title_deed_number)
         client_status = 'active'
-        purpose = 'Land Sales'
+        
+       
 
         for prop in existing_properties:
                 print(f"Property with title deed '{title_deed_number}' already exists and is 'Available'. Cannot add duplicate.")
@@ -490,7 +537,7 @@ class DatabaseManager:
         client_exists = self.get_client_by_contact_info(telephone_number)
         
         if not client_exists:
-            self.add_client(name=owner, telephone_number=telephone_number, email=email, purpose=purpose,  status=client_status, added_by_user_id=added_by_user_id)
+            self.add_client(name=owner, telephone_number=telephone_number, email=email,   status=client_status,  added_by_user_id=added_by_user_id)
 
         query = '''INSERT INTO propertiesForTransfer (title_deed_number, location, size, description, owner, telephone_number, email, image_paths, title_image_paths,  added_by_user_id)
                      VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)'''
@@ -649,7 +696,7 @@ class DatabaseManager:
     
 
     ## CRUD Operations for Clients
-    def add_client(self, name, telephone_number, email, purpose, status, added_by_user_id=None):
+    def add_client(self, name, telephone_number, email,  status,  added_by_user_id=None):
         """
         Adds a new client to the database, tracking the user who added them.
         Returns: The ID of the new client, or None on error/duplicate contact_info.
@@ -661,15 +708,15 @@ class DatabaseManager:
             client_id = existing_client['client_id']
             current_status = existing_client['status']
             if current_status == 'inactive':
-                update_query = "UPDATE clients SET name = %s, email = %s, purpose = %s, status = 'active', added_by_user_id = %s WHERE client_id = %s"
-                self._execute_query(update_query, (name, email, purpose, added_by_user_id, client_id))
+                update_query = "UPDATE clients SET name = %s, email = %s,  status = 'active',  added_by_user_id = %s WHERE client_id = %s"
+                self._execute_query(update_query, (name, email, added_by_user_id, client_id))
                 return client_id
             else:
                 print(f"Error: A client with the telephone number {telephone_number} already exists and is active.")
                 return None
         else:
-            query = "INSERT INTO clients (name, telephone_number, email, purpose, status, added_by_user_id) VALUES (%s, %s, %s, %s, %s, %s)"
-            return self._execute_query(query, (name, telephone_number, email, purpose, status, added_by_user_id))
+            query = "INSERT INTO clients (name, telephone_number, email,  status,  added_by_user_id) VALUES (%s, %s, %s, %s, %s)"
+            return self._execute_query(query, (name, telephone_number, email,  status,  added_by_user_id))
 
     def get_client(self, client_id):
         """
@@ -706,7 +753,6 @@ class DatabaseManager:
             c.name,
             c.telephone_number,
             c.email,
-            c.purpose,
             c.status,
             c.added_by_user_id,
             u.username AS added_by_username
@@ -749,7 +795,7 @@ class DatabaseManager:
         set_clauses = []
         params = []
         for key, value in kwargs.items():
-            if key in ['name', 'contact_info']:
+            if key in ['name', 'telephone_number','email']:
                 set_clauses.append(f"{key} = %s")
                 params.append(value)
             
@@ -790,12 +836,38 @@ class DatabaseManager:
             return None
 
     ## CRUD Operations for Transactions
-    def add_transaction(self, property_id, client_id, payment_mode, total_amount_paid, discount=0.0, balance=0.0, receipt_path=None, added_by_user_id=None):
+    def add_transaction(self, property_id, client_id, payment_mode, total_amount_paid, brought_by, discount=0.0, balance=0.0, receipt_path=None, added_by_user_id=None):
         """ Adds a new sales transaction. """
         transaction_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        query = '''INSERT INTO transactions (property_id, client_id, payment_mode, total_amount_paid, discount, balance, transaction_date, receipt_path, added_by_user_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)'''
-        return self._execute_query(query, (property_id, client_id, payment_mode, total_amount_paid, discount, balance, transaction_date, receipt_path, added_by_user_id))
-
+        
+        # --- FIXED: Added the missing placeholder (%s) for added_by_user_id ---
+        query = '''
+            INSERT INTO transactions (
+                property_id, 
+                client_id, 
+                payment_mode, 
+                total_amount_paid, 
+                discount, 
+                balance, 
+                brought_by, 
+                transaction_date, 
+                receipt_path, 
+                added_by_user_id
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        '''
+        
+        return self._execute_query(query, (
+            property_id, 
+            client_id, 
+            payment_mode, 
+            total_amount_paid, 
+            discount, 
+            balance, 
+            brought_by, 
+            transaction_date, 
+            receipt_path, 
+            added_by_user_id
+        ))
     def get_transaction(self, transaction_id):
         """ Retrieves a transaction by its ID. """
         query = "SELECT * FROM transactions WHERE transaction_id = %s"
@@ -966,992 +1038,121 @@ class DatabaseManager:
         query = ''' INSERT INTO client_files (client_id, file_name, added_by, timestamp) VALUES (%s, %s, %s, %s) '''
         return self._execute_query(query, (client_id, file_name, added_by, timestamp))
 
-    def get_all_service_clients(self):
-        """
-        Retrieves all clients from the database (now only client info, not files).
-        """
-        # Assuming self._get_connection() is adapted to return a MySQL connection
-        conn = self._get_connection() 
-        cursor = conn.cursor()
-        
-        try:
-            # The SQL query itself is compatible with MySQL
-            query = 'SELECT client_id, name, telephone_number, email FROM service_clients ORDER BY name'
-            cursor.execute(query)
-            
-            # Fetch all results
-            rows = cursor.fetchall()
-            
-            # Get column names from cursor description
-            columns = [desc[0] for desc in cursor.description]
-            
-            # Convert results to a list of dictionaries
-            clients = [dict(zip(columns, row)) for row in rows]
-            
-            return clients
-            
-        except Exception as e: # Catch a general exception or a specific MySQL error
-            print(f"Database error: {e}")
-            return []
-            
-        finally:
-            if cursor:
-                cursor.close()
-            if conn:
-                conn.close()
-
     def get_all_client_files(self):
         """ Retrieves all client files from the database, joining with the service_clients table to include client names and contact info. """
         query = """ SELECT cf.file_id, cf.file_name, sc.name AS client_name, sc.telephone_number AS telephone_number FROM client_files cf JOIN service_clients sc ON cf.client_id = sc.client_id ORDER BY sc.name """
         return self._execute_query(query, fetch_all=True)
 
-    def get_file_by_id(self, file_id):
-        """
-        Retrieves a single client file from the database by its ID.
-        
-        Args:
-            file_id (int): The ID of the file to retrieve.
-        """
-        conn = self._get_connection()
-        if conn is None:
-            return None
-
-        cursor = conn.cursor(dictionary=True)
-        query = "SELECT * FROM client_files WHERE file_id = %s"
-        
-        try:
-            cursor.execute(query, (file_id,))
-            file_data = cursor.fetchone()
-            return file_data
-        except mysql.connector.Error as err:
-            print(f"Database query error: {err}")
-            return None
-        finally:
-            if 'cursor' in locals() and cursor is not None:
-                cursor.close()
-            if conn is not None:
-                conn.close()
-
-    def get_service_client_by_id(self, client_id):
-        """
-        Retrieves a single client from the database by their ID.
-
-        Args:
-            client_id (int): The ID of the client to retrieve.
-        """
-        conn = self._get_connection()
-        if conn is None:
-            return None
-        
-        cursor = conn.cursor(dictionary=True)
-        query = "SELECT * FROM service_clients WHERE client_id = %s"
-        
-        try:
-            cursor.execute(query, (client_id,))
-            client_data = cursor.fetchone()
-            return client_data
-        except mysql.connector.Error as err:
-            print(f"Database query error: {err}")
-            return None
-        finally:
-            if 'cursor' in locals() and cursor is not None:
-                cursor.close()
-            if conn is not None:
-                conn.close()
-    
-    def update_service_client(self, client_id, new_data):
-        """
-        Updates a client's information in the database.
-
-        Args:
-            client_id (int): The ID of the client to update.
-            new_data (dict): A dictionary of key-value pairs representing the
-                             columns and new values to set.
-        """
-        conn = self._get_connection()
-        if conn is None:
-            return False
-
-        cursor = conn.cursor()
-        
-        set_clause = ', '.join([f"{key} = %s" for key in new_data.keys()])
-        query = f'UPDATE service_clients SET {set_clause} WHERE client_id = %s'
-        
-        values = list(new_data.values())
-        values.append(client_id)
-
-        try:
-            cursor.execute(query, tuple(values))
-            conn.commit()
-            return cursor.rowcount > 0
-        except mysql.connector.Error as err:
-            print(f"Database update error: {err}")
-            conn.rollback()
-            return False
-        finally:
-            if 'cursor' in locals() and cursor is not None:
-                cursor.close()
-            if conn is not None:
-                conn.close()
-    
-    def delete_service_client(self, client_id):
-        """
-        Deletes a client and all associated files, jobs, and payments.
-        Uses a transaction to ensure all deletions are successful or none are.
-        """
-        conn = self._get_connection()
-        if conn is None:
-            return False
-        
-        cursor = conn.cursor()
-        
-        try:
-            # Note: MySQL's default is to have foreign keys enabled.
-            # If your table schemas are set up with ON DELETE CASCADE,
-            # a single DELETE FROM service_clients will be sufficient.
-            # The manual approach below is safer if not, or to be explicit.
-            
-            # Delete payments associated with the client's jobs
-            query_payments = """
-                DELETE FROM service_payments WHERE job_id IN (
-                    SELECT job_id FROM service_jobs WHERE file_id IN (
-                        SELECT file_id FROM client_files WHERE client_id = %s
-                    )
-                )
-            """
-            cursor.execute(query_payments, (client_id,))
-            
-            # Delete jobs associated with the client's files
-            query_jobs = """
-                DELETE FROM service_jobs WHERE file_id IN (
-                    SELECT file_id FROM client_files WHERE client_id = %s
-                )
-            """
-            cursor.execute(query_jobs, (client_id,))
-            
-            # Delete client files
-            query_files = "DELETE FROM client_files WHERE client_id = %s"
-            cursor.execute(query_files, (client_id,))
-            
-            # Finally, delete the client
-            query_client = "DELETE FROM service_clients WHERE client_id = %s"
-            cursor.execute(query_client, (client_id,))
-            
-            conn.commit()
-            return True
-        except mysql.connector.Error as err:
-            print(f"Database deletion error: {err}")
-            conn.rollback()
-            return False
-        finally:
-            if 'cursor' in locals() and cursor is not None:
-                cursor.close()
-            if conn is not None:
-                conn.close()
-    
     def get_client_file_details(self, file_id):
         """ Retrieves a single client file's details. """
         query = "SELECT * FROM client_files WHERE file_id = %s"
         return self._execute_query(query, (file_id,), fetch_one=True)
 
-    # --- CRUD for Service Jobs ---
-
-    def add_job(self, file_id, job_description, title_name, title_number, fee, added_by, brought_by):
-        """
-        Adds a new job for a specific file. This method now takes 'file_id'
-        instead of 'client_id'.
-        """
-        conn = self._get_connection()
-        if conn is None:
-            return None
-
-        cursor = conn.cursor()
+    def add_service_job(self, file_id, job_description, title_name, title_number, fee, status, added_by, brought_by):
+        """ Adds a new job for a client's file. """
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        query = '''
+            INSERT INTO service_jobs (file_id, job_description, title_name, title_number, fee, status, added_by, brought_by, timestamp)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        '''
+        return self._execute_query(query, (file_id, job_description, title_name, title_number, fee, status, added_by, brought_by, timestamp))
 
-        try:
-            query = """
-                INSERT INTO service_jobs (file_id, job_description, title_name, title_number, fee, added_by, brought_by, timestamp)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """
-            values = (file_id, job_description, title_name, title_number, fee, added_by, brought_by, timestamp)
-            cursor.execute(query, values)
-            conn.commit()
-            return cursor.lastrowid
-        except mysql.connector.Error as err:
-            print(f"Database insertion error: {err}")
-            conn.rollback()
-            return None
-        finally:
-            if 'cursor' in locals() and cursor is not None:
-                cursor.close()
-            if conn is not None:
-                conn.close()
-    
-    def get_all_jobs(self):
-        """
-        Retrieves all jobs, joining with the client_files and service_clients
-        tables to include client and file information.
-        """
-        conn = self._get_connection()
-        if conn is None:
-            return []
-        
-        cursor = conn.cursor(dictionary=True)
-        
+    def get_service_job_by_file_id(self, file_id):
+        """ Retrieves all jobs related to a specific file. """
+        query = "SELECT * FROM service_jobs WHERE file_id = %s"
+        return self._execute_query(query, (file_id,), fetch_all=True)
+
+    def get_all_service_jobs_paginated(self, limit=None, offset=None, search_query=None):
+        """ Retrieves paginated list of all service jobs with client details. """
         query = """
             SELECT
-                sj.*,
-                cf.file_name,
-                sc.name AS client_name,
-                sc.telephone_number AS telephone_number
-            FROM
-                service_jobs sj
-            JOIN
-                client_files cf ON sj.file_id = cf.file_id
-            JOIN
-                service_clients sc ON cf.client_id = sc.client_id
-            ORDER BY
-                sj.timestamp DESC
+                sj.job_id, sj.job_description, sj.title_name, sj.title_number, sj.fee, sj.status, sj.added_by, sj.brought_by, sj.timestamp,
+                cf.file_name, sc.name as client_name, sc.telephone_number
+            FROM service_jobs sj
+            JOIN client_files cf ON sj.file_id = cf.file_id
+            JOIN service_clients sc ON cf.client_id = sc.client_id
+            WHERE 1=1
         """
+        params = []
+        if search_query:
+            query += " AND (sj.title_name LIKE %s OR sj.title_number LIKE %s OR sj.job_description LIKE %s OR sc.name LIKE %s)"
+            params.extend([f"%{search_query}%", f"%{search_query}%", f"%{search_query}%", f"%{search_query}%"])
         
-        try:
-            cursor.execute(query)
-            jobs = cursor.fetchall()
-            return jobs
-        except mysql.connector.Error as err:
-            print(f"Database query error: {err}")
-            return []
-        finally:
-            if 'cursor' in locals() and cursor is not None:
-                cursor.close()
-            if conn is not None:
-                conn.close()
-
-    def get_jobs_by_file_id(self, file_id):
-        """
-        Retrieves all jobs for a specific client file. This method replaces
-        the old get_jobs_by_client_id.
-        """
-        conn = self._get_connection() # Assuming this method correctly establishes a MySQL connection
-        cursor = conn.cursor()
-        try:
-            # Use %s as the placeholder for MySQL
-            cursor.execute('SELECT * FROM service_jobs WHERE file_id = %s', (file_id,))
-            
-            # Fetch column names from cursor description
-            columns = [desc[0] for desc in cursor.description]
-            
-            # Construct a list of dictionaries, mapping column names to row values
-            jobs = [dict(zip(columns, row)) for row in cursor.fetchall()]
-            
-            return jobs
-        finally:
-            conn.close()
-
-    def get_job_details(self, job_id):
-        """
-        Fetches detailed information for a single job, including client and file info.
-        This method now matches the requested format for MySQL.
-        """
-        conn = self._get_connection()  # Assuming this method returns a MySQL connection object
-        cursor = conn.cursor()
-        query = """
-        SELECT
-            sj.job_id,
-            sj.job_description,
-            sj.title_name,
-            sj.title_number,
-            cf.file_name,
-            sc.name AS client_name
-        FROM service_jobs sj
-        JOIN client_files cf ON sj.file_id = cf.file_id
-        JOIN service_clients sc ON cf.client_id = sc.client_id
-        WHERE sj.job_id = %s
-        """
-        try:
-            # Use %s as the placeholder for MySQL
-            cursor.execute(query, (job_id,))
-            row = cursor.fetchone()
-            if row:
-                # Fetch column names from cursor description
-                columns = [desc[0] for desc in cursor.description]
-                # Create a dictionary from column names and row data
-                return dict(zip(columns, row))
-            return None
-        # Catch MySQL-specific errors
-        except mysql.connector.Error as e:
-            print(f"Error fetching job details for ID {job_id}: {e}")
-            return None
-        finally:
-            # Ensure the connection is closed
-            if conn and conn.is_connected():
-                cursor.close()
-                conn.close()
-    
-    def update_job(self, job_id, new_data):
-        """Updates a job's information."""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            # Dynamically build the SET clause for the UPDATE statement
-            set_clauses = []
-            values = []
-            for key, value in new_data.items():
-                set_clauses.append(f"{key} = %s") # MySQL uses %s for placeholders
-                values.append(value)
-
-            set_clause = ', '.join(set_clauses)
-            values.append(job_id) # Add job_id for the WHERE clause
-
-            query = f"UPDATE service_jobs SET {set_clause} WHERE job_id = %s" # MySQL uses %s
-            cursor.execute(query, tuple(values)) # Pass values as a tuple
-            conn.commit()
-            return cursor.rowcount > 0
-        except Exception as e: # It's good practice to catch specific exceptions if possible
-            print(f"Error updating job {job_id}: {e}")
-            conn.rollback() # Rollback changes if an error occurs
-            return False
-        finally:
-            conn.close()
-    
-    def update_job_status(self, job_id, new_status):
-        """
-        Updates only the status of a specific job.
-
-        This method uses the more general update_job function, making it
-        more specific and easier to use for this particular task.
-
-        Args:
-            job_id (int): The unique ID of the job.
-            new_status (str): The new status for the job (e.g., 'Ongoing', 'Completed').
-
-        Returns:
-            bool: True if the update was successful, False otherwise.
-        """
-        new_data = {'status': new_status}
-        return self.update_job(job_id, new_data)
-
-    def delete_job(self, job_id):
-        """Deletes a job and its associated payments."""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            # In MySQL, foreign key constraints are typically handled at the database level
-            # and don't require explicit PRAGMA commands like in SQLite.
-            # If you have ON DELETE CASCADE set up for your foreign keys,
-            # deleting the job will automatically delete associated payments.
-            # Otherwise, you might need to delete from service_payments first.
-
-            # Example assuming ON DELETE CASCADE is configured for service_payments.job_id
-            cursor.execute('DELETE FROM service_jobs WHERE job_id = %s', (job_id,))
-
-            # If ON DELETE CASCADE is NOT configured, uncomment the following lines:
-            # cursor.execute('DELETE FROM service_payments WHERE job_id = %s', (job_id,))
-            # cursor.execute('DELETE FROM service_jobs WHERE job_id = %s', (job_id,))
-
-            conn.commit()
-            # Check if any rows were affected by the delete operation
-            return cursor.rowcount > 0
-        except mysql.connector.Error as e:
-            print(f"An error occurred: {e}")
-            conn.rollback() # Rollback changes if an error occurs
-            return False
-        finally:
-            cursor.close()
-            conn.close()
-    
-    def get_completed_jobs(self):
-        """
-        Retrieves all service jobs from the database that have a 'Completed' status.
-        The result includes the file name and client name by joining tables.
+        query += " ORDER BY sj.timestamp DESC"
         
-        Returns:
-            list: A list of dictionaries, where each dictionary represents a 'Completed' job.
-                Returns an empty list on failure.
-        """
-        conn = None
-        cursor = None
-        try:
-            conn = self._get_connection()  # Assumes this method returns a mysql.connector.connection_pooling.PooledMySQLConnection
-            cursor = conn.cursor(dictionary=True) # Use dictionary=True to get results as dictionaries
-
-            query = """
-            SELECT 
-                sj.job_id,
-                sj.timestamp,
-                sj.job_description,
-                sj.title_name,
-                sj.title_number,
-                cf.file_name,
-                sc.name AS client_name,
-                sj.status
-            FROM 
-                service_jobs sj
-            JOIN 
-                client_files cf ON sj.file_id = cf.file_id
-            JOIN 
-                service_clients sc ON cf.client_id = sc.client_id
-            WHERE 
-                sj.status = 'Completed'
-            """
-            cursor.execute(query)
-            rows = cursor.fetchall()
-            return rows
-        except mysql.connector.Error as e:
-            print(f"An error occurred while fetching data: {e}")
-            return []
-        finally:
-            if cursor:
-                cursor.close()
-            if conn:
-                conn.close()
-    
-    def get_dispatched_jobs(self):
-        """
-        Fetches all records from the dispatch table.
-        """
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        query = """
-        SELECT dispatch_id, job_id, dispatch_date, reason_for_dispatch, collected_by, collector_phone
-        FROM service_dispatch
-        ORDER BY dispatch_date DESC
-        """
-        try:
-            cursor.execute(query)
-            # Fetch column names from cursor description
-            columns = [desc[0] for desc in cursor.description]
-            # Use a list comprehension to convert rows to dictionaries
-            dispatched_jobs = [dict(zip(columns, row)) for row in cursor.fetchall()]
-            return dispatched_jobs
-        except mysql.connector.Error as e:
-            print(f"Error fetching dispatch records: {e}")
-            return []
-        finally:
-            if conn.is_connected():
-                cursor.close()
-                conn.close()
-    
-    def save_dispatch_details(self, job_id, dispatch_date, reason, collected_by, phone, sign_blob):
-        """
-        Inserts new dispatch details into the service_dispatch table and updates job status.
-        """
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        insert_query = """
-        INSERT INTO service_dispatch (job_id, dispatch_date, reason_for_dispatch, collected_by, collector_phone, sign)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        """
-        update_query = """
-        UPDATE service_jobs
-        SET status = 'Dispatched'
-        WHERE job_id = %s
-        """
-        try:
-            cursor.execute(insert_query, (job_id, dispatch_date, reason, collected_by, phone, sign_blob))
-            cursor.execute(update_query, (job_id,))
-            conn.commit()
-            return True
-        except mysql.connector.Error as e: # Assuming you are using mysql.connector
-            print(f"Error saving dispatch details: {e}")
-            conn.rollback()
-            return False
-        finally:
-            conn.close()
-    
-    # --- CRUD for Service Payments ---
+        if limit is not None:
+            query += " LIMIT %s"
+            params.append(limit)
+        if offset is not None:
+            query += " OFFSET %s"
+            params.append(offset)
+        
+        return self._execute_query(query, tuple(params), fetch_all=True)
 
     def add_payment(self, job_id, amount, fee, balance):
-        """Records a new payment for a job and updates the job's balance."""
-        conn = self._get_connection()  # Assuming this method returns a MySQL connection
-        cursor = conn.cursor()
-        payment_date = datetime.now().strftime('%Y-%m-%d')
-        try:
-            # For MySQL, the placeholder is %s, not ?
-            insert_query = """
-                INSERT INTO service_payments (job_id, amount, fee, balance, payment_date)
-                VALUES (%s, %s, %s, %s, %s)
-            """
-            cursor.execute(insert_query, (job_id, amount, fee, balance, payment_date))
-            conn.commit()
-            # For MySQL, use cursor.lastrowid to get the ID of the last inserted row
-            return cursor.lastrowid
-        except mysql.connector.Error as e:
-            print(f"An error occurred: {e}")
-            conn.rollback() # Rollback changes if an error occurs
-            return None
-        finally:
-            cursor.close()
-            conn.close()
+        """ Adds a new service payment record. """
+        payment_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        query = '''
+            INSERT INTO service_payments (job_id, amount, fee, balance, payment_date)
+            VALUES (%s, %s, %s, %s, %s)
+        '''
+        params = (job_id, amount, fee, balance, payment_date)
+        return self._execute_query(query, params)
+    
+
+    def get_service_payment_by_job_id(self, job_id):
+        """ Retrieves a service payment record by job ID. """
+        query = "SELECT * FROM service_payments WHERE job_id = %s"
+        return self._execute_query(query, (job_id,), fetch_one=True)
+
+    def update_service_payment(self, payment_id, **kwargs):
+        """ Updates a service payment record. """
+        set_clauses = []
+        params = []
+        allowed_cols = ['fee', 'amount', 'balance', 'payment_date', 'status']
+        for key, value in kwargs.items():
+            if key in allowed_cols:
+                set_clauses.append(f"{key} = %s")
+                params.append(value)
         
-    def get_payments_by_job_id(self, job_id):
-        """Retrieves all payments for a specific job."""
-        conn = None
-        cursor = None
-        try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            cursor.execute('SELECT * FROM service_payments WHERE job_id = %s', (job_id,))
-            columns = [desc[0] for desc in cursor.description]
-            payments = [dict(zip(columns, row)) for row in cursor.fetchall()]
-            return payments
-        except mysql.connector.Error as err:
-            print(f"Error fetching payments for job ID {job_id}: {err}")
-            return [] # Return empty list on error
-        finally:
-            if cursor:
-                cursor.close()
-            if conn:
-                conn.close()
-    
-    def get_all_payments(self):
-        """
-        Retrieves all payments with detailed information from related tables.
-        Returns a list of dictionaries.
-        """
-        conn = self._get_connection()
-        cursor = conn.cursor(dictionary=True)  # Use dictionary=True for dictionary results
-        try:
-            query = """
-                SELECT
-                    sp.payment_id,
-                    sc.name AS client_name,
-                    cf.file_name,
-                    sj.job_description,
-                    sj.title_number,
-                    sp.amount,
-                    sp.status AS payment_status,
-                    sp.payment_type,
-                    sp.payment_date
-                FROM service_payments AS sp
-                JOIN service_jobs AS sj ON sp.job_id = sj.job_id
-                JOIN client_files AS cf ON sj.file_id = cf.file_id
-                JOIN service_clients AS sc ON cf.client_id = sc.client_id
-                ORDER BY sp.payment_date DESC;
-            """
-            cursor.execute(query)
-            return cursor.fetchall()
-        except mysql.connector.Error as e:
-            print(f"Error fetching payments: {e}")
-            return []
-        finally:
-            conn.close()
+        if not set_clauses: return False
+        
+        params.append(payment_id)
+        query = f"UPDATE service_payments SET {', '.join(set_clauses)} WHERE payment_id = %s"
+        return self._execute_query(query, params)
 
-    def get_filtered_payments(self, filters, page=1, page_size=20):
-        """
-        Retrieves a filtered and paginated list of payments from a MySQL database.
-
-        Args:
-            filters (dict): Dictionary of filters (e.g., 'status', 'client_name').
-            page (int): The current page number (1-based).
-            page_size (int): The number of items per page.
-
-        Returns:
-            tuple: A tuple containing a list of payment records (as dictionaries)
-                and the total count of matching records.
-                Returns ([], 0) on error.
-        """
-        conn = self._get_connection()  # Assumes this method returns a MySQL connection
-        if not conn:
-            return [], 0
-
-        try:
-            base_query_part = """
-            FROM service_payments AS sp
-            JOIN service_jobs AS sj ON sp.job_id = sj.job_id
-            JOIN client_files AS cf ON sj.file_id = cf.file_id
-            JOIN service_clients AS sc ON cf.client_id = sc.client_id
-            """
-
-            conditions = []
-            params = []
-
-            # Add filtering conditions dynamically
-            if 'status' in filters and filters['status'] != 'All':
-                conditions.append("sp.status = %(status)s")
-                params.append({'status': filters['status']})
-
-            if 'payment_mode' in filters and filters['payment_mode']:
-                conditions.append("sp.payment_type = %(payment_mode)s")
-                params.append({'payment_mode': filters['payment_mode']})
-
-            if 'client_name' in filters and filters['client_name']:
-                conditions.append("sc.name LIKE %(client_name)s")
-                params.append({'client_name': f"%{filters['client_name']}%"})
-
-            if 'file_name' in filters and filters['file_name']:
-                conditions.append("cf.file_name LIKE %(file_name)s")
-                params.append({'file_name': f"%{filters['file_name']}%"})
-
-            if 'title_number' in filters and filters['title_number']:
-                conditions.append("sj.title_number LIKE %(title_number)s")
-                params.append({'title_number': f"%{filters['title_number']}%"})
-
-            if 'from_date' in filters and filters['to_date']:
-                conditions.append("sp.payment_date BETWEEN %(from_date)s AND %(to_date)s")
-                params.append({'from_date': filters['from_date'], 'to_date': filters['to_date']})
-
-            where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
-
-            # Prepare parameters for named placeholders
-            query_params = {}
-            for param_dict in params:
-                query_params.update(param_dict)
-
-            # First, get the total count for pagination
-            count_query = f"SELECT COUNT(*) {base_query_part}{where_clause}"
-            cursor = conn.cursor(dictionary=True) # Use dictionary=True for dict-like rows
-            cursor.execute(count_query, query_params)
-            total_count = cursor.fetchone()['COUNT(*)']
-
-            # Then, get the paginated data
-            data_query = f"""
-            SELECT
-                sp.payment_id,
-                sc.name AS client_name,
-                cf.file_name,
-                sj.job_description,
-                sj.title_number,
-                sp.fee,
-                sp.amount,
-                sp.balance,
-                sp.payment_date
-            {base_query_part}{where_clause}
-            ORDER BY sp.payment_date DESC
-            LIMIT %(limit)s OFFSET %(offset)s;
-            """
-            offset = (page - 1) * page_size
-            query_params['limit'] = page_size
-            query_params['offset'] = offset
-
-            cursor.execute(data_query, query_params)
-            payments_rows = cursor.fetchall()
-
-            # Convert fetched rows (dictionaries) to the desired format if needed,
-            # but cursor(dictionary=True) already provides dictionaries.
-            # If you need a list of dicts, `payments_rows` is already that.
-
-            return payments_rows, total_count
-
-        except mysql.connector.Error as e:
-            print(f"Error fetching filtered payments: {e}")
-            return [], 0
-        finally:
-            if conn and conn.is_connected():
-                conn.close()
-    
-    def update_payment_record(self, payment_id, new_status, final_payment_amount, payment_type):
-        """
-        Updates the status, amount, and balance of a specific payment and records the transaction in history.
-
-        Args:
-            payment_id (int): The ID of the payment to update.
-            new_status (str): The new status ('paid' or 'unpaid').
-            final_payment_amount (float): The amount of this specific payment.
-            payment_type (str): The method of payment ('cash', 'mpesa', 'bank').
-
-        Returns:
-            bool: True on success, False on failure.
-        """
-        conn = self._get_connection()
-        if not conn:
-            print("Error: Database connection not established.")
-            return False
-
-        try:
-            cursor = conn.cursor()
-
-            # Step 1: Fetch current payment details
-            cursor.execute("SELECT amount, balance FROM service_payments WHERE payment_id = %s", (payment_id,))
-            result = cursor.fetchone()
-            if result is None:
-                print(f"Error: Payment record with ID {payment_id} not found.")
-                return False
-
-            current_amount, current_balance = result
-            current_amount = float(current_amount)
-            current_balance = float(current_balance)
-
-            # Step 2: Calculate new amounts and update the service_payments table
-            # In MySQL, you might directly update the balance based on the payment amount if it represents a new payment towards a total.
-            # If 'final_payment_amount' is the new total amount paid for this record, adjust logic accordingly.
-            # Assuming final_payment_amount is the amount being *added* in this transaction:
-            new_amount = current_amount + final_payment_amount
-            new_balance = current_balance - final_payment_amount # Assuming balance decreases with payment
-
-            # Ensure balance does not go below zero if that's a business rule
-            if new_balance < 0:
-                new_balance = 0 # Or handle as per your application's logic
-
-            update_payment_query = """
-            UPDATE service_payments
-            SET status = %s, amount = %s, balance = %s
-            WHERE payment_id = %s
-            """
-            cursor.execute(update_payment_query, (new_status, new_amount, new_balance, payment_id))
-
-            # Step 3: Insert a new record into the service_payments_history table
-            payment_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            insert_history_query = """
+    def add_payment_history(self, payment_id, payment_amount, payment_type):
+        """ Adds a payment history entry for a service payment. """
+        payment_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        query = '''
             INSERT INTO service_payments_history (payment_id, payment_amount, payment_type, payment_date)
             VALUES (%s, %s, %s, %s)
-            """
-            cursor.execute(insert_history_query, (payment_id, final_payment_amount, payment_type, payment_date))
+        '''
+        return self._execute_query(query, (payment_id, payment_amount, payment_type, payment_date))
 
-            conn.commit() # Commit the transaction
-            return True
+    def get_payment_history_by_payment_id(self, payment_id):
+        """ Retrieves payment history entries for a specific service payment. """
+        query = "SELECT * FROM service_payments_history WHERE payment_id = %s ORDER BY payment_date ASC"
+        return self._execute_query(query, (payment_id,), fetch_all=True)
 
-        except mysql.connector.Error as e:
-            print(f"Error during payment update transaction: {e}")
-            if conn:
-                conn.rollback() # Rollback the transaction on error
-            return False
-        finally:
-            if conn and conn.is_connected():
-                cursor.close()
-                conn.close()
-    
-    def get_payment_history(self, payment_id):
-        """
-        Fetches all payment history records for a given payment ID.
+    def add_service_dispatch_record(self, job_id, reason_for_dispatch, collected_by, collector_phone, sign):
+        """ Adds a new dispatch record for a completed job. """
+        dispatch_date = datetime.now().strftime('%Y-%m-%d')
+        query = '''
+            INSERT INTO service_dispatch (job_id, dispatch_date, reason_for_dispatch, collected_by, collector_phone, sign)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        '''
+        return self._execute_query(query, (job_id, dispatch_date, reason_for_dispatch, collected_by, collector_phone, sign))
 
-        Args:
-            payment_id (int): The ID of the parent payment record.
-
-        Returns:
-            list: A list of tuples, where each tuple is a payment history record.
-        """
-        conn = self._get_connection() # Assuming this method returns a MySQL connection
-        if not conn:
-            return []
-        
-        try:
-            cursor = conn.cursor()
-            # In MySQL, placeholders are typically '%s' instead of '?'
-            cursor.execute(
-                "SELECT history_id, payment_amount, payment_type, payment_date "
-                "FROM service_payments_history WHERE payment_id = %s ORDER BY payment_date DESC",
-                (payment_id,)
-            )
-            history_records = cursor.fetchall()
-            return history_records
-        except mysql.connector.Error as e:
-            print(f"Error fetching payment history: {e}")
-            return []
-        finally:
-            if conn and conn.is_connected():
-                conn.close()
+    def get_service_dispatch_by_job_id(self, job_id):
+        """ Retrieves a dispatch record for a specific job ID. """
+        query = "SELECT * FROM service_dispatch WHERE job_id = %s"
+        return self._execute_query(query, (job_id,), fetch_one=True)
     
     def get_total_survey_jobs(self):
-        """
-        Returns the total count of survey jobs from a MySQL database.
-
-        Returns:
-            int: Total number of survey jobs. Returns 0 if an error occurs.
-        """
-        conn = self._get_connection()
-        if not conn:
-            return 0
-
-        cursor = conn.cursor()
-        try:
-            # MySQL uses %s as the placeholder for parameters, not ?
-            query = "SELECT COUNT(*) FROM service_jobs"
-            cursor.execute(query)
-            result_row = cursor.fetchone() # fetchone() is standard across many DB APIs
-
-            # The result_row will be a tuple. The count is the first element.
-            return result_row[0] if result_row else 0
-        except mysql.connector.Error as e:
-            print(f"Error fetching total survey jobs: {e}")
-            return 0
-        finally:
-            if cursor:
-                cursor.close()
-            if conn:
-                conn.close()
-
-    def get_survey_job_status_counts(self):
-        """ Returns a dictionary of survey job status counts. """
-        conn = self._get_connection()
-        if not conn:
-            return {}
-        try:
-            with conn.cursor(dictionary=True) as cursor:
-                query = "SELECT status, COUNT(*) FROM service_jobs GROUP BY status"
-                cursor.execute(query)
-                results_rows = cursor.fetchall()
-                return {row['status']: row['COUNT(*)'] for row in results_rows}
-        except mysql.connector.Error as err:
-            print(f"Database error in get_survey_job_status_counts: {err}")
-            return {}
-        finally:
-            if conn.is_connected():
-                conn.close()
-    
-    ## NEW REPORTING METHODS (FOR SalesReportsForm)
-
-    def get_total_sales_for_date_range(self, start_date, end_date):
-        """
-        Retrieves total revenue and total properties sold within a specified date range.
-        Assumes 'transaction_date' in 'transactions' table is stored as YYYY-MM-DD HH:MM:SS.
-        """
-        try:
-            # In MySQL, DATE() function can be used to extract date part for comparison.
-            # We also use DATE_ADD for the end date to include the entire day.
-            query = """
-                SELECT
-                    SUM(t.total_amount_paid + t.balance) AS total_revenue, -- Total sales value (paid + balance)
-                    COUNT(DISTINCT t.property_id) AS total_properties_sold
-                FROM
-                    transactions t
-                WHERE
-                    DATE(t.transaction_date) BETWEEN %s AND %s
-            """
-            # MySQL uses %s as placeholders, and date comparison is usually done this way.
-            # The execute method in mysql.connector typically handles date formatting.
-            result_row = self._execute_query(query, (start_date, end_date), fetch_one=True)
-
-            return {
-                'total_revenue': result_row['total_revenue'] if result_row and result_row['total_revenue'] is not None else 0.0,
-                'total_properties_sold': result_row['total_properties_sold'] if result_row and result_row['total_properties_sold'] is not None else 0
-            }
-        except Exception as e:
-            print(f"Error in get_total_sales_for_date_range: {e}")
-            return {'total_revenue': 0.0, 'total_properties_sold': 0}
-
-    def get_detailed_sales_transactions_for_date_range(self, start_date, end_date):
-        """
-        Retrieves detailed sales transactions for the accounting-style report.
-        Includes property type (hardcoded to 'Land' for now), title deed, original price,
-        amount paid, and balance.
-        """
-        try:
-            query = """
-                SELECT 
-                    p.title_deed_number AS title_deed,
-                    p.price AS actual_price,
-                    t.total_amount_paid AS amount_paid,
-                    t.balance AS balance
-                FROM 
-                    transactions t
-                JOIN 
-                    properties p ON t.property_id = p.property_id
-                WHERE 
-                    t.transaction_date BETWEEN %s AND DATE_ADD(%s, INTERVAL 23 HOUR + 59 MINUTE + 59 SECOND)
-                ORDER BY t.transaction_date ASC
-            """
-            
-            # Ensure end_date includes the full day
-            end_date_with_time = datetime.strptime(end_date, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
-            
-            # Adjust parameters for the MySQL query
-            params = (start_date, end_date_with_time) 
-            
-            # Assuming _execute_query handles the connection and cursor management
-            # and returns results in a dictionary-like format or list of dictionaries.
-            # If it returns tuples, you'll need to adapt the conversion below.
-            results_rows = self._execute_query(query, params, fetch_all=True)
-            
-            # Convert results to a list of dictionaries, adding the hardcoded 'property_type'
-            detailed_transactions = []
-            if results_rows:
-                for row in results_rows:
-                    transaction_data = dict(row) # Assuming _execute_query returns dict-like rows
-                    transaction_data['property_type'] = 'Land'
-                    detailed_transactions.append(transaction_data)
-            
-            return detailed_transactions
-
-        except mysql.connector.Error as err:
-            print(f"MySQL Error in get_detailed_sales_transactions_for_date_range: {err}")
-            return []
-        except Exception as e:
-            print(f"An unexpected error occurred: {e}")
-            return []
-
-    def get_sold_properties_for_date_range_detailed(self, start_date, end_date):
-        """
-        Retrieves detailed information about properties sold within a specified date range.
-        """
-        conn = self._get_connection()
-        if not conn:
-            return []
-        
-        try:
-            cursor = conn.cursor(dictionary=True)
-            query = """
-                SELECT 
-                    p.title_deed_number, 
-                    p.location, 
-                    p.size, 
-                    t.transaction_date AS date_sold,
-                    t.total_amount_paid,
-                    t.balance,
-                    c.name AS client_name
-                FROM 
-                    transactions t
-                JOIN 
-                    properties p ON t.property_id = p.property_id
-                JOIN 
-                    clients c ON t.client_id = c.client_id
-                WHERE 
-                    p.status = 'Sold' AND t.transaction_date BETWEEN %s AND CONCAT(%s, ' 23:59:59')
-                ORDER BY t.transaction_date ASC
-            """
-            cursor.execute(query, (start_date, end_date))
-            results = cursor.fetchall()
-            return results
-        except Error as e:
-            print(f"Error in get_sold_properties_for_date_range_detailed: {e}")
-            return []
-        finally:
-            if conn and conn.is_connected():
-                cursor.close()
-                conn.close()
-    
-    def get_pending_instalments_for_date_range(self, start_date, end_date):
-        """
-        Retrieves information about transactions with a balance due within a specified date range.
-        The date range applies to the transaction_date.
-        """
-        conn = self._get_connection()
-        if not conn:
-            return []
-            
-        try:
-            cursor = conn.cursor(dictionary=True)
-            query = """
-                SELECT 
-                    t.transaction_id,
-                    t.transaction_date,
-                    t.total_amount_paid,
-                    t.discount,
-                    t.balance,
-                    p.title_deed_number,
-                    p.price AS original_price,
-                    c.name AS client_name,
-                    c.contact_info AS client_contact_info
-                FROM 
-                    transactions t
-                JOIN 
-                    properties p ON t.property_id = p.property_id
-                JOIN 
-                    clients c ON t.client_id = c.client_id
-                WHERE 
-                    t.balance > 0 AND t.transaction_date BETWEEN %s AND CONCAT(%s, ' 23:59:59')
-                ORDER BY t.transaction_date ASC
-            """
-            cursor.execute(query, (start_date, end_date))
-            results = cursor.fetchall()
-            return results
-        except Error as e:
-            print(f"Error in get_pending_instalments_for_date_range: {e}")
-            return []
-        finally:
-            if conn and conn.is_connected():
-                cursor.close()
-                conn.close()
+        query = "SELECT COUNT(*) FROM service_jobs"
+        result_row = self._execute_query(query, fetch_one=True)
+        return result_row['COUNT(*)'] if result_row else 0
     
     def get_all_agents(self):
         try:
@@ -1965,228 +1166,181 @@ class DatabaseManager:
         except Exception as e:
            print(f"Error fetching all agents: {e}")
            return []
-    
+        
     def add_agent(self, name, added_by):
-        """
-        Adds a new agent to the database.
-
-        Args:
-            name (str): The name of the new agent.
-            added_by (str): The username or ID of the user who added the agent.
-
-        Returns:
-            bool: True if the agent was added successfully, False otherwise.
-        """
-        conn = self._get_connection()
-        if not conn:
-            return False
-
         try:
-            cursor = conn.cursor()
-
-            # Check if an agent with the same name already exists
-            cursor.execute(
+            existing_agent = self._execute_query(
                 "SELECT agent_id FROM agents WHERE name = %s",
-                (name,)
+                (name,),
+                fetch_one=True
             )
-            existing_agent = cursor.fetchone()
             if existing_agent:
                 print("Agent with this name already exists.")
                 return False
-
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            cursor.execute(
+            return self._execute_query(
                 "INSERT INTO agents (name, status, added_by, timestamp) VALUES (%s, %s, %s, %s)",
                 (name, 'active', added_by, timestamp)
             )
-            conn.commit()
-            return True
-
-        except Error as e:
+        except Exception as e:
             print(f"Error adding new agent: {e}")
-            conn.rollback()
             return False
-        finally:
-            if conn and conn.is_connected():
-                cursor.close()
-                conn.close()
+        
+    def delete_agent(self, agent_id):
+        query = "DELETE FROM agents WHERE agent_id = %s"
+        params = (agent_id,)
+        return self._execute_query(query, params)
+        
+    def check_if_user_is_agent(self, user_id):
+        query = "SELECT is_agent FROM users WHERE user_id = %s"
+        params = (user_id,)
+        result = self._execute_query(query, params, fetch_one=True)
+        if result and result.get('is_agent') == 1:
+            return True
+        return False
     
+    def get_agent_by_user_id(self, user_id):
+        query = "SELECT * FROM users WHERE user_id = %s AND is_agent = 1"
+        params = (user_id,)
+        return self._execute_query(query, params, fetch_one=True)
+        
     def get_agent_by_name(self, agent_name):
-        """
-        Fetches a single agent record from the 'agents' table by name.
-
-        Args:
-            agent_name (str): The name of the agent to fetch.
-
-        Returns:
-            dict: A dictionary containing the agent's data if found, otherwise None.
-        """
-        conn = self._get_connection()
-        if not conn:
-            return None
-            
         try:
-            cursor = conn.cursor(dictionary=True)
-            query = """
-                SELECT agent_id, name, status, added_by, timestamp 
-                FROM agents 
-                WHERE name = %s
-            """
-            cursor.execute(query, (agent_name,))
-            agent = cursor.fetchone()
-            return agent
-        except Error as e:
+            query = "SELECT agent_id, name, status, added_by, timestamp FROM agents WHERE name = %s"
+            row = self._execute_query(query, (agent_name,), fetch_one=True)
+            return row
+        except Exception as e:
             print(f"Error fetching agent by name '{agent_name}': {e}")
             return None
-        finally:
-            if conn and conn.is_connected():
-                cursor.close()
-                conn.close()
-    
     def update_agent(self, agent_id, new_name=None, new_status=None):
-        """
-        Updates the name or status of an existing agent.
-
-        Args:
-            agent_id (int): The ID of the agent to update.
-            new_name (str, optional): The new name for the agent.
-            new_status (str, optional): The new status for the agent.
-
-        Returns:
-            bool: True if the update was successful, False otherwise.
-        """
-        conn = self._get_connection()
-        if not conn:
-            return False
-
         updates = []
         params = []
-        
         if new_name:
             updates.append("name = %s")
             params.append(new_name)
         if new_status:
             updates.append("status = %s")
             params.append(new_status)
-
         if not updates:
             print("No updates provided.")
             return False
-
         query = f"UPDATE agents SET {', '.join(updates)} WHERE agent_id = %s"
         params.append(agent_id)
-
-        try:
-            cursor = conn.cursor()
-            cursor.execute(query, tuple(params))
-            conn.commit()
-            return cursor.rowcount > 0
-        except Error as e:
-            print(f"Error updating agent: {e}")
-            conn.rollback()
-            return False
-        finally:
-            if conn and conn.is_connected():
-                cursor.close()
-                conn.close()
-    
-    def delete_agent(self, agent_id):
-        """
-        Deletes an agent from the database.
-
-        Args:
-            agent_id (int): The ID of the agent to delete.
-
-        Returns:
-            bool: True if the agent was deleted, False otherwise.
-        """
-        conn = self._get_connection()
-        if not conn:
-            return False
-            
-        try:
-            cursor = conn.cursor()
-            query = "DELETE FROM agents WHERE agent_id = %s"
-            cursor.execute(query, (agent_id,))
-            conn.commit()
-            # Check if any row was affected by the delete operation
-            return cursor.rowcount > 0
-        except Error as e:
-            print(f"Error deleting agent with ID {agent_id}: {e}")
-            if conn and conn.is_connected():
-                conn.rollback() # Rollback changes if an error occurs
-            return False
-        finally:
-            if conn and conn.is_connected():
-                cursor.close()
-                conn.close()
-    
-    def check_if_user_is_agent(self, user_id):
-        """
-        Checks if a user is an agent by looking up their ID in the users table.
+        return self._execute_query(query, tuple(params))
         
-        Args:
-            user_id (int): The ID of the user to check.
-            
-        Returns:
-            bool: True if the user is an agent (is_agent = 1), False otherwise.
+    def get_all_propertiesForTransfer_paginated(self, limit=None, offset=None, search_query=None, min_size=None, max_size=None, status=None):
+        params = []
+        main_props_query = """
+        SELECT
+            p.property_id,
+            p.title_deed_number,
+            p.location,
+            p.size,
+            p.description,
+            p.price,
+            p.telephone_number,
+            p.image_paths,
+            p.title_image_paths,
+            p.status,
+            p.added_by_user_id,
+            p.owner,
+            u.username AS added_by_username,
+            'Main' AS source_table
+        FROM properties p
+        LEFT JOIN users u ON p.added_by_user_id = u.user_id
         """
-        conn = self._get_connection()
-        if not conn:
-            return False
+        transfer_props_query = """
+        SELECT
+            pt.property_id,
+            pt.title_deed_number,
+            pt.location,
+            pt.size,
+            pt.description,
+            NULL AS price,
+            pt.telephone_number,
+            pt.image_paths,
+            pt.title_image_paths,
+            NULL AS status,
+            pt.added_by_user_id,
+            pt.owner,
+            u.username AS added_by_username,
+            'Transfer' AS source_table
+        FROM propertiesForTransfer pt
+        LEFT JOIN users u ON pt.added_by_user_id = u.user_id
+        """
 
-        try:
-            cursor = conn.cursor()
-            query = "SELECT is_agent FROM users WHERE user_id = %s"
-            cursor.execute(query, (user_id,))
-            result = cursor.fetchone()
-            
-            if result and result[0] == 1:
-                return True
-            return False
-            
-        except Error as e:
-            print(f"Database error checking if user is an agent: {e}")
-            return False
-        finally:
-            if conn and conn.is_connected():
-                cursor.close()
-                conn.close()
+        combined_query = f"({main_props_query}) UNION ALL ({transfer_props_query})"
+        full_query = f"SELECT * FROM ({combined_query}) AS combined_results WHERE 1=1"
+        if search_query:
+            full_query += " AND (title_deed_number LIKE %s OR location LIKE %s OR description LIKE %s)"
+            params.extend([f"%{search_query}%", f"%{search_query}%", f"%{search_query}%"])
+
+        if min_size is not None:
+            full_query += " AND size >= %s"
+            params.append(min_size)
+
+        if max_size is not None:
+            full_query += " AND size <= %s"
+            params.append(max_size)
+
+        if status:
+            full_query += " AND (status = %s OR status IS NULL)"
+            params.append(status)
+
+        full_query += " ORDER BY property_id DESC"
+
+        if limit is not None:
+            full_query += " LIMIT %s"
+            params.append(limit)
+        if offset is not None:
+            full_query += " OFFSET %s"
+            params.append(offset)
+
+        results_rows = self._execute_query(full_query, tuple(params), fetch_all=True)
+        return results_rows if results_rows else []
     
-    def get_agent_by_user_id(self, user_id):
-        """
-        Retrieves an agent's data from the users table by their user ID.
-        
-        Args:
-            user_id (int): The ID of the user to retrieve.
-            
-        Returns:
-            dict or None: A dictionary containing the user's data if they are an agent, 
-                        otherwise None.
-        """
-        conn = self._get_connection()
-        if not conn:
-            return None
-            
-        try:
-            cursor = conn.cursor(dictionary=True)
+    def get_property_by_source(self, property_id, source_table):
+        if source_table == 'Main':
             query = """
-                SELECT * FROM users 
-                WHERE user_id = %s AND is_agent = 1
+            SELECT
+                p.property_id, p.title_deed_number, p.location, p.size, p.description,
+                p.price, p.telephone_number, p.image_paths, p.title_image_paths, p.status,
+                p.added_by_user_id, p.owner, u.username AS added_by_username
+            FROM properties p
+            LEFT JOIN users u ON p.added_by_user_id = u.user_id
+            WHERE p.property_id = %s
             """
-            cursor.execute(query, (user_id,))
-            agent_data = cursor.fetchone()
-            return agent_data
-        except Error as e:
-            print(f"Database error fetching agent data for user ID {user_id}: {e}")
-            return None
-        finally:
-            if conn and conn.is_connected():
-                cursor.close()
-                conn.close()
+            results_row = self._execute_query(query, (property_id,), fetch_one=True)
+        elif source_table == 'Transfer':
+            query = """
+            SELECT
+                pt.property_id, pt.title_deed_number, pt.location, pt.size, pt.description,
+                NULL AS price, pt.telephone_number, pt.image_paths, pt.title_image_paths, NULL AS status,
+                pt.added_by_user_id, pt.owner, u.username AS added_by_username
+            FROM propertiesForTransfer pt
+            LEFT JOIN users u ON pt.added_by_user_id = u.user_id
+            WHERE pt.property_id = %s
+            """
+            results_row = self._execute_query(query, (property_id,), fetch_one=True)
+        else:
+            results_row = None
+        return results_row if results_row else None
     
-    ## NEW METHODS FOR PROPOSED LOTS UI ##
-
+    def get_proposed_lots_with_details(self):
+        query = '''
+            SELECT 
+                p.title_deed_number,
+                pl.lot_id,
+                pl.size,
+                pl.location,
+                pl.surveyor_name,
+                pl.created_by,
+                pl.status
+            FROM proposed_lots pl
+            INNER JOIN properties p ON pl.parent_block_id = p.property_id
+        '''
+        return self._execute_query(query, fetch_all=True)
+    
     def propose_new_lot(self, proposed_lot_data):
         query = '''
             INSERT INTO proposed_lots (parent_block_id, size, location, surveyor_name, created_by, title_deed_number, price, status)
@@ -2204,223 +1358,6 @@ class DatabaseManager:
         )
         self._execute_query(query, params)
 
-    def create_payment_plan(self, plan_data):
-        """
-        Inserts a new payment plan record into the payment_plans table.
-        
-        Args:
-            plan_data (dict): A dictionary containing the details of the new plan,
-                            including 'name', 'deposit_percentage', 'duration_months', 
-                            'interest_rate', and 'created_by'.
-        
-        Returns:
-            int: The ID of the newly created payment plan, or None if an error occurred.
-        """
-        sql = """
-        INSERT INTO payment_plans (name, deposit_percentage, duration_months, interest_rate, created_by)
-        VALUES (%s, %s, %s, %s, %s);
-        """
-        conn = None
-        cursor = None
-        try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            cursor.execute(sql, (
-                plan_data['name'],
-                plan_data['deposit_percentage'],
-                plan_data['duration_months'],
-                plan_data['interest_rate'],
-                plan_data['created_by']
-            ))
-            conn.commit()
-            return cursor.lastrowid
-        except Error as e:
-            print(f"Error creating payment plan: {e}")
-            if conn:
-                conn.rollback()
-            return None
-        finally:
-            if cursor:
-                cursor.close()
-            if conn and conn.is_connected():
-                conn.close()
-    
-    def get_payment_plans(self):
-        """
-        Retrieves all payment plans from the database.
-        
-        Returns:
-            list: A list of dictionaries, where each dictionary represents a plan.
-        """
-        conn = None
-        plans = []
-        try:
-            conn = self._get_connection()
-            cursor = conn.cursor(dictionary=True) # Use dictionary=True for dict results
-            sql = "SELECT plan_id, name, deposit_percentage, duration_months, interest_rate, created_by FROM payment_plans;"
-            cursor.execute(sql)
-            plans = cursor.fetchall()
-            return plans
-        except Error as e:
-            print(f"Error retrieving payment plans: {e}")
-            return []
-        finally:
-            if conn and conn.is_connected():
-                cursor.close()
-                conn.close()
-
-    def get_plan_by_id(self, plan_id):
-        """
-        Fetches a single payment plan from the database using its plan_id.
-        
-        Returns:
-            dict: A dictionary of the plan details, or None if not found.
-        """
-        conn = None
-        plan_data = None
-        try:
-            conn = self._get_connection()
-            cursor = conn.cursor(dictionary=True)
-            sql = """
-                SELECT 
-                    plan_id, 
-                    name, 
-                    deposit_percentage, 
-                    duration_months, 
-                    interest_rate, 
-                    created_by 
-                FROM 
-                    payment_plans 
-                WHERE 
-                    plan_id = %s;
-            """
-            cursor.execute(sql, (plan_id,))
-            plan_data = cursor.fetchone()
-        except Error as e:
-            print(f"Database error while fetching plan with ID {plan_id}: {e}")
-        finally:
-            if conn and conn.is_connected():
-                cursor.close()
-                conn.close()
-        return plan_data
-    
-    def update_payment_plan(self, plan_id, plan_data):
-        """
-        Updates an existing payment plan using the provided format.
-        
-        Args:
-            plan_id (int): The ID of the plan to update.
-            plan_data (dict): A dictionary with the new plan details.
-                            Can contain 'name', 'deposit_percentage', 'duration_months', or 'interest_rate'.
-        """
-        conn = self._get_connection()
-        if not conn:
-            return
-
-        try:
-            cursor = conn.cursor()
-            
-            # Constructing the SET clause dynamically based on provided data
-            set_clauses = []
-            params = []
-
-            if 'name' in plan_data and plan_data['name'] is not None:
-                set_clauses.append("name = %s")
-                params.append(plan_data['name'])
-            
-            if 'deposit_percentage' in plan_data and plan_data['deposit_percentage'] is not None:
-                set_clauses.append("deposit_percentage = %s")
-                params.append(plan_data['deposit_percentage'])
-
-            if 'duration_months' in plan_data and plan_data['duration_months'] is not None:
-                set_clauses.append("duration_months = %s")
-                params.append(plan_data['duration_months'])
-
-            if 'interest_rate' in plan_data and plan_data['interest_rate'] is not None:
-                set_clauses.append("interest_rate = %s")
-                params.append(plan_data['interest_rate'])
-
-            if not set_clauses:
-                print("No update data provided for the payment plan.")
-                return
-
-            # Add the plan_id to the parameters for the WHERE clause
-            params.append(plan_id)
-
-            # Construct the final query
-            query = f"UPDATE payment_plans SET {', '.join(set_clauses)} WHERE plan_id = %s"
-            
-            cursor.execute(query, tuple(params))
-            conn.commit()
-            print(f"Payment plan with ID {plan_id} updated successfully.")
-
-        except Error as e:
-            print(f"Error updating payment plan with ID {plan_id}: {e}")
-            conn.rollback() # Rollback changes if an error occurs
-        finally:
-            if conn and conn.is_connected():
-                cursor.close()
-                conn.close()
-    
-    def delete_payment_plan(self, plan_id):
-        """
-        Deletes a payment plan based on its ID.
-        
-        Args:
-            plan_id (int): The ID of the plan to delete.
-        
-        Returns:
-            bool: True if the plan was deleted successfully, False otherwise.
-        """
-        conn = self._get_connection()
-        if not conn:
-            return False
-            
-        try:
-            cursor = conn.cursor()
-            query = "DELETE FROM payment_plans WHERE plan_id = %s"
-            cursor.execute(query, (plan_id,))
-            conn.commit()
-            return cursor.rowcount > 0
-        except Error as e:
-            print(f"Error deleting payment plan: {e}")
-            return False
-        finally:
-            if conn and conn.is_connected():
-                cursor.close()
-                conn.close()
-    
-    def update_block_size(self, block_id, new_size):
-        query = '''
-            UPDATE properties
-            SET size = %s
-            WHERE property_id = %s
-        '''
-        self._execute_query(query, (new_size, block_id))
-
-    def get_proposed_lots_with_details(self):
-        query = '''
-            SELECT 
-                p.title_deed_number,
-                pl.lot_id,
-                pl.size,
-                pl.location,
-                pl.surveyor_name,
-                pl.created_by,
-                pl.status
-            FROM proposed_lots pl
-            INNER JOIN properties p ON pl.parent_block_id = p.property_id
-        '''
-        return self._execute_query(query, fetch_all=True) 
-
-    def get_lots_for_update(self):
-        query = '''
-            SELECT lot_id, title_deed_number, size, status, location
-            FROM proposed_lots
-            WHERE status IN ('Proposed')
-        '''
-        return self._execute_query(query, fetch_all=True)
-
     def get_lot_details_for_rejection(self, lot_id):        
         query = """
         SELECT parent_block_id, size
@@ -2431,7 +1368,7 @@ class DatabaseManager:
         if row:
             return dict(row)
         return None
-
+    
     def finalize_lot(self, lot_id):
         query = '''
             UPDATE proposed_lots
@@ -2473,325 +1410,261 @@ class DatabaseManager:
         self._execute_query(query, (status, block_id))
         print(f"Status for block {block_id} successfully updated to '{status}'.")
 
-    def get_client_properties(self, client_id):
-        """
-        Retrieves properties associated with a specific client.
-        This assumes properties are linked to clients via transactions.
-        """
-        conn = self._get_connection()
-        if not conn:
-            return []
-            
-        try:
-            cursor = conn.cursor(dictionary=True)
-            query = """
-                SELECT p.property_id, p.title_deed_number, p.location, p.size, p.price, p.status,
-                    t.transaction_date, t.total_amount_paid
-                FROM properties p
-                JOIN transactions t ON p.property_id = t.property_id
-                WHERE t.client_id = %s
-                ORDER BY t.transaction_date DESC
-            """
-            cursor.execute(query, (client_id,))
-            rows = cursor.fetchall()
-            return rows if rows else []
-        except Error as e:
-            print(f"Error fetching client properties: {e}")
-            return []
-        finally:
-            if conn and conn.is_connected():
-                cursor.close()
-                conn.close()
+    def update_block_size(self, block_id, new_size):
+        query = '''
+            UPDATE properties
+            SET size = %s
+            WHERE property_id = %s
+        '''
+        self._execute_query(query, (new_size, block_id))
 
-    def get_client_survey_jobs(self, client_id):
-        """
-        Retrieves all survey jobs for a specific client.
-        """
-        conn = self._get_connection()
-        if not conn:
-            return []
-            
-        try:
-            cursor = conn.cursor(dictionary=True)
-            query = """
-                SELECT job_id, property_location, job_description, fee, amount_paid, balance,
-                    deadline, status, created_at
-                FROM survey_jobs
-                WHERE client_id = %s
-                ORDER BY created_at DESC
-            """
-            cursor.execute(query, (client_id,))
-            rows = cursor.fetchall()
-            return rows if rows else []
-        except Error as e:
-            print(f"Error fetching client survey jobs: {e}")
-            return []
-        finally:
-            if conn and conn.is_connected():
-                cursor.close()
-                conn.close()
+    def get_lots_for_update(self):
+        query = '''
+            SELECT lot_id, title_deed_number, size, status, location
+            FROM proposed_lots
+            WHERE status IN ('Proposed')
+        '''
+        return self._execute_query(query, fetch_all=True)
     
-    def get_all_propertiesForTransfer_paginated(self, limit=None, offset=None, search_query=None, min_size=None, max_size=None, status=None):
-        """
-        Fetches properties from 'properties' and 'propertiesForTransfer' with optional search,
-        size filters, status, and pagination, including the username of the user who added them.
-        Returns properties ordered by property_id DESC (newest first).
-        
-        Returns: A list of dictionaries, each representing a property.
-        """
-        conn = self._get_connection()
-        if not conn:
-            return []
-
-        try:
-            cursor = conn.cursor(dictionary=True)
-            
-            query_parts = []
-            params = []
-
-            # Query for properties from the 'properties' table
-            main_props_query = """
+    def get_all_jobs(self):
+        query = """
             SELECT
-                p.property_id,
-                p.title_deed_number,
-                p.location,
-                p.size,
-                p.description,
-                p.price,
-                p.telephone_number,
-                p.image_paths,
-                p.title_image_paths,
-                p.status,
-                p.added_by_user_id,
-                p.owner,
-                u.username AS added_by_username,
-                'Main' AS source_table
-            FROM properties p
-            LEFT JOIN users u ON p.added_by_user_id = u.user_id
-            """
-            query_parts.append(main_props_query)
-
-            # Query for properties from the 'propertiesForTransfer' table
-            transfer_props_query = """
-            SELECT
-                pt.property_id,
-                pt.title_deed_number,
-                pt.location,
-                pt.size,
-                pt.description,
-                NULL AS price,
-                pt.telephone_number,
-                pt.image_paths,
-                pt.title_image_paths,
-                NULL AS status,
-                pt.added_by_user_id,
-                pt.owner,
-                u.username AS added_by_username,
-                'Transfer' AS source_table
-            FROM propertiesForTransfer pt
-            LEFT JOIN users u ON pt.added_by_user_id = u.user_id
-            """
-            query_parts.append(transfer_props_query)
-
-            # Combine queries with UNION ALL
-            combined_query = " UNION ALL ".join(query_parts)
-
-            # Add WHERE clause and filters
-            full_query = f"SELECT * FROM ({combined_query}) AS combined_results WHERE 1=1"
-            where_params = []
-            
-            if search_query:
-                full_query += " AND (title_deed_number LIKE %s OR location LIKE %s OR description LIKE %s)"
-                where_params.extend([f"%{search_query}%", f"%{search_query}%", f"%{search_query}%"])
-
-            if min_size is not None:
-                full_query += " AND size >= %s"
-                where_params.append(min_size)
-
-            if max_size is not None:
-                full_query += " AND size <= %s"
-                where_params.append(max_size)
-            
-            if status:
-                full_query += " AND status = %s"
-                where_params.append(status)
-
-            full_query += " ORDER BY property_id DESC"
-            
-            if limit is not None:
-                full_query += " LIMIT %s"
-                where_params.append(limit)
-            
-            if offset is not None:
-                full_query += " OFFSET %s"
-                where_params.append(offset)
-                
-            cursor.execute(full_query, tuple(where_params))
-            results = cursor.fetchall()
-            
-            return results
-        except Error as e:
-            print(f"Error fetching properties: {e}")
-            return []
-        finally:
-            if conn and conn.is_connected():
-                cursor.close()
-                conn.close()
+                sj.*,
+                cf.file_name,
+                sc.name AS client_name,
+                sc.telephone_number AS telephone_number
+            FROM
+                service_jobs sj
+            JOIN
+                client_files cf ON sj.file_id = cf.file_id
+            JOIN
+                service_clients sc ON cf.client_id = sc.client_id
+            ORDER BY
+                sj.timestamp DESC
+        """
+        return self._execute_query(query, fetch_all=True)
     
-    def get_property_by_source(self, property_id, source_table):
-        """
-        Fetches a single property from either the 'properties' or 'propertiesForTransfer' table
-        based on its property ID and source table.
-        """
-        conn = self._get_connection()
-        if not conn:
-            return None
-            
-        try:
-            cursor = conn.cursor(dictionary=True)
-            results_row = None
-            
-            if source_table == 'Main':
-                query = """
-                SELECT
-                    p.property_id, p.title_deed_number, p.location, p.size, p.description,
-                    p.price, p.telephone_number, p.image_paths, p.title_image_paths, p.status,
-                    p.added_by_user_id, p.owner, u.username AS added_by_username
-                FROM properties p
-                LEFT JOIN users u ON p.added_by_user_id = u.user_id
-                WHERE p.property_id = %s
-                """
-                cursor.execute(query, (property_id,))
-                results_row = cursor.fetchone()
-                
-            elif source_table == 'Transfer':
-                query = """
-                SELECT
-                    pt.property_id, pt.title_deed_number, pt.location, pt.size, pt.description,
-                    NULL AS price, pt.telephone_number, pt.image_paths, pt.title_image_paths, NULL AS status,
-                    pt.added_by_user_id, pt.owner, u.username AS added_by_username
-                FROM propertiesForTransfer pt
-                LEFT JOIN users u ON pt.added_by_user_id = u.user_id
-                WHERE pt.property_id = %s
-                """
-                cursor.execute(query, (property_id,))
-                results_row = cursor.fetchone()
-                
-            return results_row
-            
-        except Error as e:
-            print(f"Error fetching property: {e}")
-            return None
-        finally:
-            if conn and conn.is_connected():
-                cursor.close()
-                conn.close()
+    def get_file_by_id(self, file_id):
+        query = "SELECT * FROM client_files WHERE file_id = %s"
+        return self._execute_query(query, (file_id,), fetch_one=True)
     
-    def execute_property_transfer(self, property_id, from_client_id, to_client_id, transfer_price, transfer_date, executed_by_user_id, supervising_agent_id, document_path, source_table):
+    def get_filtered_payments(self, filters, page=1, page_size=20):
+        base_query = """
+                FROM service_payments AS sp
+                JOIN service_jobs AS sj ON sp.job_id = sj.job_id
+                JOIN client_files AS cf ON sj.file_id = cf.file_id
+                JOIN service_clients AS sc ON cf.client_id = sc.client_id
         """
-        Executes a property transfer transaction:
-        1. Updates the owner in the correct table (properties or propertiesForTransfer).
-        2. Records the transfer details in the property_transfers table.
+        conditions = []
+        params = []
         
-        Returns: True on success, False on failure.
+        # --- MODIFIED: Add a hard-coded filter for ongoing or completed jobs ---
+        # This ensures that only relevant jobs are ever included in the results.
+        conditions.append("sj.status IN (%s, %s)")
+        params.append('ongoing')
+        params.append('completed')
+        # ---------------------------------------------------------------------
+
+        if 'status' in filters and filters['status'] != 'All':
+            conditions.append("sp.status = %s")
+            params.append(filters['status'])
+        if 'payment_mode' in filters and filters['payment_mode']:
+            conditions.append("sp.payment_type = %s")
+            params.append(filters['payment_mode'])
+        if 'client_name' in filters and filters['client_name']:
+            conditions.append("sc.name LIKE %s")
+            params.append(f"%{filters['client_name']}%")
+        if 'file_name' in filters and filters['file_name']:
+            conditions.append("cf.file_name LIKE %s")
+            params.append(f"%{filters['file_name']}%")
+        if 'title_number' in filters and filters['title_number']:
+            conditions.append("sj.title_number LIKE %s")
+            params.append(f"%{filters['title_number']}%")
+        if 'from_date' in filters and filters['to_date']:
+            from_date = filters['from_date']
+            to_date = filters['to_date']
+            from_date_str = from_date.strftime('%Y-%m-%d 00:00:00')
+            to_date_str = to_date.strftime('%Y-%m-%d 23:59:59')
+            conditions.append("sp.payment_date BETWEEN %s AND %s")
+            params.append(from_date_str)
+            params.append(to_date_str)
+
+        where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
+        count_query = f"SELECT COUNT(*) {base_query}{where_clause}"
+        count_result = self._execute_query(count_query, tuple(params), fetch_one=True)
+        total_count = count_result['COUNT(*)'] if count_result else 0
+
+        data_query = f"""
+            SELECT
+                sp.payment_id,
+                sc.name AS client_name,
+                cf.file_name,
+                sj.job_description,
+                sj.title_number,
+                sp.fee,
+                sp.amount,
+                sp.balance,
+                sp.payment_date
+            {base_query}{where_clause}
+            ORDER BY sp.payment_date DESC
+            LIMIT %s OFFSET %s
         """
-        conn = None
-        try:
-            conn = self._get_connection()
-            # Disable autocommit to manage the transaction manually
-            conn.autocommit = False
-            cursor = conn.cursor()
-            
-            # 1. Fetch the name of the new owner from the clients table
-            cursor.execute("SELECT name FROM clients WHERE client_id = %s", (to_client_id,))
-            new_owner_name = cursor.fetchone()
-            
-            if new_owner_name:
-                new_owner_name = new_owner_name[0]
-            else:
-                raise ValueError(f"Client with ID {to_client_id} not found.")
+        offset = (page - 1) * page_size
+        data_params = params + [page_size, offset]
+        payments = self._execute_query(data_query, tuple(data_params), fetch_all=True)
+        return payments if payments else [], total_count
 
-            # 2. Update the property owner in the correct source table
-            if source_table == 'Main':
-                cursor.execute("UPDATE properties SET owner = %s WHERE property_id = %s", (new_owner_name, property_id))
-            elif source_table == 'Transfer':
-                cursor.execute("UPDATE propertiesForTransfer SET owner = %s WHERE property_id = %s", (new_owner_name, property_id))
-            else:
-                raise ValueError(f"Invalid source table: {source_table}")
-
-            # 3. Insert a record into the 'property_transfers' table
-            transfer_record_query = """
-            INSERT INTO property_transfers (
-                property_id, from_client_id, to_client_id, transfer_price,
-                transfer_date, executed_by_user_id, supervising_agent_id,
-                transfer_document_path
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """
-            cursor.execute(transfer_record_query, (
-                property_id, from_client_id, to_client_id, transfer_price,
-                transfer_date, executed_by_user_id, supervising_agent_id,
-                document_path
-            ))
-
-            # Commit the transaction
-            conn.commit()
-            return True
-
-        except Error as e:
-            if conn:
-                conn.rollback()
-            print(f"Database error during property transfer: {e}")
-            return False
-        except ValueError as e:
-            if conn:
-                conn.rollback()
-            print(f"Error: {e}")
-            return False
-        finally:
-            if conn and conn.is_connected():
-                cursor.close()
-                conn.close()
     
-    def get_service_jobs_for_report(self, start_date, end_date, status=None):
-        """
-        Retrieves service jobs for a specified date range and optional status.
+    def update_payment_record(self, payment_id, new_status, final_payment_amount, payment_type):
+        select_query = "SELECT amount, balance FROM service_payments WHERE payment_id = %s"
+        result = self._execute_query(select_query, (payment_id,), fetch_one=True)
+        if not result:
+            print(f"Error: Payment record with ID {payment_id} not found.")
+            return False
+        current_amount = float(result['amount'])
+        current_balance = float(result['balance'])
+        new_amount = current_amount + final_payment_amount
+        new_balance = current_balance - final_payment_amount
 
+        update_query = "UPDATE service_payments SET status = %s, amount = %s, balance = %s WHERE payment_id = %s"
+
+        update_params = (new_status, new_amount, new_balance, payment_id)
+        update_successful = self._execute_query(update_query, update_params)
+
+        if not update_successful:
+            print("Update failed, returning early.")
+            return False
+        
+        insert_query = "INSERT INTO service_payments_history (payment_id, payment_amount, payment_type, payment_date) VALUES (%s, %s, %s, %s)"
+        payment_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        insert_params = (payment_id, final_payment_amount, payment_type, payment_date)
+        insert_successful = self._execute_query(insert_query, insert_params)
+
+        return insert_successful
+    
+    def get_payment_history(self, payment_id):
+        query = """
+            SELECT history_id, payment_amount, payment_type, payment_date 
+            FROM service_payments_history 
+            WHERE payment_id = %s 
+            ORDER BY payment_date DESC
+        """
+        params = (payment_id,)
+        history_records = self._execute_query(query, params, fetch_all=True)
+        return history_records if history_records else []
+    
+    def get_job_details(self, job_id):
+        query = """
+            SELECT
+                sj.job_id,
+                sj.job_description,
+                sj.title_name,
+                sj.title_number,
+                cf.file_name,
+                sc.name AS client_name
+            FROM service_jobs sj
+            JOIN client_files cf ON sj.file_id = cf.file_id
+            JOIN service_clients sc ON cf.client_id = sc.client_id
+            WHERE sj.job_id = %s
+        """
+        params = (job_id,)
+        return self._execute_query(query, params, fetch_one=True)
+    
+    def save_dispatch_details(self, job_id, dispatch_date, reason, collected_by, phone, sign_blob):
+        insert_query = """
+            INSERT INTO service_dispatch (job_id, dispatch_date, reason_for_dispatch, collected_by, collector_phone, sign)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """
+        insert_params = (job_id, dispatch_date, reason, collected_by, phone, sign_blob)
+        update_query = """
+            UPDATE service_jobs
+            SET status = 'Dispatched'
+            WHERE job_id = %s
+        """
+        update_params = (job_id,)
+        return self._execute_transaction((insert_query, insert_params), (update_query, update_params))
+
+
+
+    
+    def add_job(self, file_id, job_description, title_name, title_number, fee, added_by, brought_by):
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        query = '''
+            INSERT INTO service_jobs (file_id, job_description, title_name, title_number, fee, added_by, brought_by, timestamp)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        '''
+        params = (file_id, job_description, title_name, title_number, fee, added_by, brought_by, timestamp)
+        return self._execute_query(query, params)
+
+    def update_job_status(self, job_id, new_status):
+        """
+        Updates only the status of a specific job.
+        
+        This method uses the more general update_job function, making it
+        more specific and easier to use for this particular task.
+        
         Args:
-            start_date (str): The start date of the report range in 'YYYY-MM-DD' format.
-            end_date (str): The end date of the report range in 'YYYY-MM-DD' format.
-            status (str, optional): The status to filter by (e.g., 'Completed'). Defaults to None.
-
+            job_id (int): The unique ID of the job.
+            new_status (str): The new status for the job (e.g., 'Ongoing', 'Completed').
+            
         Returns:
-            list: A list of dictionaries, where each dictionary represents a service job
-                record. Returns an empty list on error.
+            bool: True if the update was successful, False otherwise.
         """
-        conn = self._get_connection()
-        if not conn:
-            return []
-
-        try:
-            cursor = conn.cursor(dictionary=True)
-            query = """
-                SELECT * FROM service_jobs
-                WHERE completion_date BETWEEN %s AND %s
-            """
-            params = [start_date, end_date]
-            if status:
-                query += " AND status = %s"
-                params.append(status)
-            query += " ORDER BY completion_date"
-            cursor.execute(query, tuple(params))
-            results = cursor.fetchall()
-            return results
-        except Error as e:
-            print(f"Database error retrieving service jobs for report: {e}")
-            return []
-        finally:
-            if conn and conn.is_connected():
-                cursor.close()
-                conn.close()
+        new_data = {'status': new_status}
+        return self.update_job(job_id, new_data)
     
-    ##Activity Log##
+    def update_job(self, job_id, new_data):
+        if not new_data:
+            return False
+        set_clause = ', '.join([f"{key} = %s" for key in new_data.keys()])
+        values = list(new_data.values())
+        values.append(job_id)
+        query = f'UPDATE service_jobs SET {set_clause} WHERE job_id = %s'
+        return self._execute_query(query, tuple(values))
+    
+    def get_jobs_by_file_id(self, file_id):
+        query = "SELECT * FROM service_jobs WHERE file_id = %s"
+        return self._execute_query(query, (file_id,), fetch_all=True)
+
+
+
+    
+    def get_completed_jobs(self):
+        query = """
+            SELECT 
+                sj.job_id,
+                sj.timestamp,
+                sj.job_description,
+                sj.title_name,
+                sj.title_number,
+                cf.file_name,
+                sc.name AS client_name,
+                sj.status
+            FROM 
+                service_jobs sj
+            JOIN 
+                client_files cf ON sj.file_id = cf.file_id
+            JOIN 
+                service_clients sc ON cf.client_id = sc.client_id
+            WHERE 
+                sj.status = 'Completed'
+        """
+        return self._execute_query(query, fetch_all=True)
+    
+    def get_service_client_by_id(self, client_id):
+        query = 'SELECT * FROM service_clients WHERE client_id = %s'
+        return self._execute_query(query, (client_id,), fetch_one=True)
+    def get_all_service_clients(self):
+        query = 'SELECT client_id, name, telephone_number, email FROM service_clients ORDER BY name'
+        clients = self._execute_query(query, fetch_all=True)
+        return clients
+        
+
+    
+    def get_survey_job_status_counts(self):
+        query = "SELECT status, COUNT(*) AS count FROM service_jobs GROUP BY status"
+        results_rows = self._execute_query(query, fetch_all=True)
+        return {row['status']: row['count'] for row in results_rows} if results_rows else {}
 
     def add_activity_log(self, user_id, action_type, details=None):
         """ Logs a user activity. """
@@ -2845,255 +1718,432 @@ class DatabaseManager:
 
         return self._execute_query(query, tuple(params), fetch_all=True)
     
-    def get_all_users_for_log_viewer(self):
+    def get_dispatch_records(self, filters=None):
         """
-        Retrieves a list of usernames to populate the user filter.
-        Returns: A list of usernames.
+        Fetches dispatch records from the database, joining with service_jobs to get job details.
+        Applies filters if they are provided.
+        Returns: A list of dictionaries, each representing a dispatch record.
         """
-        conn = self._get_connection()
-        if not conn:
-            return []
-        
-        try:
-            cursor = conn.cursor(dictionary=True)
-            query = "SELECT username FROM users ORDER BY username ASC"
-            cursor.execute(query)
-            rows = cursor.fetchall()
-            
-            return [row['username'] for row in rows] if rows else []
-        except Error as e:
-            print(f"Error fetching users for log viewer: {e}")
-            return []
-        finally:
-            if conn and conn.is_connected():
-                cursor.close()
-                conn.close()
-    
-    def get_all_action_types(self):
-        """
-        Retrieves a list of unique action types from the activity logs to populate the filter.
-        Returns: A list of unique action type strings.
-        """
-        conn = self._get_connection()
-        if not conn:
-            return []
-        
-        try:
-            cursor = conn.cursor(dictionary=True)
-            query = "SELECT DISTINCT action_type FROM activity_logs ORDER BY action_type ASC"
-            cursor.execute(query)
-            rows = cursor.fetchall()
-            
-            return [row['action_type'] for row in rows] if rows else []
-        except Error as e:
-            print(f"Error fetching action types: {e}")
-            return []
-        finally:
-            if conn and conn.is_connected():
-                cursor.close()
-                conn.close()
-    
-    def get_total_activity_logs_count(self, user_id=None, action_type=None, start_date=None, end_date=None):
-        """
-        Returns the total count of activity logs, with optional filters.
-        """
-        conn = self._get_connection()
-        if not conn:
-            return 0
-        
-        try:
-            cursor = conn.cursor()
-            query = "SELECT COUNT(*) FROM activity_logs WHERE 1=1"
-            params = []
-            
-            if user_id:
-                query += " AND user_id = %s"
-                params.append(user_id)
-            if action_type:
-                query += " AND action_type = %s"
-                params.append(action_type)
-            if start_date:
-                query += " AND timestamp >= %s"
-                params.append(f"{start_date} 00:00:00")
-            if end_date:
-                query += " AND timestamp <= %s"
-                params.append(f"{end_date} 23:59:59")
-                
-            cursor.execute(query, tuple(params))
-            result = cursor.fetchone()
-            
-            return result[0] if result else 0
-        except Error as e:
-            print(f"Error fetching activity log count: {e}")
-            return 0
-        finally:
-            if conn and conn.is_connected():
-                cursor.close()
-                conn.close()
-    
-    def get_activity_logs_paginated(self, user_id=None, action_type=None, start_date=None, end_date=None,
-                                limit=None, offset=None):
-        """
-        Fetches a paginated list of activity logs with optional filters,
-        joining with the users table to get the username.
-        Returns: A list of dictionaries, each representing an activity log.
-        """
-        conn = self._get_connection()
-        if not conn:
-            return []
-        
-        try:
-            cursor = conn.cursor(dictionary=True)
-            query = """
-            SELECT
-                l.log_id,
-                l.timestamp,
-                l.action_type,
-                l.details,
-                u.username
-            FROM
-                activity_logs l
-            LEFT JOIN
-                users u ON l.user_id = u.user_id
-            WHERE 1=1
-            """
-            params = []
-
-            if user_id:
-                query += " AND l.user_id = %s"
-                params.append(user_id)
-            if action_type:
-                query += " AND l.action_type = %s"
-                params.append(action_type)
-            if start_date:
-                query += " AND l.timestamp >= %s"
-                params.append(f"{start_date} 00:00:00")
-            if end_date:
-                query += " AND l.timestamp <= %s"
-                params.append(f"{end_date} 23:59:59")
-
-            query += " ORDER BY l.timestamp DESC"
-
-            if limit is not None:
-                query += " LIMIT %s"
-                params.append(limit)
-            if offset is not None:
-                query += " OFFSET %s"
-                params.append(offset)
-
-            cursor.execute(query, tuple(params))
-            results = cursor.fetchall()
-            
-            return results
-        except Error as e:
-            print(f"Error fetching paginated activity logs: {e}")
-            return []
-        finally:
-            if conn and conn.is_connected():
-                cursor.close()
-                conn.close()
-    
-    
-    def add_service_job(self, file_id, job_description, title_name, title_number, fee, status, added_by, brought_by):
-        """ Adds a new job for a client's file. """
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        query = '''
-            INSERT INTO service_jobs (file_id, job_description, title_name, title_number, fee, status, added_by, brought_by, timestamp)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-        '''
-        return self._execute_query(query, (file_id, job_description, title_name, title_number, fee, status, added_by, brought_by, timestamp))
-
-    def get_service_job_by_file_id(self, file_id):
-        """ Retrieves all jobs related to a specific file. """
-        query = "SELECT * FROM service_jobs WHERE file_id = %s"
-        return self._execute_query(query, (file_id,), fetch_all=True)
-
-    def get_all_service_jobs_paginated(self, limit=None, offset=None, search_query=None):
-        """ Retrieves paginated list of all service jobs with client details. """
         query = """
             SELECT
-                sj.job_id, sj.job_description, sj.title_name, sj.title_number, sj.fee, sj.status, sj.added_by, sj.brought_by, sj.timestamp,
-                cf.file_name, sc.name as client_name, sc.telephone_number
-            FROM service_jobs sj
-            JOIN client_files cf ON sj.file_id = cf.file_id
-            JOIN service_clients sc ON cf.client_id = sc.client_id
+                sd.job_id,
+                sd.dispatch_date,
+                sj.title_name,
+                sj.title_number,
+                sj.job_description,
+                sd.collected_by,
+                sd.collector_phone,
+                sd.reason_for_dispatch,
+                sd.sign
+            FROM
+                service_dispatch AS sd
+            INNER JOIN
+                service_jobs AS sj ON sd.job_id = sj.job_id
             WHERE 1=1
         """
         params = []
-        if search_query:
-            query += " AND (sj.title_name LIKE %s OR sj.title_number LIKE %s OR sj.job_description LIKE %s OR sc.name LIKE %s)"
-            params.extend([f"%{search_query}%", f"%{search_query}%", f"%{search_query}%", f"%{search_query}%"])
         
-        query += " ORDER BY sj.timestamp DESC"
+        if filters:
+            if 'from_date' in filters and filters['from_date']:
+                query += " AND DATE(sd.dispatch_date) >= %s"
+                params.append(filters['from_date'])
+            if 'to_date' in filters and filters['to_date']:
+                query += " AND DATE(sd.dispatch_date) <= %s"
+                params.append(filters['to_date'])
+            if 'title_number' in filters and filters['title_number']:
+                query += " AND sj.title_number LIKE %s"
+                params.append(f"%{filters['title_number']}%")
+            if 'collected_by' in filters and filters['collected_by']:
+                query += " AND sd.collected_by LIKE %s"
+                params.append(f"%{filters['collected_by']}%")
+                
+        return self._execute_query(query, params=params, fetch_all=True)
+
+    def get_signature_by_job_id(self, job_id):
+        """
+        Retrieves the signature BLOB for a given job ID.
+        Returns: A dictionary with the signature data, or None.
+        """
+        query = "SELECT sign FROM service_dispatch WHERE job_id = %s"
+        params = (job_id,)
+        return self._execute_query(query, params=params, fetch_one=True)
+    
+    def create_payment_plan(self, plan_data):
+        sql = """
+        INSERT INTO payment_plans (name, deposit_percentage, duration_months, interest_rate, created_by)
+        VALUES (%s, %s, %s, %s, %s)
+        """
+        params = (
+            plan_data['name'],
+            plan_data['deposit_percentage'],
+            plan_data['duration_months'],
+            plan_data['interest_rate'],
+            plan_data['created_by']
+        )
+        return self._execute_query(sql, params)
+    
+    def get_payment_plans(self):
+        sql = "SELECT plan_id, name, deposit_percentage, duration_months, interest_rate, created_by FROM payment_plans;"
+        return self._execute_query(sql, fetch_all=True)
+    
+    def get_plan_by_id(self, plan_id):
+        sql = "SELECT plan_id, name, deposit_percentage, duration_months, interest_rate, created_by FROM payment_plans WHERE plan_id = %s;"
+        return self._execute_query(sql, (plan_id,), fetch_one=True)
+
+    def update_payment_plan(self, plan_id, plan_data):
+        sql = """
+        UPDATE payment_plans
+        SET name = %s, deposit_percentage = %s, duration_months = %s, interest_rate = %s
+        WHERE plan_id = %s
+        """
+        params = (
+            plan_data.get('name'),
+            plan_data.get('deposit_percentage'),
+            plan_data.get('duration_months'),
+            plan_data.get('interest_rate'),
+            plan_id
+        )
+        return self._execute_query(sql, params)
+    
+    def delete_payment_plan(self, plan_id):
+        sql = "DELETE FROM payment_plans WHERE plan_id = %s"
+        return self._execute_query(sql, (plan_id,))
+    def add_daily_client(self, client_id, purpose, brought_by, user_id):
+        """Adds a new daily client entry for an existing client."""
+        query = "INSERT INTO daily_clients (client_id, purpose, brought_by, added_by_user_id) VALUES (%s, %s, %s, %s)"
+        params = (client_id, purpose, brought_by, user_id)
         
-        if limit is not None:
-            query += " LIMIT %s"
-            params.append(limit)
-        if offset is not None:
-            query += " OFFSET %s"
-            params.append(offset)
+        visit_id = self._execute_query(query, params)
+        if visit_id:
+            self.log_activity('Add Daily Visit', f'Added daily visit for client ID: {client_id}', user_id)
+            return visit_id
+        else:
+            messagebox.showerror("Error", "Failed to add daily visit details.")
+            return None
+
+    def get_daily_clients(self, start_date=None, end_date=None, purpose=None):
+        """
+        Retrieves daily client details with optional date filters and purpose,
+        joining with the clients table.
+        """
+        query = """
+        SELECT
+            dc.visit_id,
+            c.name,
+            c.telephone_number,
+            c.email,
+            dc.purpose,
+            dc.brought_by,
+            dc.timestamp
+        FROM daily_clients dc
+        JOIN clients c ON dc.client_id = c.client_id
+        WHERE 1=1
+        """
+        params = []
+        if start_date:
+            query += " AND dc.timestamp >= %s"
+            params.append(f"{start_date} 00:00:00")
+        if end_date:
+            query += " AND dc.timestamp <= %s"
+            params.append(f"{end_date} 23:59:59")
+        if purpose:
+            query += " AND dc.purpose = %s"
+            params.append(purpose)
         
+        query += " ORDER BY dc.timestamp DESC"
+        
+        return self._execute_query(query, params, fetch_all=True) or []
+    
+    def log_activity(self, action_type, details, user_id):
+        """
+        Logs a user action in the activity_logs table.
+        """
+        query = "INSERT INTO activity_logs (timestamp, user_id, action_type, details) VALUES (%s, %s, %s, %s)"
+        params = (datetime.now(), user_id, action_type, details)
+        self._execute_query(query, params)
+
+    def get_all_daily_clients_survey(self):
+        """
+        Retrieves all daily client visits for the current day with a purpose of 'survey'.
+        """
+        today = datetime.now().date()
+        return self.get_daily_clients(start_date=today, end_date=today, purpose='survey')
+    
+    def get_all_daily_clients_lands(self):
+        """
+        Retrieves all daily client visits for the current day with a purpose of 'land sales'.
+        """
+        today = datetime.now().date()
+        return self.get_daily_clients(start_date=today, end_date=today, purpose='land sales')
+    def get_total_activity_logs_count(self, user_id=None, action_type=None, start_date=None, end_date=None):
+            """
+            Returns the total count of activity logs, with optional filters.
+            """
+            query = "SELECT COUNT(*) FROM activity_logs WHERE 1=1"
+            params = []
+
+            if user_id:
+                query += " AND user_id = ?"
+                params.append(user_id)
+            if action_type:
+                query += " AND action_type = ?"
+                params.append(action_type)
+            if start_date:
+                query += " AND timestamp >= ?"
+                params.append(f"{start_date} 00:00:00")
+            if end_date:
+                query += " AND timestamp <= ?"
+                params.append(f"{end_date} 23:59:59")
+
+            result_row = self._execute_query(query, params, fetch_one=True)
+            return result_row[0] if result_row else 0
+    def get_total_sales_for_date_range(self, start_date, end_date):
+        """
+        Retrieves total revenue and total properties sold within a specified date range.
+        Assumes 'transaction_date' in 'transactions' table is stored as Букмекерлар-MM-DD HH:MM:SS.
+        """
+        try:
+            query = """
+                SELECT 
+                    SUM(t.total_amount_paid + t.balance) AS total_revenue, -- Total sales value (paid + balance)
+                    COUNT(DISTINCT t.property_id) AS total_properties_sold
+                FROM 
+                    transactions t
+                WHERE 
+                    t.transaction_date BETWEEN ? AND ? || ' 23:59:59'
+            """
+            result_row = self._execute_query(query, (start_date, end_date), fetch_one=True)
+            
+            return {
+                'total_revenue': result_row['total_revenue'] if result_row and result_row['total_revenue'] is not None else 0.0,
+                'total_properties_sold': result_row['total_properties_sold'] if result_row and result_row['total_properties_sold'] is not None else 0
+            }
+        except Exception as e:
+            print(f"Error in get_total_sales_for_date_range: {e}")
+            return {'total_revenue': 0.0, 'total_properties_sold': 0}
+
+    def get_detailed_sales_transactions_for_date_range(self, start_date, end_date):
+        """
+        Retrieves detailed sales transactions for the accounting-style report.
+        """
+        try:
+            # Convert string dates to datetime objects
+            start_datetime_obj = datetime.strptime(start_date, '%Y-%m-%d')
+            end_datetime_obj = datetime.strptime(end_date, '%Y-%m-%d')
+            
+            # Use datetime.combine() to set the end time to the end of the day
+            end_datetime_full = datetime.combine(end_datetime_obj, datetime.max.time())
+            
+            query = """
+                SELECT 
+                    p.title_deed_number AS title_deed,
+                    p.price AS actual_price,
+                    t.total_amount_paid AS amount_paid,
+                    t.balance AS balance
+                FROM 
+                    transactions t
+                JOIN 
+                    properties p ON t.property_id = p.property_id
+                WHERE 
+                    t.transaction_date BETWEEN %s AND %s
+                ORDER BY t.transaction_date ASC
+            """
+            
+            results_rows = self._execute_query(query, (start_datetime_obj, end_datetime_full), fetch_all=True)
+            
+            # Use a list comprehension to add the hardcoded 'property_type'
+            return [dict(row) | {'property_type': 'Land'} for row in results_rows] if results_rows else []
+        except Exception as e:
+            print(f"Error in get_detailed_sales_transactions_for_date_range: {e}")
+            return []
+
+
+    def get_sold_properties_for_date_range_detailed(self, start_date, end_date):
+        """
+        Retrieves detailed information about properties sold within a specified date range.
+        """
+        try:
+            query = """
+                SELECT 
+                    p.title_deed_number, 
+                    p.location, 
+                    p.size, 
+                    t.transaction_date AS date_sold,
+                    t.total_amount_paid,
+                    t.balance,
+                    c.name AS client_name
+                FROM 
+                    transactions t
+                JOIN 
+                    properties p ON t.property_id = p.property_id
+                JOIN 
+                    clients c ON t.client_id = c.client_id
+                WHERE 
+                    p.status = 'Sold' AND t.transaction_date BETWEEN ? AND ? || ' 23:59:59'
+                ORDER BY t.transaction_date ASC
+            """
+            results_rows = self._execute_query(query, (start_date, end_date), fetch_all=True)
+            return [dict(row) for row in results_rows] if results_rows else []
+        except Exception as e:
+            print(f"Error in get_sold_properties_for_date_range_detailed: {e}")
+            return []
+
+    def get_pending_instalments_for_date_range(self, start_date, end_date):
+        """
+        Retrieves information about transactions with a balance due within a specified date range.
+        The date range applies to the transaction_date.
+        """
+        try:
+            query = """
+                SELECT 
+                    t.transaction_id,
+                    t.transaction_date,
+                    t.total_amount_paid,
+                    t.discount,
+                    t.balance,
+                    p.title_deed_number,
+                    p.price AS original_price,
+                    c.name AS client_name,
+                    c.contact_info AS client_contact_info
+                FROM 
+                    transactions t
+                JOIN 
+                    properties p ON t.property_id = p.property_id
+                JOIN 
+                    clients c ON t.client_id = c.client_id
+                WHERE 
+                    t.balance > 0 AND t.transaction_date BETWEEN ? AND ? || ' 23:59:59'
+                ORDER BY t.transaction_date ASC
+            """
+            results_rows = self._execute_query(query, (start_date, end_date), fetch_all=True)
+            return [dict(row) for row in results_rows] if results_rows else []
+        except Exception as e:
+            print(f"Error in get_pending_instalments_for_date_range: {e}")
+            return []
+        
+    def get_service_sales_summary(self, period="daily", start_date=None, end_date=None):
+        """
+        Get total gross and net service sales from service_payments.
+        - period: "daily", "monthly", or "custom"
+        - start_date / end_date: required if period="custom"
+        Returns: list of dicts with {date, total_gross, total_net}
+        """
+        query = ""
+        params = []
+        
+        # --- MODIFIED: Added JOIN to service_jobs and a filter for job status ---
+        # This ensures that only ongoing, completed, or dispatched jobs are included.
+        base_join_and_filter = """
+            FROM service_payments AS sp
+            JOIN service_jobs AS sj ON sp.job_id = sj.job_id
+            WHERE sj.status IN ('ongoing', 'completed', 'dispatched')
+        """
+
+        if period == "daily":
+            query = f"""
+                SELECT DATE(payment_date) AS date,
+                    SUM(sp.fee) AS total_gross,
+                    SUM(amount) AS total_net
+                {base_join_and_filter}
+                GROUP BY DATE(payment_date)
+                ORDER BY DATE(payment_date) DESC
+            """
+        elif period == "monthly":
+            query = f"""
+                SELECT DATE_FORMAT(payment_date, '%%Y-%%m') AS date,
+                    SUM(sp.fee) AS total_gross,
+                    SUM(amount) AS total_net
+                {base_join_and_filter}
+                GROUP BY DATE_FORMAT(payment_date, '%%Y-%%m')
+                ORDER BY DATE_FORMAT(payment_date, '%%Y-%%m') DESC
+            """
+        elif period == "custom" and start_date and end_date:
+            query = f"""
+                SELECT DATE(payment_date) AS date,
+                    SUM(sp.fee) AS total_gross,
+                    SUM(amount) AS total_net
+                {base_join_and_filter}
+                AND payment_date BETWEEN %s AND %s
+                GROUP BY DATE(payment_date)
+                ORDER BY DATE(payment_date) DESC
+            """
+            params = [f"{start_date} 00:00:00", f"{end_date} 23:59:59"]
+        else:
+            raise ValueError("Invalid period. Use 'daily', 'monthly', or 'custom' with start_date & end_date.")
+
         return self._execute_query(query, tuple(params), fetch_all=True)
 
-    def add_service_payment(self, job_id, fee, amount, balance, payment_date):
-        """ Adds a new service payment record. """
-        query = '''
-            INSERT INTO service_payments (job_id, fee, amount, balance, payment_date)
-            VALUES (%s, %s, %s, %s, %s)
-        '''
-        return self._execute_query(query, (job_id, fee, amount, balance, payment_date))
-
-    def get_service_payment_by_job_id(self, job_id):
-        """ Retrieves a service payment record by job ID. """
-        query = "SELECT * FROM service_payments WHERE job_id = %s"
-        return self._execute_query(query, (job_id,), fetch_one=True)
-
-    def update_service_payment(self, payment_id, **kwargs):
-        """ Updates a service payment record. """
-        set_clauses = []
+    def get_service_jobs_for_report(self, start_date=None, end_date=None, status=None):
+        """
+        Retrieves service jobs along with their payment details for reporting.
+        Can filter by date range (payment_date) and job status.
+        
+        Returns: A list of dictionaries with job and payment details.
+        """
+        query = """
+        SELECT
+            sj.job_id,
+            sj.job_description,
+            sj.title_name,
+            sj.title_number,
+            sj.fee AS job_fee,
+            sj.status AS job_status,
+            sj.timestamp AS job_created,
+            sp.payment_id,
+            sp.amount AS amount_paid,
+            sp.balance,
+            sp.fee AS agreed_fee,
+            sp.payment_date,
+            sp.status AS payment_status
+        FROM service_jobs sj
+        LEFT JOIN service_payments sp ON sj.job_id = sp.job_id
+        WHERE sj.status IN ('ongoing', 'completed', 'dispatched')
+        """
         params = []
-        allowed_cols = ['fee', 'amount', 'balance', 'payment_date', 'status']
-        for key, value in kwargs.items():
-            if key in allowed_cols:
-                set_clauses.append(f"{key} = %s")
-                params.append(value)
-        
-        if not set_clauses: return False
-        
-        params.append(payment_id)
-        query = f"UPDATE service_payments SET {', '.join(set_clauses)} WHERE payment_id = %s"
+
+        if start_date:
+            query += " AND DATE(sp.payment_date) >= %s"
+            params.append(start_date)
+
+        if end_date:
+            query += " AND DATE(sp.payment_date) <= %s"
+            params.append(end_date)
+
+        if status:
+            query += " AND sj.status = %s"
+            params.append(status)
+
+        query += " ORDER BY sp.payment_date DESC"
+
+        return self._execute_query(query, tuple(params), fetch_all=True)
+    
+    def load_settings(self):
+        """Loads system settings from the database and updates the configuration."""
+        host_setting = self.get_setting("database_host")
+        if host_setting:
+            self.db_config['host'] = host_setting['setting_value']
+            print(f"Database host updated to: {self.db_config['host']}")
+
+    def get_setting(self, setting_name):
+        """Retrieves a single setting by name."""
+        query = "SELECT * FROM system_settings WHERE setting_name = %s"
+        return self._execute_query(query, (setting_name,), fetch_one=True)
+
+    def set_setting(self, setting_name, setting_value, description, user_id, username):
+        """Adds or updates a system setting."""
+        query = """
+        INSERT INTO system_settings (setting_name, setting_value, description, updated_by_user_id, updated_by_username)
+        VALUES (%s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+            setting_value = VALUES(setting_value),
+            description = VALUES(description),
+            updated_by_user_id = VALUES(updated_by_user_id),
+            updated_by_username = VALUES(updated_by_username);
+        """
+        params = (setting_name, setting_value, description, user_id, username)
         return self._execute_query(query, params)
-
-    def add_payment_history(self, payment_id, payment_amount, payment_type):
-        """ Adds a payment history entry for a service payment. """
-        payment_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        query = '''
-            INSERT INTO service_payments_history (payment_id, payment_amount, payment_type, payment_date)
-            VALUES (%s, %s, %s, %s)
-        '''
-        return self._execute_query(query, (payment_id, payment_amount, payment_type, payment_date))
-
-    def get_payment_history_by_payment_id(self, payment_id):
-        """ Retrieves payment history entries for a specific service payment. """
-        query = "SELECT * FROM service_payments_history WHERE payment_id = %s ORDER BY payment_date ASC"
-        return self._execute_query(query, (payment_id,), fetch_all=True)
-
-    def add_service_dispatch_record(self, job_id, reason_for_dispatch, collected_by, collector_phone, sign):
-        """ Adds a new dispatch record for a completed job. """
-        dispatch_date = datetime.now().strftime('%Y-%m-%d')
-        query = '''
-            INSERT INTO service_dispatch (job_id, dispatch_date, reason_for_dispatch, collected_by, collector_phone, sign)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        '''
-        return self._execute_query(query, (job_id, dispatch_date, reason_for_dispatch, collected_by, collector_phone, sign))
-
-    def get_service_dispatch_by_job_id(self, job_id):
-        """ Retrieves a dispatch record for a specific job ID. """
-        query = "SELECT * FROM service_dispatch WHERE job_id = %s"
-        return self._execute_query(query, (job_id,), fetch_one=True)
     
-
-          
-     
-
-    
+    def get_all_settings(self):
+        """Retrieves all system settings."""
+        query = "SELECT * FROM system_settings ORDER BY setting_name"
+        return self._execute_query(query, fetch_all=True)

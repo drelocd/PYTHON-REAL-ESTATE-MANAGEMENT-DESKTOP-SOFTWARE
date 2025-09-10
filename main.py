@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 import os
 import datetime
 from datetime import datetime, timedelta, date
@@ -14,6 +14,7 @@ import webbrowser  # Used for opening download links (as a fallback)
 import sys  # Used to get the executable path
 import logging  # For structured logging
 import os, shutil, zipfile, subprocess
+import platform
 # from packaging.version import parse as parse_version # REMOVED: Causing import issues
 
 from utils.tooltips import ToolTip
@@ -28,7 +29,7 @@ from forms.property_forms import AddPropertyForm, SellPropertyLandingForm, Track
 from forms.survey_forms import ClientFileDashboard, AddClientAndFileForm, TrackJobsView, ManagePaymentsView,JobReportsView
 from forms.signup_form import SignupForm
 from forms.dashboard_form import DashboardForm
-from forms.client_form import ClientForm, AddClientForm, UpdateClientForm
+#from forms.client_form import ClientForm, AddClientForm, UpdateClientForm
 from forms.dispatch_form import DispatchJobsView
 from forms.system_settings_form import SystemSettingsForm  # NEW
 from forms.activity_log_viewer_form import ActivityLogViewerForm
@@ -167,13 +168,8 @@ class SalesSectionView(ttk.Frame):
             {"text": "Reports & Receipts", "icon": "reports_receipts.png",
              "command": self._open_sales_reports_receipts_view,
              "roles": ['admin', 'property_manager', 'sales_agent', 'accountant'],
-             "tooltip_text":"Click to generate a PDF report of sales within the specified date range."},
-            {"text": "Transfer Property", "icon": "transfer.png", "command": self._open_property_transfer_form,
-             "roles": ['admin', 'property_manager'],
-             "tooltip_text" : "Click to Transfer of Property from Original Owner to New Owner."},
-            {"text": "Land Division & Records", "icon": "subdivide.png", "command": self._open_land_division_form,
-             "roles": ['admin', 'property_manager'],
-             "tooltip_text" : "Click to Records of Subdivided of Blocks and Lots."},
+             "tooltip_text":"Click to generate a PDF report of sales within the specified date range."}
+            
         ]
 
         row, col = 0, 0
@@ -522,9 +518,367 @@ class SurveySectionView(ttk.Frame):
             parent_icon_loader=self.load_icon_callback
         )
 
+try:
+    from ctypes import windll, c_int, byref, sizeof
+
+    HAS_CTYPES = True
+except (ImportError, OSError):
+    HAS_CTYPES = False
+
+class BaseForm(tk.Toplevel):
+    """
+    Base class for all forms to handle common functionalities like
+    window centering, title bar customization, and icon loading.
+    """
+    def __init__(self, master, width, height, title, icon_name, parent_icon_loader):
+        # Correctly set the parent to the top-level window.
+        # This fixes the "bad window path name" error.
+        super().__init__(master.winfo_toplevel())
+        self.title(title)
+        self.transient(master)
+        self.grab_set()
+        self.resizable(False, False)
+        
+        self.parent_icon_loader = parent_icon_loader
+        self._window_icon_ref = None
+        self._set_window_properties(width, height, icon_name, parent_icon_loader)
+        self._customize_title_bar()
+        # Removed the _on_closing() call as it was causing the window to close immediately
+        # after being created.
+
+    def _set_window_properties(self, width, height, icon_name, parent_icon_loader):
+        """Sets the window size, position, and icon."""
+        self.geometry(f"{width}x{height}")
+        self.update_idletasks()
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+
+        x = (screen_width - width) // 2
+        y = (screen_height - height) // 2
+        self.geometry(f"+{x}+{y}")
+
+        if parent_icon_loader and icon_name:
+            try:
+                icon_image = parent_icon_loader(icon_name, size=(32, 32))
+                if icon_image:
+                    self.iconphoto(False, icon_image)
+                    self._window_icon_ref = icon_image
+                    print(f"Icon '{icon_name}' loaded successfully.") # Add this line
+                else:
+                    print(f"Icon '{icon_name}' could not be loaded.")
+                
+            except Exception as e:
+                print(f"Failed to set icon for {self.title()}: {e}")
+
+    def _customize_title_bar(self):
+        """Customizes the title bar appearance. Attempts Windows-specific
+        customization, falls back to a custom Tkinter title bar."""
+        try:
+            if os.name == 'nt':  # Windows-specific title bar customization
+                from ctypes import windll, byref, sizeof, c_int
+
+                DWMWA_CAPTION_COLOR = 35
+                DWMWA_TEXT_COLOR = 36
+
+                hwnd = windll.user32.GetParent(self.winfo_id())
+                color = c_int(0x00804000)  # Dark blue color
+                windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd,
+                    DWMWA_CAPTION_COLOR,
+                    byref(color),
+                    sizeof(color)
+                )
+
+                text_color = c_int(0x00FFFFFF)
+                windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd,
+                    DWMWA_TEXT_COLOR,
+                    byref(text_color),
+                    sizeof(text_color)
+                )
+            else:
+                self._create_custom_title_bar()
+        except Exception as e:
+            print(f"Could not customize native title bar: {e}. Falling back to custom Tkinter title bar.")
+            self._create_custom_title_bar()
+
+    def _create_custom_title_bar(self):
+        """Creates a custom Tkinter title bar when native customization isn't available."""
+        self.overrideredirect(True)
+
+        title_bar = tk.Frame(self, bg='#004080', relief='raised', bd=0, height=30)
+        title_bar.pack(fill=tk.X)
+
+        title_label = tk.Label(
+            title_bar,
+            text=self.title(),
+            bg='#004080',
+            fg='white',
+            font=('Helvetica', 10, 'bold')
+        )
+        title_label.pack(side=tk.LEFT, padx=10, pady=5)
+
+        close_button = tk.Button(
+            title_bar,
+            text='×',
+            bg='#004080',
+            fg='white',
+            bd=0,
+            activebackground='red',
+            command=self._on_closing,
+            font=('Helvetica', 12, 'bold')
+        )
+        close_button.pack(side=tk.RIGHT, padx=5, pady=5)
+
+        title_bar.bind('<Button-1>', self._save_drag_start_pos)
+        title_bar.bind('<B1-Motion>', self._move_window)
+        title_label.bind('<Button-1>', self._save_drag_start_pos)
+        title_label.bind('<B1-Motion>', self._move_window)
+        close_button.bind('<Button-1>', self._save_drag_start_pos)
+
+    def _save_drag_start_pos(self, event):
+        """Saves the initial position for window dragging."""
+        self._start_x = event.x
+        self._start_y = event.y
+
+    def _move_window(self, event):
+        """Handles window movement for custom title bar."""
+        x = self.winfo_pointerx() - self._start_x
+        y = self.winfo_pointery() - self._start_y
+        self.geometry(f'+{x}+{y}')
+
+    def _on_closing(self):
+        """Callback for window closing event."""
+        self.destroy()
+
+
+class AddClientForm(BaseForm):
+    def __init__(self, parent, db_manager, user_id, refresh_callback, icon_loader):
+        # FIX: Correct the order of arguments to match BaseForm's constructor
+        super().__init__(parent, 400, 300, "Add New Client", "client.png", icon_loader)
+        
+        self.db_manager = db_manager
+        self.refresh_callback = refresh_callback
+        self.user_id = user_id
+        self.icon_loader = icon_loader
+        
+        self.save_icon = None
+        self.cancel_icon = None
+        self._load_button_icons()
+        self._create_widgets()
+
+    def _load_button_icons(self):
+        try:
+            self.save_icon = self.icon_loader("save.png", size=(16, 16))
+            self.cancel_icon = self.icon_loader("cancel.png", size=(16, 16))
+        except Exception as e:
+            print(f"Failed to load button icons: {e}")
+
+    def _create_widgets(self):
+        # Add your form widgets here
+        frame = ttk.Frame(self, padding="15")
+        frame.pack(fill="both", expand=True)
+        # Make the second column expandable to stretch the entry fields
+        frame.columnconfigure(1, weight=1)
+
+        ttk.Label(frame, text="Client Name:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        self.name_entry = ttk.Entry(frame)
+        self.name_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+        
+        ttk.Label(frame, text="Telephone No:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
+        self.tel_entry = ttk.Entry(frame)
+        self.tel_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+
+        ttk.Label(frame, text="Email:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
+        self.email_entry = ttk.Entry(frame)
+        self.email_entry.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
+
+        button_frame = ttk.Frame(frame)
+        button_frame.grid(row=3, column=0, columnspan=2, pady=10)
+        # Center buttons within their frame
+        button_frame.columnconfigure(0, weight=1)
+        button_frame.columnconfigure(1, weight=1)
+
+        self.save_button = ttk.Button(button_frame, text="Save Client", compound=tk.LEFT,
+                                      image=self.save_icon, command=self._save_client)
+        self.save_button.grid(row=0, column=0, padx=5, pady=5, sticky="e")
+
+        self.cancel_button = ttk.Button(button_frame, text="Cancel", compound=tk.LEFT,
+                                        image=self.cancel_icon, command=self.destroy)
+        self.cancel_button.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+
+    def _save_client(self):
+        name = self.name_entry.get().strip()
+        tel = self.tel_entry.get().strip()
+        email = self.email_entry.get().strip()
+        status='active'
+
+        if not name or not tel or not email:
+            messagebox.showerror("Error", "All fields are required.")
+            return
+
+        try:
+            client_id = self.db_manager.add_client(name, tel, email, status)
+            if client_id:
+                messagebox.showinfo("Success", f"Client '{name}' added successfully.")
+                self.refresh_callback()
+                self.destroy()
+            else:
+                messagebox.showerror("Error", "Failed to add client. Please check the details.")
+        except Exception as e:
+            messagebox.showerror("Database Error", f"An error occurred: {e}")
+
+class AddDailyClientForm(BaseForm):
+    def __init__(self, parent, db_manager, client_id, refresh_callback, user_id, icon_loader):
+        # FIX: Correct the order of arguments to match BaseForm's constructor
+        super().__init__(parent, 400, 250, "Add Daily Client Details", "client.png", icon_loader)
+        
+        self.db_manager = db_manager
+        self.client_id = client_id
+        self.refresh_callback = refresh_callback
+        self.user_id = user_id
+        self.icon_loader = icon_loader
+        
+        self.save_icon = None
+        self.cancel_icon = None
+        self._load_button_icons()
+        self._create_widgets()
+
+    def _load_button_icons(self):
+        try:
+            self.save_icon = self.icon_loader("save.png", size=(16, 16))
+            self.cancel_icon = self.icon_loader("cancel.png", size=(16, 16))
+        except Exception as e:
+            print(f"Failed to load button icons: {e}")
+
+    def _create_widgets(self):
+        frame = ttk.Frame(self, padding="15")
+        frame.pack(fill="both", expand=True)
+
+        # Make the second column expandable to stretch the entry fields
+        frame.columnconfigure(1, weight=1)
+
+        ttk.Label(frame, text="Purpose:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        self.purpose_var = tk.StringVar(self)
+        self.purpose_var.set("N/A")
+        purpose_options = ["Survey", "Land Sales", "N/A"]
+        self.purpose_menu = ttk.Combobox(frame, textvariable=self.purpose_var, values=purpose_options, state="readonly")
+        self.purpose_menu.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+
+        ttk.Label(frame, text="Brought By:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
+        self.brought_by_var = tk.StringVar(self)
+        self.brought_by_combobox = ttk.Combobox(frame, textvariable=self.brought_by_var, values=["Self"])
+        self.brought_by_combobox.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+
+        button_frame = ttk.Frame(frame)
+        button_frame.grid(row=2, column=0, columnspan=2, pady=10)
+        # Center buttons within their frame
+        button_frame.columnconfigure(0, weight=1)
+        button_frame.columnconfigure(1, weight=1)
+
+        self.save_button = ttk.Button(button_frame, text="Save Daily Visit", compound=tk.LEFT,
+                                     image=self.save_icon, command=self._save_daily_visit)
+        self.save_button.grid(row=0, column=0, padx=5, pady=5, sticky="e")
+
+        self.cancel_button = ttk.Button(button_frame, text="Cancel", compound=tk.LEFT,
+                                        image=self.cancel_icon, command=self.destroy)
+        self.cancel_button.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+
+    def _save_daily_visit(self):
+        purpose = self.purpose_var.get()
+        brought_by = self.brought_by_combobox.get().strip()
+        try:
+            visit_id = self.db_manager.add_daily_client(self.client_id, purpose, brought_by,  self.user_id)
+            if visit_id:
+                messagebox.showinfo("Success", "Daily visit details added successfully.")
+                self.refresh_callback()
+                self.destroy()
+            else:
+                messagebox.showerror("Error", "Failed to add daily visit details.")
+        except Exception as e:
+            messagebox.showerror("Database Error", f"An error occurred: {e}")
+
+
+
+
+class UpdateClientForm(BaseForm):
+    """A modal form for updating an existing client."""
+
+    def __init__(self, parent, db_manager, user_id, client_data, refresh_callback, icon_loader):
+        # FIX: Corrected the order of arguments passed to the parent class constructor.
+        # It should be width, height, title.
+        super().__init__(parent, 400, 250, "Update Client", "client.png", icon_loader)
+
+        self.db_manager = db_manager
+        self.user_id = user_id
+        self.client_data = client_data
+        self.refresh_callback = refresh_callback
+
+        self._create_widgets()
+        self._load_data()
+
+    def _create_widgets(self):
+        frame = ttk.Frame(self, padding="15")
+        frame.pack(fill="both", expand=True)
+
+        ttk.Label(frame, text="Client Name:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        self.name_entry = ttk.Entry(frame, width=30)
+        self.name_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+
+        ttk.Label(frame, text="Telephone Number:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
+        self.tel_entry = ttk.Entry(frame, width=30)
+        self.tel_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+
+        ttk.Label(frame, text="Email:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
+        self.email_entry = ttk.Entry(frame, width=30)
+        self.email_entry.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
+
+        button_frame = ttk.Frame(frame)
+        button_frame.grid(row=4, column=0, columnspan=2, pady=10)
+
+        self.save_button = ttk.Button(button_frame, text="Save Changes", command=self._save_changes)
+        self.save_button.pack(side=tk.LEFT, padx=5)
+
+        self.cancel_button = ttk.Button(button_frame, text="Cancel", command=self.destroy)
+        self.cancel_button.pack(side=tk.LEFT, padx=5)
+
+    def _load_data(self):
+        self.name_entry.insert(0, self.client_data['name'])
+        self.tel_entry.insert(0, self.client_data['telephone_number'])
+        self.email_entry.insert(0, self.client_data['email'])
+        
+    def _save_changes(self):
+        new_name = self.name_entry.get().strip()
+        new_tel = self.tel_entry.get().strip()
+        new_email = self.email_entry.get().strip()
+        client_id = self.client_data['client_id']
+
+        if not new_name or not new_tel or not new_email:
+            messagebox.showerror("Input Error", "All fields are required.")
+            return
+
+        try:
+            current_client = self.db_manager.get_client(client_id)
+            if current_client and (
+                    current_client['telephone_number'] != new_tel or current_client['email'] != new_email):
+                existing_client_by_contact = self.db_manager.get_client_by_telephone_number(new_tel, new_email)
+                if existing_client_by_contact and existing_client_by_contact['client_id'] != client_id:
+                    messagebox.showerror("Update Error", "Another client already uses this contact information.")
+                    return
+
+            updated = self.db_manager.update_client(client_id, name=new_name, telephone_number=new_tel, email=new_email)
+            if updated:
+                messagebox.showinfo("Success", f"Client ID {client_id} updated successfully.")
+                self.refresh_callback()
+                self.destroy()
+            else:
+                messagebox.showerror("Error", "Failed to update client. No changes or client not found.")
+        except Exception as e:
+            messagebox.showerror("Database Error", f"An error occurred during update: {e}")
+
 
 class ReceptionSectionView(ttk.Frame):
-    def __init__(self, master, db_manager, load_icon_callback, user_id, user_type,parent_icon_loader=None):
+    def __init__(self, master, db_manager, load_icon_callback, user_id, user_type, parent_icon_loader=None):
         super().__init__(master, padding="10 10 10 10")
         self.db_manager = db_manager
         self.load_icon_callback = load_icon_callback
@@ -532,18 +886,21 @@ class ReceptionSectionView(ttk.Frame):
         self.user_type = user_type
         self.parent_icon_loader = parent_icon_loader
         self.button_icons = []
+        self._tooltip_window = None  # To manage the tooltip window
+        
+        # --- FIX START ---
+        # Call the icon loading method BEFORE creating the widgets.
+        self._load_button_icons()
+        # --- FIX END ---
+        
         self._create_widgets()
         self._load_clients()
-        self._load_button_icons()
 
     def _load_button_icons(self):
         """Load icons for buttons."""
         try:
-            # Load add icon
             self.add_icon_img = self.parent_icon_loader("add.png", size=(16, 16))
-            # Load update icon
             self.update_icon_img = self.parent_icon_loader("update.png", size=(16, 16))
-            # Load delete icon
             self.delete_icon_img = self.parent_icon_loader("delete.png", size=(16, 16))
         except Exception as e:
             print(f"Failed to load button icons: {e}")
@@ -553,15 +910,12 @@ class ReceptionSectionView(ttk.Frame):
 
     def _create_widgets(self):
         """Creates and packs all the widgets for the UI."""
-
         main_frame = ttk.Frame(self, padding="15")
         main_frame.pack(fill="both", expand=True)
 
-        # --- Top Pane: Search Bar & Add Button ---
         top_controls_frame = ttk.Frame(main_frame, padding="5")
         top_controls_frame.pack(fill=tk.X, pady=(0, 10))
 
-        # Search bar
         search_frame = ttk.Frame(top_controls_frame)
         search_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Label(search_frame, text="Search:").pack(side=tk.LEFT, padx=(0, 5))
@@ -570,88 +924,74 @@ class ReceptionSectionView(ttk.Frame):
         self.search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
         self.search_entry.bind("<KeyRelease>", self._filter_clients)
 
-        # Add New Client Button
         self.add_client_button = ttk.Button(top_controls_frame, text="Add New Client",
                                              compound=tk.LEFT,
-                                            command=self._open_add_client_form)
+                                             image=self.add_icon_img,
+                                             command=self._open_add_client_form)
         self.add_client_button.pack(side=tk.RIGHT, padx=(10, 0))
 
-        # --- Paned Window for Client List and Associated Data ---
         paned_window = ttk.PanedWindow(main_frame, orient=tk.VERTICAL)
         paned_window.pack(fill="both", expand=True, pady=1)
         paned_window.bind("<B1-Motion>", "break")
 
-        # Top Pane: Client List View
         client_list_pane = ttk.Frame(paned_window)
         paned_window.add(client_list_pane, weight=1)
 
-        # New frame to hold the Treeview and the buttons below it
         tree_and_buttons_frame = ttk.Frame(client_list_pane, padding="10")
         tree_and_buttons_frame.pack(fill="both", expand=True)
 
         list_frame = ttk.LabelFrame(tree_and_buttons_frame, text="Existing Clients")
         list_frame.pack(fill="both", expand=True, pady=(0, 5))
 
-        self.tree = ttk.Treeview(list_frame, columns=("ID", "Name", "Telephone No", "Email", "Purpose", "Added by"),
-                                 show="headings")
-        self.tree.heading("ID", text="ID")
-        self.tree.heading("Name", text="Client Name")
-        self.tree.heading("Telephone No", text="Telephone No")
-        self.tree.heading("Email", text="Email")
-        self.tree.heading("Purpose", text="Purpose")
-        self.tree.heading("Added by", text="Added by")
-        self.tree.column("ID", width=50, anchor="center")
+        self.tree = ttk.Treeview(list_frame, columns=("Name", "Telephone No", "Email"), show="headings")
+        self.tree.heading("Name", text="CLIENT NAME")
+        self.tree.heading("Telephone No", text="TELEPHONE NO")
+        self.tree.heading("Email", text="EMAIL")
         self.tree.column("Name", width=150)
         self.tree.column("Telephone No", width=100)
         self.tree.column("Email", width=150)
-        self.tree.column("Purpose", width=80)
-        self.tree.column("Added by", width=100, anchor="center")
         self.tree.pack(side="left", fill="both", expand=True)
 
-        # Scrollbar for the Treeview
         scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
 
+        # New bindings for tooltip
+        self.tree.bind("<Double-1>", self._on_client_double_click)
         self.tree.bind("<<TreeviewSelect>>", self._on_client_select)
+        self.tree.bind("<Leave>", self._hide_tooltip)
+        # --- FIX START ---
+        # Changed this binding to call a new function to show/hide the tooltip based on mouse motion
+        self.tree.bind("<Motion>", self._on_tree_motion)
+        # --- FIX END ---
 
-        # --- Buttons below the table ---
         button_frame = ttk.Frame(tree_and_buttons_frame)
         button_frame.pack(fill=tk.X, pady=(5, 0))
 
-        # Re-ordered and re-packed the buttons
         self.update_button = ttk.Button(button_frame, text="Update Selected Client",
                                          compound=tk.LEFT,
-                                        command=self._open_update_client_form, state="disabled")
+                                         image=self.update_icon_img,
+                                         command=self._open_update_client_form, state="disabled")
         self.update_button.pack(side=tk.LEFT, padx=(0, 5))
 
         self.delete_button = ttk.Button(button_frame, text="Delete Selected Client",
                                          compound=tk.LEFT,
-                                        command=self._delete_client, state="disabled")
+                                         image=self.delete_icon_img,
+                                         command=self._delete_client, state="disabled")
         self.delete_button.pack(side=tk.RIGHT, padx=(5, 0))
-        
 
     def _load_clients(self):
-        """Clears and re-populates the client Treeview."""
+        """Clears and re-populates the client Treeview with basic client info."""
         for item in self.tree.get_children():
             self.tree.delete(item)
         clients = self.db_manager.get_all_clients()
         if clients:
             for client in clients:
-                self.tree.insert("", "end", values=(client['client_id'], client['name'], client['telephone_number'],
-                                                    client['email'], client['purpose'], client['added_by_username']))
-
-    def populate_client_table(self):
-        # Clear existing table data
-        for item in self.client_tree.get_children():
-            self.client_tree.delete(item)
-
-        # Fetch and insert all clients (both land sales and service clients)
-        all_clients = self.db_manager.get_all_clients()  # Assuming a new method in DatabaseManager
-        for client in all_clients:
-            self.client_tree.insert("", tk.END, values=(client['name'], client['telephone_number'], client['purpose']))
-
-
+                # Store the client_id as a tag for easy retrieval
+                self.tree.insert("", "end", values=(client['name'].upper(),
+                                                     client['telephone_number'].upper(),
+                                                     client['email'].upper()), tags=(client['client_id'],))
+    
     def _filter_clients(self, event):
         """Filters the client list in real-time based on search input."""
         search_term = self.search_var.get().lower()
@@ -660,33 +1000,40 @@ class ReceptionSectionView(ttk.Frame):
 
         if clients:
             for client in clients:
-                client_id, name, telephone, email, purpose, user_id = client['client_id'], client['name'], client[
-                    'telephone_number'], client['email'], client['purpose'], client['added_by_username']
-                if search_term in str(
-                        client_id).lower() or search_term in name.lower() or search_term in telephone.lower() or search_term in email.lower() or search_term in purpose.lower() or search_term in user_id.lower():
-                    self.tree.insert("", "end", values=(client_id, name, telephone, email, purpose, user_id))
+                client_id, name, telephone, email = client['client_id'], client['name'], client[
+                    'telephone_number'], client['email']
+                if search_term in str(client_id).lower() or search_term in name.lower() or search_term in telephone.lower() or search_term in email.lower():
+                    self.tree.insert("", "end", values=(name.upper(), telephone.upper(), email.upper()), tags=(client_id,))
 
+    def _on_client_double_click(self, event):
+        """Opens a new form to add daily visit details for a selected client."""
+        selected_item = self.tree.focus()
+        if not selected_item:
+            return
+        
+        # Get the client_id from the tag
+        client_id = self.tree.item(selected_item, "tags")[0]
+        AddDailyClientForm(self, self.db_manager, client_id, self.refresh_view, self.user_id, self.parent_icon_loader)
 
     def _open_add_client_form(self):
-        """Opens a new modal window for adding a client."""
+        """Opens a new modal window for adding a basic client."""
         AddClientForm(self, self.db_manager, self.user_id, self.refresh_view, self.parent_icon_loader)
 
     def _open_update_client_form(self):
-        """Opens a new modal window for updating a client."""
+        """Opens a new modal window for updating a client's basic details."""
         selected_item = self.tree.focus()
         if not selected_item:
             messagebox.showwarning("No Selection", "Please select a client to update.")
             return
 
-        values = self.tree.item(selected_item, "values")
-        client_data = {
-            'client_id': values[0],
-            'name': values[1],
-            'telephone_number': values[2],
-            'email': values[3],
-            'purpose': values[4]
-        }
-        UpdateClientForm(self, self.db_manager, self.user_id, client_data, self.refresh_view, self.parent_icon_loader)
+        client_id = self.tree.item(selected_item, "tags")[0]
+        
+        # Fetch the full client data from the database, including 'purpose'
+        client_data = self.db_manager.get_client(client_id)
+        if client_data:
+            UpdateClientForm(self, self.db_manager, self.user_id, client_data, self.refresh_view, self.parent_icon_loader)
+        else:
+            messagebox.showerror("Error", "Could not retrieve client data for update.")
 
     def refresh_view(self):
         """Refreshes the client list and clears selections."""
@@ -694,6 +1041,10 @@ class ReceptionSectionView(ttk.Frame):
         self.tree.selection_remove(self.tree.focus())
         self.update_button.config(state="disabled")
         self.delete_button.config(state="disabled")
+        self._hide_tooltip()
+
+    def populate_client_table(self):
+        self.refresh_view()
 
     def _delete_client(self):
         """Deletes a selected client after confirmation."""
@@ -701,9 +1052,9 @@ class ReceptionSectionView(ttk.Frame):
         if not selected_item:
             messagebox.showwarning("No Selection", "Please select a client from the list to delete.")
             return
-
-        client_id = self.tree.item(selected_item, "values")[0]
-        client_name = self.tree.item(selected_item, "values")[1]
+        
+        client_id = self.tree.item(selected_item, "tags")[0]
+        client_name = self.tree.item(selected_item, "values")[0]
 
         confirm_msg = (
             f"Are you sure you want to delete client '{client_name}' (ID: {client_id})?\n\n"
@@ -724,50 +1075,50 @@ class ReceptionSectionView(ttk.Frame):
         """Handles a client selection from the Treeview."""
         selected_item = self.tree.focus()
         if selected_item:
-            values = self.tree.item(selected_item, "values")
-            client_id = values[0]
             self.update_button.config(state="normal")
             self.delete_button.config(state="normal")
-            
         else:
             self.update_button.config(state="disabled")
             self.delete_button.config(state="disabled")
+
+    def _on_tree_motion(self, event):
+        """Hides the tooltip when the mouse moves within the Treeview."""
+        item = self.tree.identify_row(event.y)
+        selected_items = self.tree.selection()
+        
+        # Only show the tooltip if an item is under the cursor AND it is selected
+        if item in selected_items:
+            self._show_tooltip(event)
+        else:
+            self._hide_tooltip()
             
+    def _show_tooltip(self, event):
+        if self._tooltip_window:
+            self._tooltip_window.destroy()
 
-    def _clear_associated_data(self):
-        """Clears the associated data Treeviews."""
-        for item in self.land_tree.get_children():
-            self.land_tree.delete(item)
-        for item in self.survey_tree.get_children():
-            self.survey_tree.delete(item)
+        item = self.tree.identify_row(event.y)
+        if item:
+            x, y, w, h = self.tree.bbox(item)
+            x_root = self.winfo_rootx() + x + w + 1
+            y_root = self.winfo_rooty() + y + h // 2
 
-    def _load_associated_data(self, client_id):
-        """Loads and populates associated data for a given client ID."""
-        self._clear_associated_data()
-        properties = self.db_manager.get_client_properties(client_id)
-        if properties:
-            for prop in properties:
-                self.land_tree.insert("", "end",
-                                      values=(prop['property_id'], prop['title_deed_number'], prop['location'],
-                                              prop['size'], prop['price'], prop['status'], prop['transaction_date']))
+            self._tooltip_window = tk.Toplevel(self)
+            self._tooltip_window.wm_overrideredirect(True)
+            self._tooltip_window.wm_geometry(f"+{x_root}+{y_root}")
 
-        survey_jobs = self.db_manager.get_client_survey_jobs(client_id)
-        # Note: This code assumes the get_client_survey_jobs method now returns
-        # dictionaries with 'job_id', 'file_name', 'description', and 'status' keys.
-        if survey_jobs:
-            for job in survey_jobs:
-                self.survey_tree.insert("", "end",
-                                        values=(job['job_id'], job['file_name'], job['description'],
-                                                job['status']))
+            label = tk.Label(self._tooltip_window, text="Double click a client to continue",
+                             background="#ffffe0", relief="solid", borderwidth=1,
+                             font=("TkDefaultFont", 8))
+            label.pack(ipady=2)
+        else:
+            self._hide_tooltip()
 
-    def _open_client_details(self, event):
-        # Open a detailed view for the selected client
-        selected_item = self.client_tree.selection()
-        if selected_item:
-            client_data = self.db_manager.get_client_by_id(selected_item[0])  # Placeholder
-            # A new form to display client details
-            # ClientDetailsForm(self.master, client_data, ...)
-            messagebox.showinfo("Client Details", "Opening details for selected client.")
+    def _hide_tooltip(self, event=None):
+        if self._tooltip_window:
+            self._tooltip_window.destroy()
+            self._tooltip_window = None
+
+
 
 
 class LoginPage(tk.Toplevel):
@@ -917,6 +1268,21 @@ class RealEstateApp(tk.Tk):
         self.user_type = None
         self.show_login_page()  # Start with the login page
 
+        custom_backup_root=None
+
+        """
+        custom_backup_root: optional path chosen by the user.
+        If None, backups will be saved beside the exe.
+        """
+        if getattr(sys, 'frozen', False):
+            exe_dir = os.path.dirname(sys.executable)
+        else:
+            exe_dir = os.path.dirname(os.path.abspath(__file__))
+
+        self.backup_root = custom_backup_root or os.path.join(exe_dir, "backups")
+        os.makedirs(self.backup_root, exist_ok=True)
+
+
         # Removed the status label at the bottom for update messages
         # self.update_status_label = ttk.Label(self, text="")
         # self.update_status_label.pack(side=tk.BOTTOM, pady=5) # Example packing
@@ -924,19 +1290,19 @@ class RealEstateApp(tk.Tk):
         # Removed the initial update check here. It will now run after login.
         # self.after(5000, self.check_for_updates)
 
-    def backup_app_data(self):
+    def backup_app_data(self, backup_root, db_filename="rems_database.db"):
         """
         Creates a timestamped backup of the database and data folder.
         Returns the path to the backup directory.
         """
-        now = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_dir = os.path.join(BASE_DIR, "backups", f"backup_{now}")
+        now = datetime.now().strftime("%d-%m-%Y_%H%M%S")
+        backup_dir = os.path.join(backup_root, f"backup_{now}")
         os.makedirs(backup_dir, exist_ok=True)
 
         # --- Backup database ---
-        db_file = os.path.join(DATA_DIR, "rems_database.db")  # adjust if your DB filename differs
+        db_file = os.path.join(DATA_DIR, db_filename)
         if os.path.exists(db_file):
-            shutil.copy(db_file, os.path.join(backup_dir, "rems_database.db"))
+            shutil.copy(db_file, os.path.join(backup_dir, db_filename))
 
         # --- Backup the entire data folder into a ZIP ---
         zip_path = os.path.join(backup_dir, f"data_backup_{now}.zip")
@@ -950,9 +1316,16 @@ class RealEstateApp(tk.Tk):
         logging.info(f"Backup created at {backup_dir}")
         return backup_dir
 
+
+    
     def _manual_backup(self):
         try:
-            backup_path = self.backup_app_data()
+            # Ask the user where to save
+            folder = filedialog.askdirectory(title="Select Backup Location")
+            if not folder:  # user canceled
+                return
+
+            backup_path = self.backup_app_data(folder)  # pass chosen folder
             messagebox.showinfo("Backup Complete", f"Backup created at:\n{backup_path}")
         except Exception as e:
             self.logger.error(f"Manual backup failed: {e}")
@@ -964,7 +1337,7 @@ class RealEstateApp(tk.Tk):
         Implements rate limiting to avoid excessive API calls.
         """
         try:
-            backup_path = self.backup_app_data()
+            backup_path = self.backup_app_data(self.backup_root)
             self.logger.info(f"Automatic backup completed at {backup_path}")
         except Exception as e:
             self.logger.error(f"Backup failed before update check: {e}")
@@ -1315,11 +1688,7 @@ class RealEstateApp(tk.Tk):
         file_menu.add_command(label="Log Out", command=self.logout)
         file_menu.add_command(label="Exit", command=self.on_exit)
 
-        # Clients Menu - Now with role-based access
-        self.client_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Clients", menu=self.client_menu)
-        self.client_menu.add_command(label="Land Sales Clients Management", command=self._open_client_management_form,
-                                     state='normal' if self.user_type in ['admin', 'sales_agent'] else 'disabled')
+        
 
         sales_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Sales", menu=sales_menu)
@@ -1358,10 +1727,10 @@ class RealEstateApp(tk.Tk):
                                      command=lambda: self._go_to_survey_tab_and_action("track_jobs"),
                                      state='normal' if self.user_type == 'admin' else 'disabled')  # Only admin can track all jobs
             surveys_menu.add_command(label="Manage Payments",  # Added this menu item
-                                     command=lambda: self.survey_section._open_manage_survey_payments_view(),
+                                     command=lambda: self.survey_section._open_manage_payments_view(),
                                      state='normal' if self.user_type in ['admin', 'accountant'] else 'disabled')
             surveys_menu.add_command(label="Survey Reports",  # Added this menu item
-                                     command=lambda: self.survey_section._open_survey_reports_view(),
+                                     command=lambda: self.survey_section._open_job_reports_view(),
                                      state='normal' if self.user_type in ['admin', 'accountant'] else 'disabled')
 
         reports_menu = tk.Menu(menubar, tearoff=0)
@@ -1378,11 +1747,9 @@ class RealEstateApp(tk.Tk):
                                  command=lambda: self.sales_section.generate_report_type("Pending Instalments"),
                                  state='normal' if self.user_type in ['admin', 'accountant'] else 'disabled')
         reports_menu.add_command(label="Completed Survey Jobs Report",
-                                 command=lambda: self.survey_section.generate_report_type("Completed Survey Jobs"),
+                                 command=lambda: self.survey_section._open_job_reports_view(),
                                  state='normal' if self.user_type in ['admin', 'accountant'] else 'disabled')
-        reports_menu.add_command(label="Upcoming Deadlines for Surveys",
-                                 command=lambda: self.survey_section.generate_report_type("Upcoming Survey Deadlines"),
-                                 state='normal' if self.user_type in ['admin', 'accountant'] else 'disabled')
+        
 
         # --- ADMIN MENU: Only visible if user_type is 'admin' ---
         if self.user_type == 'admin':
@@ -1412,11 +1779,7 @@ class RealEstateApp(tk.Tk):
 
         MainMenuForm(self, self.db_manager, self.user_id, parent_icon_loader=self._load_icon)
 
-    def _open_client_management_form(self):
-        """
-        Opens the ClientForm window for client management.
-        """
-        ClientForm(self, self.db_manager, self.user_id, parent_icon_loader=self._load_icon)
+    
 
     def _open_system_settings(self):  # NEW METHOD
         """Opens the SystemSettingsForm window."""
