@@ -378,7 +378,7 @@ class AddClientForm(BaseForm):
     """A modal form for adding a new client."""
 
     def __init__(self, parent, db_manager, user_id, refresh_callback, icon_loader):
-        super().__init__(parent, "Add New Client", 400, 250, "client.png", icon_loader)
+        super().__init__(parent, "Add New Client", 400, 300, "client.png", icon_loader)
 
         self.db_manager = db_manager
         self.user_id = user_id
@@ -402,15 +402,21 @@ class AddClientForm(BaseForm):
         self.email_entry = ttk.Entry(frame, width=30)
         self.email_entry.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
 
-        ttk.Label(frame, text="Purpose:").grid(row=3, column=0, padx=5, pady=5, sticky="w")
+        ttk.Label(frame, text="Purpose:").grid(row=4, column=0, padx=5, pady=5, sticky="w")
         self.purpose_var = tk.StringVar(self)
         self.purpose_var.set("N/A")  # default value
         purpose_options = ["Survey", "Land Sales", "N/A"]
         self.purpose_menu = ttk.Combobox(frame, textvariable=self.purpose_var, values=purpose_options, state="readonly")
-        self.purpose_menu.grid(row=3, column=1, padx=5, pady=5, sticky="ew")
+        self.purpose_menu.grid(row=4, column=1, padx=5, pady=5, sticky="ew")
+        
+        # New "Brought By" input field
+        ttk.Label(frame, text="Brought By:").grid(row=3, column=0, padx=5, pady=5, sticky="w")
+        self.brought_by_var = tk.StringVar(self)
+        self.brought_by_combobox = ttk.Combobox(frame, textvariable=self.brought_by_var, values=["Self"])
+        self.brought_by_combobox.grid(row=3, column=1, padx=5, pady=5, sticky="ew")
 
         button_frame = ttk.Frame(frame)
-        button_frame.grid(row=4, column=0, columnspan=2, pady=10)
+        button_frame.grid(row=5, column=0, columnspan=2, pady=10)
 
         self.save_button = ttk.Button(button_frame, text="Save Client", command=self._save_client)
         self.save_button.pack(side=tk.LEFT, padx=5)
@@ -423,6 +429,7 @@ class AddClientForm(BaseForm):
         telephone = self.tel_entry.get().strip()
         email = self.email_entry.get().strip()
         purpose = self.purpose_var.get()
+        brought_by = self.brought_by_combobox.get().strip() # Get the new value
         status = 'active'  # Default status for new clients
 
         if not name or not telephone or not email:
@@ -430,15 +437,16 @@ class AddClientForm(BaseForm):
             return
         
         if not telephone.isdigit():
-                messagebox.showerror("Validation Error", "Telephone number must be numeric.")
-                return
+            messagebox.showerror("Validation Error", "Telephone number must be numeric.")
+            return
 
         if "@" not in email or "." not in email:
-                messagebox.showerror("Validation Error", "Please enter a valid email address.")
-                return
+            messagebox.showerror("Validation Error", "Please enter a valid email address.")
+            return
 
         try:
-            client_id = self.db_manager.add_client(name, telephone, email, purpose, status, self.user_id)
+            # Pass the new 'brought_by' value to the database manager
+            client_id = self.db_manager.add_client(name, telephone, email, purpose, status, brought_by, self.user_id)
             if client_id:
                 messagebox.showinfo("Success", f"Client '{name}' added successfully.")
                 self.refresh_callback()
@@ -447,6 +455,8 @@ class AddClientForm(BaseForm):
                 messagebox.showerror("Error", "Failed to add client. Contact info may already exist.")
         except Exception as e:
             messagebox.showerror("Database Error", f"An error occurred: {e}")
+
+
 
 
 class UpdateClientForm(BaseForm):

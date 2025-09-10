@@ -389,7 +389,7 @@ class subdividelandForm(tk.Toplevel):
             self.update_lots_tree.delete(item)
         
         for lot in self.update_lots:
-            self.update_lots_tree.insert("", tk.END, iid=lot['lot_id'], values=(lot['lot_id'], lot['title_deed'], lot['size'], lot['status'], lot['location']))
+            self.update_lots_tree.insert("", tk.END, iid=lot['lot_id'], values=(lot['lot_id'], lot['title_deed_number'], lot['size'], lot['status'], lot['location']))
 
     def _filter_blocks(self, event=None):
         """Filters the blocks Treeview based on the search entry."""
@@ -700,7 +700,7 @@ class ConfirmationForm(tk.Toplevel):
         self._customize_title_bar()
 
         # Set default size, then center the window
-        self.geometry("400x500") 
+        self.geometry("400x550") 
         self.update_idletasks()
         width = self.winfo_width()
         height = self.winfo_height()
@@ -775,9 +775,13 @@ class ConfirmationForm(tk.Toplevel):
         self.owner_entry = ttk.Entry(form_frame)
         self.owner_entry.pack(fill='x', pady=2)
         
-        ttk.Label(form_frame, text="Contact Info:").pack(anchor='w', pady=(5,0))
+        ttk.Label(form_frame, text="Telephone:").pack(anchor='w', pady=(5,0))
         self.contact_entry = ttk.Entry(form_frame)
         self.contact_entry.pack(fill='x', pady=2)
+
+        ttk.Label(form_frame, text="Email:").pack(anchor='w', pady=(5,0))
+        self.email_entry = ttk.Entry(form_frame)
+        self.email_entry.pack(fill='x', pady=2)
 
         ttk.Label(form_frame, text="Description:").pack(anchor='w', pady=(5,0))
         self.description_entry = tk.Text(form_frame, height=4)
@@ -818,6 +822,7 @@ class ConfirmationForm(tk.Toplevel):
         owner = self.owner_entry.get().strip()
         contact = self.contact_entry.get().strip()
         price_str = self.price_entry.get().strip()
+        email = self.email_entry.get().strip()
         
         if not all([title_deed, owner, contact, price_str]):
             messagebox.showerror("Error", "Please fill in all required fields.")
@@ -846,7 +851,8 @@ class ConfirmationForm(tk.Toplevel):
                 size=current_lot['size'],
                 description=description,
                 owner=owner,
-                contact=contact,
+                telephone_number=contact,
+                email = email,
                 price=price,
                 image_paths=','.join(self.image_paths),
                 title_image_paths=','.join(self.title_image_paths),

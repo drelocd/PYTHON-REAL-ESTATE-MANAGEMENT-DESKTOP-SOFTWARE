@@ -3,13 +3,14 @@ from tkinter import ttk, messagebox, filedialog
 from datetime import datetime, timedelta,date
 
 import os
+import sys
 from PIL import Image, ImageTk
 import shutil
 import io
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.platypus import SimpleDocTemplate,Image as RLImage, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from tkcalendar import DateEntry
@@ -290,7 +291,7 @@ class AddNewTaskForm(FormBase):
         price_str = self.price_entry.get().strip()
         amountpaid_str = '0.0'
 
-        if not all([job_description, title_name, title_number, price_str, amountpaid_str]):
+        if not all([job_description, title_name, title_number, price_str]):
             messagebox.showerror("Input Error", "All fields are required.")
             return
 
@@ -329,10 +330,11 @@ class AddNewTaskForm(FormBase):
         )
         
         if success:
+            print(f"Job added successfully with ID: {success}", file=sys.stderr)
             payment_success = self.db_manager.add_payment(
                 job_id=success,
-                amount=amountpaid_val,
                 fee=price_val,
+                amount=amountpaid_val,
                 balance=balance_val
             )
 
@@ -345,6 +347,7 @@ class AddNewTaskForm(FormBase):
                 self.refresh_callback()
                 self.destroy()
         else:
+            print(f"Failed to add job. Result was: {success}", file=sys.stderr)
             messagebox.showerror("Error", "Failed to add new task.")
 
 
@@ -503,15 +506,13 @@ class AddClientAndFileForm(FormBase):
         ttk.Label(new_telephone_label_frame, text="Telephone Number:").pack(side="left", fill="x", expand=True)
         self.telephone_entry = ttk.Entry(self.new_client_frame)
         self.telephone_entry.pack(fill="x", pady=(0, 10))
-        self.telephone_entry.bind('<KeyRelease>', self._on_telephone_edit)
-
+        
         # Email address
         new_email_label_frame = ttk.Frame(self.new_client_frame)
         new_email_label_frame.pack(fill="x")
         ttk.Label(new_email_label_frame, text="Email Address:").pack(side="left", fill="x", expand=True)
         self.email_entry = ttk.Entry(self.new_client_frame)
         self.email_entry.pack(fill="x", pady=(0, 10))
-        self.email_entry.bind('<KeyRelease>', self._on_email_edit)
 
         new_brought_by_label_frame = ttk.Frame(self.new_client_frame)
         new_brought_by_label_frame.pack(fill="x")
@@ -569,11 +570,11 @@ class AddClientAndFileForm(FormBase):
         try:
             # Assumes db_manager.get_all_clients() returns a list of dictionaries
             # like [{'name': 'Client A', ...}, {'name': 'Client B', ...}]
-            self.all_clients_data = self.db_manager.get_all_clients()
-            self.all_clients_data.sort(key=lambda x: x.get('name', ''))
+            self.all_daily_clients_survey_data = self.db_manager.get_all_daily_clients_survey()
+            self.all_daily_clients_survey_data.sort(key=lambda x: x.get('name', ''))
             
             # Extract only the 'name' from each dictionary
-            client_names = [client.get('name', '') for client in self.all_clients_data]
+            client_names = [client.get('name', '') for client in self.all_daily_clients_survey_data]
             
             return client_names
         except Exception as e:
@@ -586,10 +587,15 @@ class AddClientAndFileForm(FormBase):
         selected_name = self.client_name_var.get()
         print(f"DEBUG: Selected client name: {selected_name}")
         selected_client = next(
-            (client for client in self.all_clients_data if client.get('name') == selected_name),
+            (client for client in self.all_daily_clients_survey_data if client.get('name') == selected_name),
             None
         )
         if selected_client:
+            # Clear existing data and set to readonly before filling
+            self.telephone_entry.config(state='normal')
+            self.email_entry.config(state='normal')
+            self.brought_by_entry.config(state='normal')
+
             # Fill telephone
             telephone = selected_client.get('telephone_number', '')
             self.telephone_entry.delete(0, tk.END)
@@ -602,26 +608,33 @@ class AddClientAndFileForm(FormBase):
             self.email_entry.insert(0, email)
             print(f"Filled email with: {email}")
 
-    def _on_telephone_edit(self, event):
-        current_name = self.client_name_var.get()
-        current_telephone = self.telephone_entry.get()
-        matching_client = next((c for c in self.all_clients_data if c['name'] == current_name), None)
-        if matching_client and matching_client.get('telephone_number') != current_telephone:
-            self.client_name_var.set('')
+            # Fill brought_by
+            brought_by = selected_client.get('brought_by', '')
+            self.brought_by_entry.delete(0, tk.END)
+            self.brought_by_entry.insert(0, brought_by)
 
-    def _on_email_edit(self, event):
-        current_name = self.client_name_var.get()
-        current_email = self.email_entry.get()
-        matching_client = next((c for c in self.all_clients_data if c['name'] == current_name), None)
-        if matching_client and matching_client.get('email') != current_email:
-            self.client_name_var.set('')
+            # Make the fields read-only to prevent editing
+            self.telephone_entry.config(state='readonly')
+            self.email_entry.config(state='readonly')
+            self.brought_by_entry.config(state='readonly')
 
     def _update_client_list(self, event=None):
-        """Updates the Combobox dropdown based on the user's input."""
+        """
+        Updates the Combobox dropdown based on the user's input and manages
+        the state of the data entry fields.
+        """
         current_text = self.client_name_var.get()
         if current_text == '':
+            # If the text is empty, reset all fields to be editable for new client entry
+            self.telephone_entry.config(state='normal')
+            self.email_entry.config(state='normal')
+            self.brought_by_entry.config(state='normal')
+            self.telephone_entry.delete(0, tk.END)
+            self.email_entry.delete(0, tk.END)
+            self.brought_by_entry.delete(0, tk.END)
             self.client_combobox['values'] = self.all_clients
         else:
+            # Filter the combobox values
             filtered_clients = [
                 client for client in self.all_clients
                 if current_text.lower() in client.lower()
@@ -727,7 +740,7 @@ class UpdateStatusForm(FormBase):
         ttk.Label(main_frame, text=f"Updating Job ID: {self.job_id}", font=('Helvetica', 12, 'bold')).pack(pady=10)
         
         ttk.Label(main_frame, text="Select New Status:").pack(pady=5)
-        self.status_combobox = ttk.Combobox(main_frame, values=["Completed"], state="readonly")
+        self.status_combobox = ttk.Combobox(main_frame, values=["Completed","Cancelled"], state="readonly")
         self.status_combobox.set("Ongoing")
         self.status_combobox.pack(pady=5)
         
@@ -839,7 +852,7 @@ class TrackJobsView(FormBase):
         for job in self.all_jobs_data:
             # Display all relevant data, converted to uppercase for consistency
             values = (
-                job['timestamp'].upper(),
+                job['timestamp'],
                 job['job_description'].upper(),
                 job['title_name'].upper(),
                 job['title_number'].upper(),
@@ -1227,15 +1240,15 @@ class ManagePaymentsView(FormBase):
             self._clear_filters_icon = self.parent_icon_loader("clear_filter.png", size=(20, 20))
 
         apply_button = ttk.Button(filter_frame, text="Apply Filters", command=self._apply_filters,
-                                  image=self._apply_filters_icon, compound=tk.LEFT)
+                                 image=self._apply_filters_icon, compound=tk.LEFT)
         apply_button.grid(row=3, column=0, columnspan=3, pady=10)
 
         clear_button = ttk.Button(filter_frame, text="Clear Filters", command=self._clear_filters,
-                                  image=self._clear_filters_icon, compound=tk.LEFT)
+                                 image=self._clear_filters_icon, compound=tk.LEFT)
         clear_button.grid(row=3, column=3, columnspan=3, pady=10)
 
         # Treeview to display payments
-        columns = ("payment_id", "client_name", "file_name", "description", "title_number", "fee", "Total Amount Paid", "balance", "payment_date")
+        columns = ("payment_id", "client_name", "file_name", "description", "title_number", "fee", "amount", "balance", "payment_date")
         self.payments_tree = ttk.Treeview(main_frame, columns=columns, show="headings")
 
         # Define headings and columns
@@ -1249,7 +1262,7 @@ class ManagePaymentsView(FormBase):
         self.payments_tree.column("description", width=250, anchor=tk.W)
         self.payments_tree.column("title_number", width=120, anchor=tk.CENTER)
         self.payments_tree.column("fee", width=80, anchor=tk.CENTER)
-        self.payments_tree.column("Total Amount Paid", width=100, anchor=tk.CENTER)
+        self.payments_tree.column("amount", width=100, anchor=tk.CENTER)
         self.payments_tree.column("balance", width=100, anchor=tk.CENTER)
         self.payments_tree.column("payment_date", width=120, anchor=tk.CENTER)
         
@@ -1292,14 +1305,14 @@ class ManagePaymentsView(FormBase):
         self.payments_tree.bind('<Double-1>', self._on_double_click_payment)
         
         self.prev_button = ttk.Button(pagination_controls_frame, text="Previous", command=self._go_previous_page,
-                                      image=self._prev_icon, compound=tk.LEFT, state=tk.DISABLED)
+                                     image=self._prev_icon, compound=tk.LEFT, state=tk.DISABLED)
         self.prev_button.pack(side=tk.LEFT, padx=5)
 
         self.page_info_label = ttk.Label(pagination_controls_frame, text="Page 1 of 1")
         self.page_info_label.pack(side=tk.LEFT, padx=10)
 
         self.next_button = ttk.Button(pagination_controls_frame, text="Next", command=self._go_next_page,
-                                      image=self._next_icon, compound=tk.RIGHT, state=tk.DISABLED)
+                                     image=self._next_icon, compound=tk.RIGHT, state=tk.DISABLED)
         self.next_button.pack(side=tk.LEFT, padx=5)
 
         if self.parent_icon_loader:
@@ -1307,6 +1320,11 @@ class ManagePaymentsView(FormBase):
         close_btn = ttk.Button(pagination_frame, text="Close", command=self.destroy,
                                image=self._close_icon, compound=tk.LEFT)
         close_btn.pack(side="right", padx=5)
+
+        # Generate Report button
+        report_btn = ttk.Button(pagination_frame, text="Generate Report",
+                                command=self._open_payment_reports)
+        report_btn.pack(side="right", padx=5)
     
     def _on_double_click_payment(self, event):
         selected_items = self.payments_tree.selection()
@@ -1321,6 +1339,14 @@ class ManagePaymentsView(FormBase):
                 payment_id=payment_id,
                 parent_icon_loader=self.parent_icon_loader
             )
+
+    def _open_payment_reports(self):
+        """Opens the Payment Reports view."""
+        PaymentReportsView(
+            master=self,
+            db_manager=self.db_manager,
+            parent_icon_loader=self.parent_icon_loader
+        )
 
     def _deselect_all(self, event=None):
         """Deselects all items in the client Treeview when the Escape key is pressed."""
@@ -1353,22 +1379,19 @@ class ManagePaymentsView(FormBase):
             for item in self.payments_tree.get_children():
                 self.payments_tree.delete(item)
 
+            # Fix: Access values by key from the dictionary instead of unpacking
             for payment in payments:
-                # Get individual values
-                payment_id, client_name, file_name, description, title_number, fee, amount, balance, payment_date = payment
-                
-                
                 # Create the display tuple
                 display_values = (
-                    payment_id,
-                    client_name.upper() if isinstance(client_name, str) else client_name,
-                    file_name.upper() if isinstance(file_name, str) else file_name,
-                    description.upper() if isinstance(description, str) else description,
-                    title_number.upper() if isinstance(title_number, str) else title_number,
-                    fee,
-                    amount,
-                    balance,
-                    payment_date.upper() if isinstance(payment_date, str) else payment_date
+                    payment.get('payment_id', ''),
+                    payment.get('client_name', '').upper(),
+                    payment.get('file_name', '').upper(),
+                    payment.get('job_description', '').upper(),
+                    payment.get('title_number', '').upper(),
+                    payment.get('fee', 0.0),
+                    payment.get('amount', 0.0),
+                    payment.get('balance', 0.0),
+                    payment.get('payment_date', '')
                 )
                 
                 self.payments_tree.insert("", tk.END, values=display_values)
@@ -1516,23 +1539,33 @@ class PaymentHistoryView(FormBase):
 
             history_records = self.db_manager.get_payment_history(self.payment_id)
 
-            for record in history_records:
-                processed_values = []
-                for i, value in enumerate(record):
-                    if i == 0:  # history_id - usually an int, keep as is (or str)
-                        processed_values.append(str(value))
-                    elif i == 1: # payment_amount - usually a float, keep as is (or str)
-                        processed_values.append(str(f"{value:,.2f}")) # Format as currency
-                    elif isinstance(value, str): # Payment Type, other text fields
-                        processed_values.append(value.upper())
-                    elif value is not None: # For dates and other non-string, non-None values
-                        # Convert to string first, then uppercase if it makes sense (like month names)
-                        # For dates, it's often better to control formatting than just .upper()
-                        processed_values.append(str(value).upper())
-                    else: # Handle None values
-                        processed_values.append("") # Or 'N/A'.upper()
-
-                self.history_tree.insert("", tk.END, values=processed_values)
+            # Fix: Check if history_records is a list of dictionaries before proceeding
+            if history_records and isinstance(history_records[0], dict):
+                for record in history_records:
+                    # Access values using dictionary keys instead of a for-loop
+                    display_values = (
+                        record.get('history_id', ''),
+                        f"{record.get('payment_amount', 0.0):,.2f}", # Format as currency
+                        record.get('payment_type', '').upper(),
+                        str(record.get('payment_date', '')).upper()
+                    )
+                    self.history_tree.insert("", tk.END, values=display_values)
+            else:
+                # Fallback for old tuple-based return type
+                for record in history_records:
+                    processed_values = []
+                    for i, value in enumerate(record):
+                        if i == 0:
+                            processed_values.append(str(value))
+                        elif i == 1:
+                            processed_values.append(f"{float(value):,.2f}")
+                        elif isinstance(value, str):
+                            processed_values.append(value.upper())
+                        elif value is not None:
+                            processed_values.append(str(value).upper())
+                        else:
+                            processed_values.append("")
+                    self.history_tree.insert("", tk.END, values=processed_values)
 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load payment history: {e}")
@@ -1775,105 +1808,156 @@ class JobReportsView(FormBase):
             self.report_text_widget.insert("1.0", f"Error: {e}")
 
     def _generate_pdf_report(self, report_name, content, report_type, start_date, end_date):
-        """Generates PDF report using ReportLab (with logo, word wrap, footer) and returns the file path."""
-        if not _REPORTLAB_AVAILABLE:
-            return None  # Error message already shown by calling function
+            """Generates PDF report using ReportLab (with logo, word wrap, footer) 
+            and prompts user to choose where to save it."""
+            if not _REPORTLAB_AVAILABLE:
+                return None
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        period_suffix = ""
+            from datetime import datetime  # ensure correct import
 
-        if report_type == "daily":
-            period_suffix = f"_{start_date}"
-        elif report_type == "monthly":
-            period_suffix = f"_{datetime.strptime(start_date, '%Y-%m-%d').strftime('%Y-%m')}"
-        elif report_type == "yearly":
-            period_suffix = f"_{datetime.strptime(start_date, '%Y-%m-%d').strftime('%Y')}"
-        elif report_type == "custom":
-            period_suffix = f"_{start_date}_to_{end_date}"
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            period_suffix = ""
 
-        file_name = f"{report_name.replace(' ', '_')}{period_suffix}_{timestamp}.pdf"
-        file_path = os.path.join(REPORTS_DIR, file_name)
+            if report_type == "daily":
+                period_suffix = f"_{start_date}"
+            elif report_type == "monthly":
+                period_suffix = f"_{datetime.strptime(start_date, '%Y-%m-%d').strftime('%Y-%m')}"
+            elif report_type == "yearly":
+                period_suffix = f"_{datetime.strptime(start_date, '%Y-%m-%d').strftime('%Y')}"
+            elif report_type == "custom":
+                period_suffix = f"_{start_date}_to_{end_date}"
 
-        try:
-            doc = SimpleDocTemplate(file_path, pagesize=letter)
-            styles = getSampleStyleSheet()
-            story = []
+            file_name = f"{report_name.replace(' ', '_')}{period_suffix}_{timestamp}.pdf"
 
-            # --- Business Header with Logo ---
-            logo_path = os.path.join("assets", "SURVEY.jpg")  # Adjust path as needed
-            if os.path.exists(logo_path):
-                logo = Image(logo_path, 1 * inch, 1 * inch)
-            else:
-                logo = Paragraph("", styles['Normal'])  # Empty if no logo found
+            # --- Default starting folder: Documents (fallback to Desktop if missing) ---
+            default_dir = os.path.join(os.path.expanduser("~"), "Documents")
+            if not os.path.exists(default_dir):
+                default_dir = os.path.join(os.path.expanduser("~"), "Desktop")
 
-            header_table = Table([
-                [logo, "NDIRITU MATHENGE & ASSOCIATES", datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
-            ], colWidths=[1.2 * inch, 3.5 * inch, 2 * inch])
+            file_path = filedialog.asksaveasfilename(
+                title="Save Report As",
+                defaultextension=".pdf",
+                initialfile=file_name,
+                initialdir=default_dir,
+                filetypes=[("PDF files", "*.pdf")]
+            )
 
-            header_table.setStyle(TableStyle([
-                ('FONTNAME', (1, 0), (1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (1, 0), (1, 0), 14),
-                ('ALIGN', (2, 0), (2, 0), 'RIGHT'),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
-            ]))
-            story.append(header_table)
-            story.append(Spacer(1, 12))
+            if not file_path:  # user cancelled
+                return None
 
-            # --- Report Title & Period ---
-            story.append(Paragraph(f"<b>{report_name.upper()}</b>", styles['Heading2']))
-            story.append(Paragraph(f"Period: {start_date} to {end_date}", styles['Normal']))
-            story.append(Spacer(1, 12))
+            try:
+                doc = SimpleDocTemplate(file_path, pagesize=letter)
+                styles = getSampleStyleSheet()
+                story = []
 
-            # --- Table Content ---
-            if content.get('data'):
-                headers = ["Job ID", "Date", "Client Name", "File Name", "Description", "Status"]
-                table_data = [headers]
+                # --- Business Header with Logo ---
+                logo_path = os.path.join(ICONS_DIR, "survey.png")
 
-                # Style for wrapping text inside cells
-                wrap_style = ParagraphStyle('wrap', fontSize=8, leading=10)
+                if os.path.exists(logo_path):
+                    logo = RLImage(logo_path)
+                    logo._restrictSize(1.2 * inch, 1.2 * inch)
+                else:
+                    logo = Paragraph("", styles['Normal'])
 
-                for job in content['data']:
-                    date_part = job['timestamp'].split(' ')[0] if ' ' in job['timestamp'] else job['timestamp']
-                    table_data.append([
-                        job['job_id'],
-                        date_part,
-                        job['client_name'],
-                        job['file_name'],
-                        Paragraph(job['job_description'], wrap_style),
-                        job['status']
-                    ])
+                header_table = Table([
+                    [logo, "NDIRITU MATHENGE & ASSOCIATES", datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
+                ], colWidths=[1.2 * inch, 3.5 * inch, 2 * inch])
 
-                # Dynamic column widths
-                col_widths = [doc.width * 0.1, doc.width * 0.15, doc.width * 0.2,
-                              doc.width * 0.2, doc.width * 0.25, doc.width * 0.1]
-
-                t = Table(table_data, colWidths=col_widths)
-                t.setStyle(TableStyle([
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                    ('FONTSIZE', (0, 0), (-1, -1), 8),
-                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                    ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
-                    ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                header_table.setStyle(TableStyle([
+                    ('FONTNAME', (1, 0), (1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (1, 0), (1, 0), 14),
+                    ('ALIGN', (2, 0), (2, 0), 'RIGHT'),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
                 ]))
-                story.append(t)
-            else:
-                story.append(Paragraph("No jobs found for this period and status.", styles['Normal']))
+                story.append(header_table)
+                story.append(Spacer(1, 12))
 
-            # --- Footer with Page Number ---
-            def add_page_number(canvas, doc):
-                page_num = canvas.getPageNumber()
-                canvas.setFont("Helvetica", 8)
-                canvas.drawRightString(7.5 * inch, 0.5 * inch, f"Page {page_num}")
+                # --- Report Title & Period ---
+                story.append(Paragraph(f"<b>{report_name.upper()}</b>", styles['Heading2']))
+                story.append(Paragraph(f"Period: {start_date} to {end_date}", styles['Normal']))
+                story.append(Spacer(1, 12))
 
-            # Build PDF
-            doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
-            return file_path
+                # --- Table Content ---
+                if content.get('data'):
+                    headers = [
+                        "Job ID", "Payment ID", "Title Name", "Title Number", "Description",
+                        "Created", "Payment Date", "Job Status", "Payment Status", "Job Fee",
+                        "Amount Paid", "Balance",
+                    ]
 
-        except Exception as e:
-            print(f"PDF generation failed: {e}")
-            return None
+                    # wrapping styles
+                    wrap_style_header = ParagraphStyle('wrap_header', fontSize=8, leading=10, alignment=1)  # centered
+                    wrap_style_body = ParagraphStyle('wrap_body', fontSize=7, leading=9, alignment=0)      # left
+
+                    # wrap headers
+                    table_data = [[Paragraph(h, wrap_style_header) for h in headers]]
+
+                    # helper for safe date conversion
+                    def fmt_date(val):
+                        if not val:
+                            return ""
+                        if isinstance(val, datetime):
+                            return val.strftime("%Y-%m-%d")
+                        return str(val).split(" ")[0]
+
+                    for job in content['data']:
+                        created_val = fmt_date(job.get('job_created'))
+                        payment_date_val = fmt_date(job.get('payment_date'))
+
+                        row = [
+                            Paragraph(str(job.get('job_id', '') or ""), wrap_style_body),
+                            Paragraph(str(job.get('payment_id', '') or ""), wrap_style_body),
+                            Paragraph(str(job.get('title_name', '') or ""), wrap_style_body),
+                            Paragraph(str(job.get('title_number', '') or ""), wrap_style_body),
+                            Paragraph(str(job.get('job_description', '') or ""), wrap_style_body),
+                            Paragraph(created_val, wrap_style_body),
+                            Paragraph(payment_date_val, wrap_style_body),
+                            Paragraph(str(job.get('job_status', '') or ""), wrap_style_body),
+                            Paragraph(str(job.get('payment_status', '') or ""), wrap_style_body),
+                            Paragraph(str(job.get('job_fee', '') or ""), wrap_style_body),
+                            Paragraph(str(job.get('amount_paid', '') or ""), wrap_style_body),
+                            Paragraph(str(job.get('balance', '') or ""), wrap_style_body),
+                        ]
+                        table_data.append(row)
+
+                    t = Table(table_data, repeatRows=1)
+                    t.setStyle(TableStyle([
+                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0, 0), (-1, 0), 8),
+                        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+
+                        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                        ('FONTSIZE', (0, 1), (-1, -1), 7),
+                        ('ALIGN', (0, 1), (-1, -1), 'LEFT'),
+                        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+
+                        ('BOX', (0, 0), (-1, -1), 0.75, colors.black),
+                        ('INNERGRID', (0, 0), (-1, -1), 0.25, colors.black),
+
+                        ('LEFTPADDING', (0, 0), (-1, -1), 3),
+                        ('RIGHTPADDING', (0, 0), (-1, -1), 3),
+                        ('TOPPADDING', (0, 0), (-1, -1), 2),
+                        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+                    ]))
+
+                    story.append(t)
+                else:
+                    story.append(Paragraph("No jobs found for this period and status.", styles['Normal']))
+
+                # --- Footer with Page Number ---
+                def add_page_number(canvas, doc):
+                    page_num = canvas.getPageNumber()
+                    canvas.setFont("Helvetica", 8)
+                    canvas.drawRightString(7.5 * inch, 0.5 * inch, f"Page {page_num}")
+
+                doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
+                return file_path
+
+            except Exception as e:
+                print(f"PDF generation failed: {e}")
+                return None
 
     def _show_pdf_preview(self, pdf_path, report_text_widget):
         """Displays PDF generation status in the preview area."""
@@ -1890,3 +1974,156 @@ class JobReportsView(FormBase):
             report_text_widget.delete(1.0, tk.END)
             report_text_widget.insert(tk.END,
                                       "PDF generation failed. Please check the error logs or ensure ReportLab is installed and data is available.")
+            
+                        
+class PaymentReportsView(FormBase):
+    """
+    A system-wide view for generating service payment reports, including gross and net sales.
+    """
+
+    def __init__(self, master, db_manager, parent_icon_loader=None):
+        super().__init__(master, 750, 500, "Payment Reports", "survey_reports.png", parent_icon_loader)
+        self.db_manager = db_manager
+        self.parent_icon_loader_ref = parent_icon_loader
+
+        self.report_type_var = tk.StringVar(self, value="daily")
+        self.from_date_var = tk.StringVar(self, value=datetime.now().strftime("%Y-%m-%d"))
+        self.to_date_var = tk.StringVar(self, value=datetime.now().strftime("%Y-%m-%d"))
+
+        self._create_widgets()
+        self._toggle_date_entries()
+
+    def _create_widgets(self):
+        main_frame = ttk.Frame(self, padding="15")
+        main_frame.pack(fill="both", expand=True)
+
+        ttk.Label(main_frame, text="Generate Payment Reports", font=('Helvetica', 14, 'bold')).pack(pady=10)
+
+        # Report options
+        options_frame = ttk.LabelFrame(main_frame, text="Report Options", padding="10")
+        options_frame.pack(fill="x", pady=10)
+
+        ttk.Label(options_frame, text="Report Period:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        for idx, (label, value) in enumerate([("Daily", "daily"), ("Monthly", "monthly"),
+                                               ("Custom", "custom")]):
+            ttk.Radiobutton(options_frame, text=label, variable=self.report_type_var,
+                            value=value, command=self._toggle_date_entries).grid(row=0, column=idx+1, padx=2, pady=5)
+
+        # Date range inputs
+        date_frame = ttk.Frame(options_frame)
+        date_frame.grid(row=1, column=0, columnspan=5, pady=5, sticky="ew")
+
+        ttk.Label(date_frame, text="From Date:").pack(side="left", padx=5)
+        self.from_entry = ttk.Entry(date_frame, textvariable=self.from_date_var, width=12)
+        self.from_entry.pack(side="left", padx=2)
+
+        ttk.Label(date_frame, text="To Date:").pack(side="left", padx=5)
+        self.to_entry = ttk.Entry(date_frame, textvariable=self.to_date_var, width=12)
+        self.to_entry.pack(side="left", padx=2)
+
+        generate_btn = ttk.Button(main_frame, text="Generate Report", command=self._generate_report)
+        generate_btn.pack(pady=10)
+
+                # Export Button
+        export_btn = ttk.Button(main_frame, text="Export to PDF", command=self._export_to_pdf)
+        export_btn.pack(pady=5)
+
+
+        # Table
+        self.tree = ttk.Treeview(main_frame, columns=("date", "gross", "net"), show="headings")
+        self.tree.heading("date", text="Date")
+        self.tree.heading("gross", text="Gross Sales")
+        self.tree.heading("net", text="Net Sales")
+
+        self.tree.column("date", width=120, anchor=tk.W)
+        self.tree.column("gross", width=150, anchor=tk.CENTER)
+        self.tree.column("net", width=150, anchor=tk.CENTER)
+
+        self.tree.pack(fill="both", expand=True, pady=10)
+
+    def _export_to_pdf(self):
+        """Exports the payment report to a PDF file."""
+        if not _REPORTLAB_AVAILABLE:
+            messagebox.showerror("Error", "ReportLab is not installed. Cannot export PDF.")
+            return
+
+        # Ask user where to save
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".pdf",
+            filetypes=[("PDF files", "*.pdf")],
+            title="Save Payment Report As"
+        )
+        if not file_path:
+            return
+
+        try:
+            doc = SimpleDocTemplate(file_path, pagesize=letter)
+            styles = getSampleStyleSheet()
+            elements = []
+
+            # Title
+            elements.append(Paragraph("Payment Sales Report", styles['Title']))
+            elements.append(Spacer(1, 12))
+
+            # Period info
+            period_text = f"Report Type: {self.report_type_var.get().capitalize()}"
+            if self.report_type_var.get() == "custom":
+                period_text += f" (From {self.from_date_var.get()} To {self.to_date_var.get()})"
+            elements.append(Paragraph(period_text, styles['Normal']))
+            elements.append(Spacer(1, 12))
+
+            # Table data
+            data = [["Date", "Gross Sales", "Net Sales"]]
+            for item in self.tree.get_children():
+                row = self.tree.item(item)['values']
+                data.append([
+                    str(row[0]),
+                    str(row[1]),
+                    str(row[2])
+                ])
+
+            table = Table(data, colWidths=[120, 150, 150])
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ]))
+            elements.append(table)
+
+            # Build PDF
+            doc.build(elements)
+            messagebox.showinfo("Success", f"Report exported successfully:\n{file_path}")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to export report: {e}")
+
+
+    def _toggle_date_entries(self):
+        state = "normal" if self.report_type_var.get() == "custom" else "disabled"
+        self.from_entry.config(state=state)
+        self.to_entry.config(state=state)
+
+    def _generate_report(self):
+        period = self.report_type_var.get()
+        start_date = self.from_date_var.get()
+        end_date = self.to_date_var.get()
+
+        try:
+            results = self.db_manager.get_service_sales_summary(period, start_date, end_date)
+
+            for item in self.tree.get_children():
+                self.tree.delete(item)
+
+            for row in results:
+                self.tree.insert("", tk.END, values=(
+                    row.get("date", ""),
+                    f"KES {row.get('total_gross', 0):,.2f}",
+                    f"KES {row.get('total_net', 0):,.2f}"
+                ))
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to generate report: {e}")
+

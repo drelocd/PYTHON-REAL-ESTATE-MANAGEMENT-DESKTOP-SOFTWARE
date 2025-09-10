@@ -33,7 +33,7 @@ class SystemSettingsForm(tk.Toplevel):
         self.parent_icon_loader = parent_icon_loader
 
         self.title("System Settings")
-        self.geometry("800x550")
+        self.geometry("800x650")
         self.transient(parent)
         self.grab_set()
 
@@ -105,7 +105,7 @@ class SystemSettingsForm(tk.Toplevel):
         settings_list_frame.pack(fill=tk.BOTH, expand=True, pady=10)
 
         self.settings_tree = ttk.Treeview(settings_list_frame, columns=("Name", "Value", "Description"),
-                                          show="headings")
+                                         show="headings")
         self.settings_tree.heading("Name", text="Setting Name")
         self.settings_tree.heading("Value", text="Setting Value")
         self.settings_tree.heading("Description", text="Description")
@@ -144,10 +144,10 @@ class SystemSettingsForm(tk.Toplevel):
         button_frame.pack(pady=10)
 
         self.save_icon = self._load_icon_for_button("save.png")
-        self.clear_icon = self._load_icon_for_button("clear.png")
+        self.clear_icon = self._load_icon_for_button("cancel.png")
 
         self.save_button = ttk.Button(button_frame, text="Save Setting", command=self._save_setting,
-                                      image=self.save_icon, compound=tk.LEFT)
+                                     image=self.save_icon, compound=tk.LEFT)
         self.save_button.pack(side=tk.LEFT, padx=5)
 
         self.clear_button = ttk.Button(button_frame, text="Clear Fields", command=self._clear_fields,
@@ -191,9 +191,11 @@ class SystemSettingsForm(tk.Toplevel):
             return
 
         # Get current user's username for logging
-        current_user = self.db_manager.get_user_by_id(self.user_id)
-        username = current_user['username'] if current_user else "Unknown"
-
+        # The DBManager needs a `get_user_by_id` method for this to work.
+        current_user = self.db_manager.get_user_by_id(self.user_id) if hasattr(self.db_manager, 'get_user_by_id') else None
+        username = current_user['username'] if current_user and 'username' in current_user else "Unknown"
+        
+        # NOTE: To set the database host, set the "Setting Name" to "database_host" and the "Setting Value" to the IP address.
         if self.db_manager.set_setting(setting_name, setting_value, description, self.user_id, username):
             messagebox.showinfo("Success", f"Setting '{setting_name}' saved successfully.")
             self.populate_settings_list()
@@ -212,4 +214,3 @@ class SystemSettingsForm(tk.Toplevel):
         """Handle the window close button (X)."""
         self.grab_release()
         self.destroy()
-

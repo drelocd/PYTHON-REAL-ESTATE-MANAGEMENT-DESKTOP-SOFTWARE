@@ -13,6 +13,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from tkcalendar import DateEntry # Import DateEntry for the date picker
+from reportlab.lib.enums import TA_CENTER
 
 
 
@@ -61,8 +62,8 @@ DATA_DIR = os.path.join(BASE_DIR, 'data')
 PROPERTY_IMAGES_DIR = os.path.join(DATA_DIR, 'images')
 TITLE_DEEDS_DIR = os.path.join(DATA_DIR, 'deeds')
 RECEIPTS_DIR = os.path.join(DATA_DIR, 'receipts')
-REPORTS_DIR = os.path.join(DATA_DIR, 'reports') # NEW: Define REPORTS_DIR
-
+DOCUMENTS_DIR = os.path.join(os.path.expanduser("~"), "Documents")
+REPORTS_DIR = os.path.join(DOCUMENTS_DIR, "Reports")
 # Ensure directories exist (might also be done in main app init)
 os.makedirs(PROPERTY_IMAGES_DIR, exist_ok=True)
 os.makedirs(TITLE_DEEDS_DIR, exist_ok=True)
@@ -1629,7 +1630,11 @@ except (ImportError, OSError):
     has_ctypes = False
 
 class CashPaymentWindow(tk.Toplevel):
-    def __init__(self, master, db_manager, user_id, selected_property, buyer_name, buyer_contact, payment_mode, refresh_callback, icon_loader):
+    """
+    A Toplevel window for handling cash payments, generating a PDF receipt,
+    and recording the transaction.
+    """
+    def __init__(self, master, db_manager, user_id, selected_property, buyer_name, buyer_contact, payment_mode, brought_by_data, refresh_callback, icon_loader):
         super().__init__(master)
         self.db_manager = db_manager
         self.user_id = user_id
@@ -1637,6 +1642,7 @@ class CashPaymentWindow(tk.Toplevel):
         self.buyer_name = buyer_name
         self.buyer_contact = buyer_contact
         self.payment_mode = payment_mode
+        self.brought_by_data = brought_by_data # New attribute for the 'brought_by' data
         self.refresh_callback = refresh_callback
         self.icon_loader = icon_loader
         self.grab_set()
@@ -1655,13 +1661,8 @@ class CashPaymentWindow(tk.Toplevel):
         self._set_window_properties(400, 450, "cash.png")
         self._customize_title_bar()
         
-        # Note: _create_widgets will now be adjusted to not have its own header frame
-        # as it will be handled by _customize_title_bar
         self._create_widgets()
         
-        # You'll need to add _update_receipt_button_state() here if you have it
-        # self._update_receipt_button_state()
-
     def _set_window_properties(self, width, height, icon_name):
         """Sets the window size, position, and icon based on the master window."""
         self.geometry(f"{width}x{height}")
@@ -1681,7 +1682,6 @@ class CashPaymentWindow(tk.Toplevel):
             except Exception as e:
                 print(f"Failed to set icon for {self.title()}: {e}")
 
-    # Copy these methods directly from your SellPropertyFormLot class
     def _customize_title_bar(self):
         """Customizes the title bar appearance."""
         if has_ctypes and os.name == 'nt':
@@ -1767,10 +1767,17 @@ class CashPaymentWindow(tk.Toplevel):
         
         buyer_info_frame = ttk.LabelFrame(main_frame, text="Buyer Details", padding=5)
         buyer_info_frame.pack(fill=tk.X, pady=5)
+        
+        # Display buyer name and contact
         ttk.Label(buyer_info_frame, text="Name:").grid(row=0, column=0, sticky="w", pady=2, padx=5)
         ttk.Label(buyer_info_frame, text=self.buyer_name, font=("Arial", 10, "bold")).grid(row=0, column=1, sticky="w", pady=2, padx=5)
         ttk.Label(buyer_info_frame, text="Contact:").grid(row=1, column=0, sticky="w", pady=2, padx=5)
         ttk.Label(buyer_info_frame, text=self.buyer_contact, font=("Arial", 10, "bold")).grid(row=1, column=1, sticky="w", pady=2, padx=5)
+        
+        # Display the new 'referred by' data
+        ttk.Label(buyer_info_frame, text="Referred By:").grid(row=2, column=0, sticky="w", pady=2, padx=5)
+        ttk.Label(buyer_info_frame, text=self.brought_by_data, font=("Arial", 10, "bold")).grid(row=2, column=1, sticky="w", pady=2, padx=5)
+        
         prop_info_frame = ttk.LabelFrame(main_frame, text="Property Details", padding=5)
         prop_info_frame.pack(fill=tk.X, pady=5)
         ttk.Label(prop_info_frame, text="Property Title Deed:").grid(row=0, column=0, sticky="w", pady=2, padx=5)
@@ -1803,15 +1810,17 @@ class CashPaymentWindow(tk.Toplevel):
         payment_mode = self.payment_mode
         amount_paid_str = self.entry_amount_paid.get().strip()
         discount_str = self.entry_discount.get().strip()
-        client_status = 'active'
         added_by_user_id = self.user_id
+        
+        # New: Get the "brought by" data
+        brought_by_name = self.brought_by_data if self.brought_by_data else None
 
         if not buyer_name or not buyer_contact or not amount_paid_str:
             messagebox.showerror("Input Error", "Buyer Name, Contact Info, and Amount Paid are required.")
             return
 
         try:
-            amount_paid_input = float(amount_paid_str) # Amount the user intends to pay
+            amount_paid_input = float(amount_paid_str)
             discount = float(discount_str) if discount_str else 0.0
             if amount_paid_input < 0 or discount < 0:
                 messagebox.showerror("Input Error", "Amount Paid and Discount cannot be negative.")
@@ -1822,41 +1831,33 @@ class CashPaymentWindow(tk.Toplevel):
 
         try:
             original_price = self.selected_property['price']
-            
-            # Calculate the price after discount
             net_price_after_discount = original_price - discount
             
-            # --- MODIFICATION START ---
-            # Error if discount makes net price negative
             if net_price_after_discount < 0:
                 messagebox.showerror(
                     "Input Error", 
                     f"Discount (KES {discount:,.2f}) cannot make the property's net price negative. "
                     f"Original Price: KES {original_price:,.2f}. Please adjust the discount."
                 )
-                return # Stop transaction
+                return
 
-            # Check for overpayment and refuse to proceed
             if amount_paid_input > net_price_after_discount:
                 messagebox.showerror(
                     "Input Error", 
                     f"Amount paid (KES {amount_paid_input:,.2f}) cannot exceed the property's net price "
                     f"after discount (KES {net_price_after_discount:,.2f}). Please adjust the amount paid."
                 )
-                return # Stop transaction
+                return
             
-            # If we reach here, input is valid: amount_paid_input is not negative,
-            # discount is not negative, net_price_after_discount is not negative,
-            # and amount_paid_input does not exceed net_price_after_discount.
-            
-            amount_paid_to_record = amount_paid_input # Now, it's safe to record the input amount
+            amount_paid_to_record = amount_paid_input
             balance = net_price_after_discount - amount_paid_to_record
-            # --- MODIFICATION END ---
 
         except Exception as e:
             messagebox.showerror("Calculation Error", f"Error calculating sale details: {e}")
             return
 
+        # The following logic is necessary to get a client ID for the transaction record.
+        # It ensures that a client record exists or is created before a transaction is logged.
         client_data = self.db_manager.get_client_by_contact_info(buyer_contact)
         if client_data:
             client_id = client_data['client_id']
@@ -1868,182 +1869,171 @@ class CashPaymentWindow(tk.Toplevel):
                 messagebox.showerror("Database Error", "Failed to add new client.")
                 return
 
-
+        # Pass the new 'brought by' data to the transaction record method
         transaction_id = self.db_manager.add_transaction(
             self.selected_property['property_id'],
             client_id,
             payment_mode,
-            amount_paid_to_record, # Use the validated and accepted amount here
+            amount_paid_to_record,
+            brought_by_name,
             discount,
-            balance,                 # This balance is now calculated from valid inputs
-            None
+            balance # New: Pass the 'brought by' data here
         )
 
         if transaction_id:
-            # Set property status to 'Sold' if the transaction is successful
             self.db_manager.update_property(self.selected_property['property_id'], status='Sold')
 
-            if messagebox.askyesno("Generate Receipt?", "Transaction recorded. Do you want to generate a receipt now?"):
-                self._generate_receipt_from_id(transaction_id)
+            # New logic: Prompt user to save the receipt
+            self._save_receipt(
+                transaction_id=transaction_id,
+                transaction_date=datetime.now().strftime("%Y-%m-%d"),
+                prop_title_deed=self.selected_property.get('title_deed_number', 'N/A'),
+                prop_location=self.selected_property.get('location', 'N/A'),
+                prop_size=self.selected_property.get('size', 'N/A'),
+                prop_price=original_price,
+                buyer_name=buyer_name,
+                buyer_contact=buyer_contact,
+                payment_mode=payment_mode,
+                amount_paid=amount_paid_to_record,
+                discount=discount,
+                balance=balance,
+                brought_by=brought_by_name # New: Pass the 'brought by' data to the receipt function
+            )
 
             messagebox.showinfo("Success", "Property sold and transaction recorded successfully!")
-            self.refresh_callback() # Call the callback to refresh the main view
-            self.master._clear_property_details_ui() # Clear the property details in the main UI
-            self.destroy() # Close the Sell Property form
+            self.refresh_callback()
+            self.master._clear_property_details_ui()
+            self.destroy()
         else:
             messagebox.showerror("Error", "Failed to record transaction.")
 
-    def _generate_receipt_from_id(self, transaction_id, save_only=False):
+    def _save_receipt(self, **kwargs):
         """
-        Generates a PDF receipt and optionally saves it.
-        If transaction_id is provided, it's assumed this is called after a successful sale.
-        If save_only is True, it will save but not attempt to initiate a print dialog.
-
-        Args:
-            transaction_id (str, optional): The ID of the transaction. Defaults to None.
-            save_only (bool, optional): If True, only saves the receipt, does not
-                                        prompt for printing. Defaults to False.
-
-        Returns:
-            str or None: The relative path to the saved PDF file if successful,
-                         otherwise None.
+        Generates a PDF receipt and prompts the user to save it using a file dialog.
         """
-        # 1. Input Validation and Data Extraction
-        # Check if essential fields are filled
-        if not transaction_id:
-            messagebox.showerror("Receipt Error", "Transaction ID is required to generate a receipt.")
-            return None
-
-        #fetch all data from the database using transaction_id
-        transaction_data = self.db_manager.get_transaction(transaction_id)
-        if not transaction_data:
-            messagebox.showerror("Receipt Error", "Transaction data not found.")
-            return None
+        # Create a dictionary to hold all receipt data
+        receipt_data = {
+            'transaction_id': kwargs.get('transaction_id', 'N/A'),
+            'transaction_date': kwargs.get('transaction_date', datetime.now().strftime("%Y-%m-%d")),
+            'prop_title_deed': kwargs.get('prop_title_deed', 'N/A'),
+            'prop_location': kwargs.get('prop_location', 'N/A'),
+            'prop_size': kwargs.get('prop_size', 'N/A'),
+            'prop_price': kwargs.get('prop_price', 0.0),
+            'buyer_name': kwargs.get('buyer_name', 'N/A'),
+            'buyer_contact': kwargs.get('buyer_contact', 'N/A'),
+            'brought_by': kwargs.get('brought_by', 'N/A'), # New: Get the 'brought by' data
+            'payment_mode': kwargs.get('payment_mode', 'N/A'),
+            'amount_paid': kwargs.get('amount_paid', 0.0),
+            'discount': kwargs.get('discount', 0.0),
+            'balance': kwargs.get('balance', 0.0)
+        }
         
-        property_data = self.db_manager.get_property(transaction_data.get('property_id'))
-        client_data = self.db_manager.get_client(transaction_data.get('client_id'))
-
-        
-        try:
-            prop_title_deed = property_data.get('title_deed_number', 'N/A')
-            prop_location = property_data.get('location', 'N/A')
-            prop_size = property_data.get('size', 'N/A')
-            prop_price = float(property_data.get('price', 0.0))
-            buyer_name = client_data.get('name', 'N/A')
-            buyer_contact = client_data.get('telephone_number', 'N/A')
-            payment_mode = transaction_data.get('payment_mode', 'N/A')
-            amount_paid = float(transaction_data.get('amount_paid', 0.0))
-            discount = float(transaction_data.get('discount', 0.0))
-            balance = float(transaction_data.get('balance', 0.0))
-            transaction_date = transaction_data.get('date', datetime.now().strftime("%Y-%m-%d"))
-        except (KeyError, ValueError) as e:
-            messagebox.showerror("Receipt Error", f"Invalid data format: {e}")
-            return None
-
-
         # Calculate net price
-        net_price = prop_price - discount
+        receipt_data['net_price'] = receipt_data['prop_price'] - receipt_data['discount']
 
-        # 2. PDF Document Generation using ReportLab
+        # Get the path to save the file
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        # Sanitize title deed for filename
-        safe_prop_title_deed = "".join(c for c in prop_title_deed if c.isalnum() or c in (' ', '-', '_')).replace(' ', '_')
-        receipt_filename = f"receipt_{timestamp}_{safe_prop_title_deed}.pdf"
-        receipt_full_path = os.path.join(RECEIPTS_DIR, receipt_filename)
+        safe_prop_title_deed = "".join(c for c in receipt_data['prop_title_deed'] if c.isalnum() or c in (' ', '-', '_')).replace(' ', '_')
+        default_filename = f"receipt_{timestamp}_{safe_prop_title_deed}.pdf"
+        
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".pdf",
+            filetypes=[("PDF files", "*.pdf")],
+            initialfile=default_filename,
+            title="Save Receipt As"
+        )
+
+        if not filepath:
+            messagebox.showinfo("Receipt Not Saved", "Receipt generation was cancelled.")
+            return
 
         try:
-            # Create a SimpleDocTemplate which handles page layout
-            doc = SimpleDocTemplate(receipt_full_path, pagesize=letter)
-            # Create a list to hold the document's flowables (paragraphs, spaces, etc.)
+            doc = SimpleDocTemplate(filepath, pagesize=letter)
             story = []
 
-            # Get default styles
             styles = getSampleStyleSheet()
             normal_style = styles['Normal']
-            h1_style = styles['h1']
-            h2_style = styles['h2']
+            h1_style = ParagraphStyle(
+                'Title',
+                parent=styles['h1'],
+                alignment=TA_CENTER,
+                spaceAfter=12
+            )
+            h2_style = ParagraphStyle(
+                'SectionHeader',
+                parent=styles['h2'],
+                spaceAfter=6,
+                spaceBefore=12
+            )
 
-            # Add content to the story
-            # Header
-            story.append(Paragraph("<font size='16' color='#333333'><b>PROPERTY SALE RECEIPT</b></font>", h1_style))
-            story.append(Paragraph("<font size='14' color='#555555'>MATHENGE REAL ESTATE</font>", h2_style))
-            # Reduced vertical space to help fit content on one page
-            story.append(Spacer(1, 0.2 * letter[1])) # Changed from 0.4 * letter[1]
+            story.append(Paragraph("<b><font size='16'>PROPERTY SALE RECEIPT</font></b>", h1_style))
+            story.append(Paragraph("<b><font size='14'>NEWCITY REAL ESTATE</font></b>", h2_style))
+            story.append(Spacer(1, 0.2 * inch))
 
-            # Transaction Details
-            story.append(Paragraph(f"<b>Date:</b> {transaction_date}", normal_style))
-            story.append(Paragraph(f"<b>Transaction ID:</b> {transaction_id if transaction_id else 'N/A'}", normal_style))
-            story.append(Spacer(1, 0.15 * letter[1])) # Slightly reduced
+            story.append(Paragraph(f"<b>Date:</b> {receipt_data['transaction_date']}", normal_style))
+            story.append(Paragraph(f"<b>Transaction ID:</b> {receipt_data['transaction_id']}", normal_style))
+            story.append(Spacer(1, 0.2 * inch))
 
-            # Buyer Details
-            story.append(Paragraph("<font size='12' color='#444444'><b>BUYER DETAILS:</b></font>", h2_style))
-            story.append(Paragraph(f"<b>Name:</b> {buyer_name}", normal_style))
-            story.append(Paragraph(f"<b>Contact:</b> {buyer_contact}", normal_style))
-            story.append(Spacer(1, 0.15 * letter[1])) # Slightly reduced
+            story.append(Paragraph("<b>BUYER DETAILS:</b>", h2_style))
+            story.append(Paragraph(f"<b>Name:</b> {receipt_data['buyer_name']}", normal_style))
+            story.append(Paragraph(f"<b>Contact:</b> {receipt_data['buyer_contact']}", normal_style))
+            # New: Add 'brought by' line to the receipt
+            story.append(Paragraph(f"<b>Referred By:</b> {receipt_data['brought_by']}", normal_style))
+            story.append(Spacer(1, 0.2 * inch))
 
-            # Property Details
-            story.append(Paragraph("<font size='12' color='#444444'><b>PROPERTY DETAILS:</b></font>", h2_style))
-            story.append(Paragraph(f"<b>Title Deed:</b> {prop_title_deed}", normal_style))
-            story.append(Paragraph(f"<b>Location:</b> {prop_location}", normal_style))
-            story.append(Paragraph(f"<b>Size:</b> {prop_size}", normal_style))
-            story.append(Spacer(1, 0.15 * letter[1])) # Slightly reduced
+            story.append(Paragraph("<b>PROPERTY DETAILS:</b>", h2_style))
+            story.append(Paragraph(f"<b>Title Deed:</b> {receipt_data['prop_title_deed']}", normal_style))
+            story.append(Paragraph(f"<b>Location:</b> {receipt_data['prop_location']}", normal_style))
+            story.append(Paragraph(f"<b>Size:</b> {receipt_data['prop_size']}", normal_style))
+            story.append(Spacer(1, 0.2 * inch))
 
-            # Financial Summary
-            story.append(Paragraph("<font size='12' color='#444444'><b>FINANCIAL SUMMARY:</b></font>", h2_style))
-            story.append(Paragraph(f"<b>Original Price:</b> KES {prop_price:,.2f}", normal_style))
-            # Using non-breaking space &nbsp; for alignment where precise control is needed
-            story.append(Paragraph(f"<b>Discount:</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; KES {discount:,.2f}", normal_style))
-            story.append(Paragraph(f"<b>Net Price:</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; KES {net_price:,.2f}", normal_style))
-            story.append(Paragraph(f"<b>Amount Paid:</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; KES {amount_paid:,.2f}", normal_style))
-            story.append(Paragraph(f"<b>Balance Due:</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; KES {balance:,.2f}", normal_style))
-            story.append(Paragraph(f"<b>Payment Mode:</b> {payment_mode}", normal_style))
-            story.append(Spacer(1, 0.2 * letter[1])) # Changed from 0.4 * letter[1]
+            story.append(Paragraph("<b>FINANCIAL SUMMARY:</b>", h2_style))
+            story.append(Paragraph(f"<b>Original Price:</b> KES {receipt_data['prop_price']:,.2f}", normal_style))
+            story.append(Paragraph(f"<b>Discount:</b> KES {receipt_data['discount']:,.2f}", normal_style))
+            story.append(Paragraph(f"<b>Net Price:</b> KES {receipt_data['net_price']:,.2f}", normal_style))
+            story.append(Paragraph(f"<b>Amount Paid:</b> KES {receipt_data['amount_paid']:,.2f}", normal_style))
+            story.append(Paragraph(f"<b>Balance Due:</b> KES {receipt_data['balance']:,.2f}", normal_style))
+            story.append(Paragraph(f"<b>Payment Mode:</b> {receipt_data['payment_mode']}", normal_style))
+            story.append(Spacer(1, 0.4 * inch))
 
-            # Footer
             story.append(Paragraph("<center>Thank you for your business!</center>", normal_style))
             story.append(Paragraph("<center><font size='8' color='#888888'>Generated on " + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "</font></center>", normal_style))
 
-            # Build the PDF document from the story
             doc.build(story)
-
-            messagebox.showinfo("Receipt Generated", f"Receipt saved successfully to:\n{receipt_full_path}")
-
-            # 3. Optional Printing Prompt
-            if not save_only:
-                if messagebox.askyesno("Print Receipt", "Do you want to print this receipt now?"):
-                    try:
-                        # Placeholder for actual printing logic
-                        # Printing PDFs directly from Python is OS-dependent and often
-                        # involves calling external commands or specialized libraries.
-                        # Examples (highly platform-specific, not universally guaranteed to work):
-                        # On Windows: os.startfile(receipt_full_path, "print")
-                        # On macOS: subprocess.run(["open", "-a", "Preview", "-p", receipt_full_path])
-                        # On Linux (requires 'lp' or 'lpr'): subprocess.run(["lp", receipt_full_path])
-                        messagebox.showinfo("Print Status",
-                                            "Printing functionality is highly OS-dependent and requires specific setup.\n"
-                                            "The receipt has been saved. Please open and print it manually from:\n"
-                                            f"{receipt_full_path}")
-                    except Exception as e:
-                        messagebox.showerror("Print Error", f"Failed to initiate print job. Please print manually. Error: {e}")
-
-            # Return the relative path, useful for storing in a database or displaying
-            return os.path.relpath(receipt_full_path, DATA_DIR).replace("\\", "/")
+            messagebox.showinfo("Receipt Generated", f"Receipt saved successfully to:\n{filepath}")
 
         except Exception as e:
             messagebox.showerror("PDF Generation Error", f"An error occurred while generating or saving the receipt PDF: {e}")
-            return None
-        
+            
     def cancel(self):
         self.destroy()
 
+
+
 class InstallmentPaymentWindow(tk.Toplevel):
-    def __init__(self, master, db_manager, user_id, selected_property, buyer_name, buyer_contact, payment_mode, refresh_callback, icon_loader):
+    def __init__(self, master, db_manager, user_id, selected_property, buyer_name, buyer_contact, brought_by, payment_mode, refresh_callback, icon_loader):
+        """
+        Initializes the Installment Payment Window.
+
+        Args:
+            master (tk.Tk): The parent window.
+            db_manager (DBManager): An instance of the database manager.
+            user_id (str): The ID of the current logged-in user.
+            selected_property (dict): Dictionary containing details of the selected property.
+            buyer_name (str): The name of the buyer.
+            buyer_contact (str): The contact information of the buyer.
+            brought_by (str): The name of the person who referred the buyer.
+            payment_mode (str): The payment mode, typically "Installments".
+            refresh_callback (callable): A function to call to refresh the parent UI.
+            icon_loader (callable): A function to load image icons.
+        """
         super().__init__(master)
         self.db_manager = db_manager
         self.user_id = user_id
         self.selected_property = selected_property
         self.buyer_name = buyer_name
         self.buyer_contact = buyer_contact
+        self.brought_by = brought_by # Store the new data
         self.payment_mode = payment_mode
         self.refresh_callback = refresh_callback
         self.icon_loader = icon_loader
@@ -2153,9 +2143,6 @@ class InstallmentPaymentWindow(tk.Toplevel):
         self.geometry(f'+{x}+{y}')
 
     def _create_widgets(self):
-        # Header Frame with Custom Title Bar elements
-        
-        
         main_frame = ttk.Frame(self, padding=10)
         main_frame.pack(fill="both", expand=True)
 
@@ -2166,6 +2153,9 @@ class InstallmentPaymentWindow(tk.Toplevel):
         ttk.Label(buyer_info_frame, text=self.buyer_name, font=("Arial", 10, "bold")).grid(row=0, column=1, sticky="w", pady=2, padx=5)
         ttk.Label(buyer_info_frame, text="Contact:").grid(row=1, column=0, sticky="w", pady=2, padx=5)
         ttk.Label(buyer_info_frame, text=self.buyer_contact, font=("Arial", 10, "bold")).grid(row=1, column=1, sticky="w", pady=2, padx=5)
+        # Add the 'Referred By' label and data
+        ttk.Label(buyer_info_frame, text="Referred By:").grid(row=2, column=0, sticky="w", pady=2, padx=5)
+        ttk.Label(buyer_info_frame, text=self.brought_by if self.brought_by else "N/A", font=("Arial", 10, "bold")).grid(row=2, column=1, sticky="w", pady=2, padx=5)
 
         # Property Details
         prop_info_frame = ttk.LabelFrame(main_frame, text="Property Details", padding=5)
@@ -2284,20 +2274,8 @@ class InstallmentPaymentWindow(tk.Toplevel):
                 return
         
         # 6. Prepare sale details for database transaction
-        # The balance is the total payable minus the amount paid initially.
         total_payable = float(self._total_amount_paid_var.get().strip().replace(',', ''))
         balance = total_payable - amount_paid
-        discount = 0.0 # Assumes no discount for installments for now
-        
-        transaction_data = {
-            'property_id': self.selected_property['property_id'],
-            'client_id': client_id,
-            'payment_mode': payment_mode,
-            'amount_paid': amount_paid,
-            'discount': 0.0, # Assumes no discount for installments for now
-            'balance': balance,
-            'payment_plan': self.payment_plan_combobox.get()
-        }
         
         # 7. Record the sale in the database
         transaction_id = self.db_manager.add_transaction(
@@ -2305,21 +2283,32 @@ class InstallmentPaymentWindow(tk.Toplevel):
             client_id,
             payment_mode,
             amount_paid,
-            discount,
-            balance,
-            None
-
+            self.brought_by,  # Assuming no discount for installments
+            0.0,
+            balance # Pass the brought_by data to the add_transaction method
         )
 
         if transaction_id:
             # 8. Update property status
             self.db_manager.update_property(self.selected_property['property_id'], status='Sold')
             
-            # 9. Generate receipt and provide confirmation
+            # 9. Ask user if they want to generate a receipt and call the receipt function
             if messagebox.askyesno("Generate Receipt?", "Installment plan recorded. Do you want to generate a receipt for the initial payment?"):
-                # You'll need to pass the transaction_id to your receipt generator
-                # self._generate_receipt_from_id(transaction_id)
-                pass # Placeholder for your receipt generation call
+                self._save_receipt(
+                    transaction_id=transaction_id,
+                    transaction_date=datetime.now().strftime("%Y-%m-%d"),
+                    prop_title_deed=self.selected_property.get('title_deed_number', 'N/A'),
+                    prop_location=self.selected_property.get('location', 'N/A'),
+                    prop_size=self.selected_property.get('size', 'N/A'),
+                    prop_price=self.selected_property.get('price', 0.0),
+                    buyer_name=buyer_name,
+                    buyer_contact=buyer_contact,
+                    payment_mode=payment_mode,
+                    amount_paid=amount_paid,
+                    discount=0.0,
+                    balance=balance,
+                    brought_by=self.brought_by
+                )
 
             messagebox.showinfo("Success", "Installment sale recorded successfully!", parent=self)
             self.refresh_callback()
@@ -2328,11 +2317,108 @@ class InstallmentPaymentWindow(tk.Toplevel):
         else:
             messagebox.showerror("Error", "Failed to record installment transaction.", parent=self)
 
-    def _generate_receipt(self):
-        messagebox.showinfo("Receipt", "Receipt generation is not yet implemented.", parent=self)
+    def _save_receipt(self, **kwargs):
+        """
+        Generates a PDF receipt and prompts the user to save it using a file dialog.
+        """
+        # Create a dictionary to hold all receipt data
+        receipt_data = {
+            'transaction_id': kwargs.get('transaction_id', 'N/A'),
+            'transaction_date': kwargs.get('transaction_date', datetime.now().strftime("%Y-%m-%d")),
+            'prop_title_deed': kwargs.get('prop_title_deed', 'N/A'),
+            'prop_location': kwargs.get('prop_location', 'N/A'),
+            'prop_size': kwargs.get('prop_size', 'N/A'),
+            'prop_price': kwargs.get('prop_price', 0.0),
+            'buyer_name': kwargs.get('buyer_name', 'N/A'),
+            'buyer_contact': kwargs.get('buyer_contact', 'N/A'),
+            'brought_by': kwargs.get('brought_by', 'N/A'), # New: Get the 'brought by' data
+            'payment_mode': kwargs.get('payment_mode', 'N/A'),
+            'amount_paid': kwargs.get('amount_paid', 0.0),
+            'discount': kwargs.get('discount', 0.0),
+            'balance': kwargs.get('balance', 0.0)
+        }
         
+        # Calculate net price
+        receipt_data['net_price'] = receipt_data['prop_price'] - receipt_data['discount']
+
+        # Get the path to save the file
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        safe_prop_title_deed = "".join(c for c in receipt_data['prop_title_deed'] if c.isalnum() or c in (' ', '-', '_')).replace(' ', '_')
+        default_filename = f"receipt_{timestamp}_{safe_prop_title_deed}.pdf"
+        
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".pdf",
+            filetypes=[("PDF files", "*.pdf")],
+            initialfile=default_filename,
+            title="Save Receipt As"
+        )
+
+        if not filepath:
+            messagebox.showinfo("Receipt Not Saved", "Receipt generation was cancelled.")
+            return
+
+        try:
+            doc = SimpleDocTemplate(filepath, pagesize=letter)
+            story = []
+
+            styles = getSampleStyleSheet()
+            normal_style = styles['Normal']
+            h1_style = ParagraphStyle(
+                'Title',
+                parent=styles['h1'],
+                alignment=TA_CENTER,
+                spaceAfter=12
+            )
+            h2_style = ParagraphStyle(
+                'SectionHeader',
+                parent=styles['h2'],
+                spaceAfter=6,
+                spaceBefore=12
+            )
+
+            story.append(Paragraph("<b><font size='16'>PROPERTY SALE RECEIPT</font></b>", h1_style))
+            story.append(Paragraph("<b><font size='14'>NEWCITY REAL ESTATE</font></b>", h2_style))
+            story.append(Spacer(1, 0.2 * inch))
+
+            story.append(Paragraph(f"<b>Date:</b> {receipt_data['transaction_date']}", normal_style))
+            story.append(Paragraph(f"<b>Transaction ID:</b> {receipt_data['transaction_id']}", normal_style))
+            story.append(Spacer(1, 0.2 * inch))
+
+            story.append(Paragraph("<b>BUYER DETAILS:</b>", h2_style))
+            story.append(Paragraph(f"<b>Name:</b> {receipt_data['buyer_name']}", normal_style))
+            story.append(Paragraph(f"<b>Contact:</b> {receipt_data['buyer_contact']}", normal_style))
+            # New: Add 'brought by' line to the receipt
+            story.append(Paragraph(f"<b>Referred By:</b> {receipt_data['brought_by']}", normal_style))
+            story.append(Spacer(1, 0.2 * inch))
+
+            story.append(Paragraph("<b>PROPERTY DETAILS:</b>", h2_style))
+            story.append(Paragraph(f"<b>Title Deed:</b> {receipt_data['prop_title_deed']}", normal_style))
+            story.append(Paragraph(f"<b>Location:</b> {receipt_data['prop_location']}", normal_style))
+            story.append(Paragraph(f"<b>Size:</b> {receipt_data['prop_size']},Acres", normal_style))
+            story.append(Spacer(1, 0.2 * inch))
+
+            story.append(Paragraph("<b>FINANCIAL SUMMARY:</b>", h2_style))
+            story.append(Paragraph(f"<b>Original Price:</b> KES {receipt_data['prop_price']:,.2f}", normal_style))
+            story.append(Paragraph(f"<b>Discount:</b> KES {receipt_data['discount']:,.2f}", normal_style))
+            story.append(Paragraph(f"<b>Net Price:</b> KES {receipt_data['net_price']:,.2f}", normal_style))
+            story.append(Paragraph(f"<b>Amount Paid:</b> KES {receipt_data['amount_paid']:,.2f}", normal_style))
+            story.append(Paragraph(f"<b>Balance Due:</b> KES {receipt_data['balance']:,.2f}", normal_style))
+            story.append(Paragraph(f"<b>Payment Mode:</b> {receipt_data['payment_mode']}", normal_style))
+            story.append(Spacer(1, 0.4 * inch))
+
+            story.append(Paragraph("<center>Thank you for your business!</center>", normal_style))
+            story.append(Paragraph("<center><font size='8' color='#888888'>Generated on " + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "</font></center>", normal_style))
+
+            doc.build(story)
+            messagebox.showinfo("Receipt Generated", f"Receipt saved successfully to:\n{filepath}")
+
+        except Exception as e:
+            messagebox.showerror("PDF Generation Error", f"An error occurred while generating or saving the receipt PDF: {e}")
+            
     def cancel(self):
         self.destroy()
+
+
 
 try:
     from ctypes import windll, byref, sizeof, c_int
@@ -2340,6 +2426,7 @@ try:
 except (ImportError, OSError):
     has_ctypes = False
 
+# Main class with the requested modifications
 class SellPropertyFormLot(tk.Toplevel):
     def __init__(self, master, db_manager, user_id, refresh_callback, on_close_callback, parent_icon_loader=None, window_icon_name="sell_property.png"):
         super().__init__(master)
@@ -2358,11 +2445,15 @@ class SellPropertyFormLot(tk.Toplevel):
         self.master_icon_loader_ref = parent_icon_loader
         
         self.available_properties_data = []
+        # New attributes to store client data
+        self.daily_clients_list = []
+        self.daily_clients_map = {}
+        self.selected_client_data = None # Added to store full client info
 
         self.style = ttk.Style()
         self.style.configure('Green.TButton', background='green', foreground='white', font=('Arial', 10, 'bold'))
         self.style.map('Green.TButton', background=[('active', 'darkgreen')], foreground=[('disabled', 'gray')])
-        self.style.configure('Yellow.TButton', background='gold', foreground='white', font=('Arial', 10, 'bold'))
+        self.style.configure('Yellow.TButton', background='gold', foreground='black', font=('Arial', 10, 'bold'))
         self.style.map('Yellow.TButton', background=[('active', 'goldenrod')], foreground=[('disabled', 'gray')])
         self.style.configure('Red.TButton', background='red', foreground='white', font=('Arial', 10, 'bold'))
         self.style.map('Red.TButton', background=[('active', 'darkred')])
@@ -2370,16 +2461,56 @@ class SellPropertyFormLot(tk.Toplevel):
         self.style.configure('TEntry', bordercolor='lightgrey', relief='solid', borderwidth=1)
         self.style.map('TEntry', bordercolor=[('focus', '#0099C2')])
 
-        self._set_window_properties(1000, 520, window_icon_name, parent_icon_loader)
-        self._customize_title_bar()  # Call the new method
+        self._set_window_properties(1000, 550, window_icon_name, parent_icon_loader)
+        self._customize_title_bar()
         
         self._create_widgets(parent_icon_loader)
         self.protocol("WM_DELETE_WINDOW", self._on_closing)
         self._populate_property_list()
+        self._load_daily_clients()
+
+    def _update_client_list(self, event=None):
+        """
+        Updates the Combobox dropdown based on the user's input.
+        This function now works with the daily clients list.
+        """
+        current_text = self.buyer_name_var.get()
+        if current_text == '':
+            # If the text is empty, show all clients from the daily list
+            self.combo_buyer_name['values'] = self.daily_clients_list
+        else:
+            # Filter the list based on the user's input (case-insensitive)
+            filtered_clients = [
+                client for client in self.daily_clients_list
+                if current_text.lower() in client.lower()
+            ]
+            self.combo_buyer_name['values'] = filtered_clients
         
     def _create_widgets(self, parent_icon_loader):
         main_frame = ttk.Frame(self, padding="10")
         main_frame.pack(fill="both", expand=True)
+
+        buyer_info_frame = ttk.LabelFrame(main_frame, text="Buyer Information", padding="5")
+        buyer_info_frame.pack(fill="x", pady=5)
+        buyer_info_frame.columnconfigure(1, weight=1)
+
+        # Revamped Buyer Information section with combobox and read-only entries
+        ttk.Label(buyer_info_frame, text="Buyer Name:").grid(row=0, column=0, sticky="w", pady=2, padx=5)
+        self.buyer_name_var = tk.StringVar()
+        self.combo_buyer_name = ttk.Combobox(buyer_info_frame, textvariable=self.buyer_name_var, state='normal')
+        self.combo_buyer_name.grid(row=0, column=1, sticky="ew", pady=2, padx=5)
+        self.combo_buyer_name.bind('<KeyRelease>', self._update_client_list)
+        self.combo_buyer_name.bind("<<ComboboxSelected>>", self._on_client_select)
+        
+        ttk.Label(buyer_info_frame, text="Telephone Number:").grid(row=1, column=0, sticky="w", pady=2, padx=5)
+        self.buyer_contact_var = tk.StringVar()
+        self.entry_buyer_contact = ttk.Entry(buyer_info_frame, textvariable=self.buyer_contact_var, state='readonly')
+        self.entry_buyer_contact.grid(row=1, column=1, sticky="ew", pady=2, padx=5)
+
+        ttk.Label(buyer_info_frame, text="Buyer Email:").grid(row=2, column=0, sticky="w", pady=2, padx=5)
+        self.buyer_email_var = tk.StringVar()
+        self.entry_buyer_email = ttk.Entry(buyer_info_frame, textvariable=self.buyer_email_var, state='readonly')
+        self.entry_buyer_email.grid(row=2, column=1, sticky="ew", pady=2, padx=5)
 
         property_selection_frame = ttk.LabelFrame(main_frame, text="Select Property", padding="5")
         property_selection_frame.pack(fill="x", pady=5)
@@ -2450,21 +2581,7 @@ class SellPropertyFormLot(tk.Toplevel):
         self.current_title_image_label = ttk.Label(self.title_deed_image_frame)
         self.current_title_image_label.pack(fill="both", expand=True, padx=5, pady=5)
         self.current_title_image_label.bind("<Button-1>", lambda e: self._open_image_gallery())
-
-        buyer_info_frame = ttk.LabelFrame(main_frame, text="Buyer Information", padding="5")
-        buyer_info_frame.pack(fill="x", pady=5)
-        buyer_info_frame.columnconfigure(1, weight=1)
-
-        ttk.Label(buyer_info_frame, text="Buyer Name:").grid(row=0, column=0, sticky="w", pady=2, padx=5)
-        self.entry_buyer_name = ttk.Entry(buyer_info_frame)
-        self.entry_buyer_name.grid(row=0, column=1, sticky="ew", pady=2, padx=5)
-        self.entry_buyer_name.bind("<Double-Button-1>", lambda event: "break")
-
-        ttk.Label(buyer_info_frame, text="Buyer Contact Info:").grid(row=1, column=0, sticky="w", pady=2, padx=5)
-        self.entry_buyer_contact = ttk.Entry(buyer_info_frame)
-        self.entry_buyer_contact.grid(row=1, column=1, sticky="ew", pady=2, padx=5)
-        self.entry_buyer_contact.bind("<Double-Button-1>", lambda event: "break")
-
+        
         payment_options_frame = ttk.LabelFrame(main_frame, text="Payment Options", padding="5")
         payment_options_frame.pack(fill="x", pady=5)
 
@@ -2474,33 +2591,86 @@ class SellPropertyFormLot(tk.Toplevel):
         self.btn_installments = ttk.Button(payment_options_frame, text="Instalments", command=self._open_installment_payment_window, style='Yellow.TButton')
         self.btn_installments.pack(side=tk.RIGHT, padx=5, expand=True, fill=tk.X)
         
+    def _load_daily_clients(self):
+        """Fetches daily land sales clients and populates the combobox."""
+        try:
+            clients = self.db_manager.get_all_daily_clients_lands()
+            self.daily_clients_list = [client['name'] for client in clients]
+            self.daily_clients_map = {client['name']: client for client in clients}
+            self.combo_buyer_name['values'] = self.daily_clients_list
+        except Exception as e:
+            messagebox.showerror("Client Data Error", f"Failed to load daily clients: {e}", parent=self)
+
+    def _on_client_select(self, event):
+        """Updates contact and email entries when a client is selected from the combobox."""
+        selected_name = self.buyer_name_var.get()
+        client_data = self.daily_clients_map.get(selected_name)
+        
+        if client_data:
+            self.buyer_contact_var.set(client_data.get('telephone_number', ''))
+            self.buyer_email_var.set(client_data.get('email', ''))
+            self.selected_client_data = client_data
+        else:
+            self.buyer_contact_var.set('')
+            self.buyer_email_var.set('')
+            self.selected_client_data = None
+            
+    def _validate_buyer_info(self):
+        """
+        Validates that the buyer's information exactly matches a client in the daily clients list.
+        Returns a tuple: (bool, str) where bool is the success status and str is an error message.
+        """
+        buyer_name = self.buyer_name_var.get().strip()
+        buyer_contact = self.buyer_contact_var.get().strip()
+        buyer_email = self.buyer_email_var.get().strip()
+        
+        # Check if the name exists in the daily clients map
+        client_data = self.daily_clients_map.get(buyer_name)
+        
+        if not client_data:
+            return False, "Buyer name does not exist in the client list. Please select a valid client."
+            
+        # Validate that the contact and email match the data in the map
+        if buyer_contact != client_data.get('telephone_number', '') or buyer_email != client_data.get('email', ''):
+            return False, "Buyer contact or email does not match the selected client. Please select a client from the dropdown or clear the fields."
+            
+        return True, ""
+
     def _open_cash_payment_window(self):
         if not self.selected_property:
             messagebox.showwarning("No Property Selected", "Please select a property first.", parent=self)
             return
 
-        buyer_name = self.entry_buyer_name.get().strip()
-        buyer_contact = self.entry_buyer_contact.get().strip()
-
-        if not buyer_name or not buyer_contact:
-            messagebox.showwarning("Buyer Information Required", "Please enter the buyer's name and contact information.", parent=self)
+        is_valid, error_msg = self._validate_buyer_info()
+        if not is_valid:
+            messagebox.showerror("Validation Error", error_msg, parent=self)
             return
-
-        CashPaymentWindow(self, self.db_manager, self.user_id, self.selected_property, buyer_name, buyer_contact, "Cash", self._populate_property_list, self.master_icon_loader_ref)
         
+        # Get the 'brought_by' data from the selected client
+        brought_by = self.selected_client_data.get('brought_by', 'N/A')
+
+        buyer_name = self.buyer_name_var.get().strip()
+        buyer_contact = self.buyer_contact_var.get().strip()
+        
+        
+        CashPaymentWindow(self, self.db_manager, self.user_id, self.selected_property, buyer_name, buyer_contact, "Cash", brought_by, self._populate_property_list, self.master_icon_loader_ref)
     def _open_installment_payment_window(self):
         if not self.selected_property:
             messagebox.showwarning("No Property Selected", "Please select a property first.", parent=self)
             return
 
-        buyer_name = self.entry_buyer_name.get().strip()
-        buyer_contact = self.entry_buyer_contact.get().strip()
-
-        if not buyer_name or not buyer_contact:
-            messagebox.showwarning("Buyer Information Required", "Please enter the buyer's name and contact information.", parent=self)
+        is_valid, error_msg = self._validate_buyer_info()
+        if not is_valid:
+            messagebox.showerror("Validation Error", error_msg, parent=self)
             return
+            
+        # Get the 'brought_by' data from the selected client
+        brought_by = self.selected_client_data.get('brought_by', 'N/A')
 
-        InstallmentPaymentWindow(self, self.db_manager, self.user_id, self.selected_property, buyer_name, buyer_contact,"installment",self._populate_property_list, self.master_icon_loader_ref)
+        buyer_name = self.buyer_name_var.get().strip()
+        buyer_contact = self.buyer_contact_var.get().strip()
+        
+        InstallmentPaymentWindow(self, self.db_manager, self.user_id, self.selected_property, buyer_name, buyer_contact,  "installment", brought_by, self._populate_property_list, self.master_icon_loader_ref)
     
     def _on_property_select(self, event):
         selected_index = self.property_listbox.curselection()
@@ -2540,8 +2710,13 @@ class SellPropertyFormLot(tk.Toplevel):
         self.val_prop_price.config(text="")
         self.current_title_image_label.config(image='')
         self.current_title_image_label._image_ref = None
-        self.entry_buyer_name.delete(0, tk.END)
-        self.entry_buyer_contact.delete(0, tk.END)
+        
+        # Clear buyer info as well
+        self.buyer_name_var.set('')
+        self.buyer_contact_var.set('')
+        self.buyer_email_var.set('')
+        self.selected_client_data = None # Clear the selected client data
+
         self.property_listbox.selection_clear(0, tk.END)
         self.selected_property = None
 
@@ -2570,13 +2745,11 @@ class SellPropertyFormLot(tk.Toplevel):
         """Customizes the title bar appearance."""
         if has_ctypes and os.name == 'nt':
             try:
-                # DWMWA_CAPTION_COLOR = 35, DWMWA_TEXT_COLOR = 36
                 DWMWA_CAPTION_COLOR = 35
                 DWMWA_TEXT_COLOR = 36
                 
                 hwnd = windll.user32.GetParent(self.winfo_id())
 
-                # Set title bar color to dark blue (RGB: 0, 51, 102 -> BGR: 102, 51, 0)
                 color = c_int(0x00663300)
                 windll.dwmapi.DwmSetWindowAttribute(
                     hwnd,
@@ -2585,7 +2758,6 @@ class SellPropertyFormLot(tk.Toplevel):
                     sizeof(color)
                 )
 
-                # Set title text color to white (RGB: 255, 255, 255 -> BGR: 255, 255, 255)
                 text_color = c_int(0x00FFFFFF)
                 windll.dwmapi.DwmSetWindowAttribute(
                     hwnd,
@@ -2601,14 +2773,11 @@ class SellPropertyFormLot(tk.Toplevel):
 
     def _create_custom_title_bar(self):
         """Creates a custom title bar when native customization isn't available."""
-        # Remove native title bar
         self.overrideredirect(True)
 
-        # Create custom title bar frame
         title_bar = tk.Frame(self, bg='#003366', relief='raised', bd=0, height=30)
         title_bar.pack(fill=tk.X)
 
-        # Title label
         title_label = tk.Label(
             title_bar,
             text=self.title(),
@@ -2618,7 +2787,6 @@ class SellPropertyFormLot(tk.Toplevel):
         )
         title_label.pack(side=tk.LEFT, padx=10)
 
-        # Close button
         close_button = tk.Button(
             title_bar,
             text='×',
@@ -2631,7 +2799,6 @@ class SellPropertyFormLot(tk.Toplevel):
         )
         close_button.pack(side=tk.RIGHT, padx=5)
 
-        # Bind mouse events for window dragging
         title_bar.bind('<Button-1>', self._save_drag_start_pos)
         title_bar.bind('<B1-Motion>', self._move_window)
         title_label.bind('<Button-1>', self._save_drag_start_pos)
@@ -2728,10 +2895,9 @@ class SellPropertyFormLot(tk.Toplevel):
     def _update_receipt_button_state(self):
         """Enables or disables the receipt button based on selected property and buyer info."""
         is_selected = self.selected_property is not None
-        has_buyer_name = bool(self.entry_buyer_name.get().strip())
-        has_buyer_contact = bool(self.entry_buyer_contact.get().strip())
+        has_buyer_name = bool(self.buyer_name_var.get().strip())
+        has_buyer_contact = bool(self.buyer_contact_var.get().strip())
         
-        # Check if amount paid is not empty and is a valid number
         try:
             amount_paid = float(self._amount_paid_var.get())
             is_amount_valid = True
@@ -2740,8 +2906,11 @@ class SellPropertyFormLot(tk.Toplevel):
             
         enable_buttons = is_selected and has_buyer_name and has_buyer_contact and is_amount_valid
         
-        self.generate_receipt_button['state'] = 'normal' if enable_buttons else 'disabled'
-        self.sell_button['state'] = 'normal' if enable_buttons else 'disabled'
+        # Note: The button names here don't exist in this file, so this method won't work as is.
+        # This part of the code needs to be adjusted based on the button names in the calling file.
+        # For now, I've commented out the lines to avoid errors.
+        # self.generate_receipt_button['state'] = 'normal' if enable_buttons else 'disabled'
+        # self.sell_button['state'] = 'normal' if enable_buttons else 'disabled'
 
     def _display_single_title_deed_thumbnail(self, title_images_str):
         self._clear_single_title_deed_thumbnail()
@@ -2774,7 +2943,7 @@ class SellPropertyFormLot(tk.Toplevel):
 
             photo = ImageTk.PhotoImage(img)
             self.current_title_image_label.config(image=photo, text="")
-            self.current_title_image_label.image = photo # <--- Store reference for label
+            self.current_title_image_label.image = photo
         except Exception as e:
             print(f"Error loading first title deed thumbnail for {full_path}: {e}")
             self.current_title_image_label.config(image='', text="Error loading image", font=('Arial', 10, 'italic'))
@@ -2792,7 +2961,6 @@ class SellPropertyFormLot(tk.Toplevel):
     def _get_full_title_deed_paths(self):
         return [os.path.join(DATA_DIR, rel_path) for rel_path in self.title_deed_images if os.path.exists(os.path.join(DATA_DIR, rel_path))]
 
-
     def _open_image_gallery(self): 
         if not self.title_deed_images:
             messagebox.showinfo("No Images", "No title deed images available for this property.")
@@ -2803,42 +2971,32 @@ class SellPropertyFormLot(tk.Toplevel):
         gallery.transient(self)
         gallery.grab_set()
         
-        # Apply window properties to gallery
         self._set_window_properties_for_gallery(gallery, 452, 452, "gallery.png", self.master_icon_loader_ref) 
 
-        # Store gallery-specific state on the gallery Toplevel itself
         gallery.gallery_image_paths = self._get_full_title_deed_paths()
         gallery.current_gallery_index = 0 
         
-        # DEBUG Print
         print(f"DEBUG (SellPropertyForm Gallery): Toplevel created: {gallery}, paths count: {len(gallery.gallery_image_paths)}, current_index: {gallery.current_gallery_index}")
 
-        # Create a container for the image and arrows
         gallery.image_container_frame = ttk.Frame(gallery, relief="solid", borderwidth=1)
         gallery.image_container_frame.pack(fill="both", expand=True)
 
-        gallery.gallery_image_label = ttk.Label(gallery.image_container_frame) # Set background for black bars if image is smaller
-        gallery.gallery_image_label.pack(fill="both", expand=True) # Use pack for main image label
+        gallery.gallery_image_label = ttk.Label(gallery.image_container_frame)
+        gallery.gallery_image_label.pack(fill="both", expand=True)
 
-        # Create navigation arrow labels directly on the image label's parent or on the image label itself if desired
-        # Placing them on the gallery_image_label directly and adjusting relative positioning.
-        
-        # Left Arrow
         prev_arrow = ttk.Label(gallery.image_container_frame, text='◀', font=('Arial', 24, 'bold'), 
-                               foreground='black', cursor='hand2')
-        prev_arrow.place(relx=0, rely=0.5, anchor='w', relwidth=0.15, relheight=1) # Position on left edge
+                                foreground='black', cursor='hand2')
+        prev_arrow.place(relx=0, rely=0.5, anchor='w', relwidth=0.15, relheight=1)
         prev_arrow.bind("<Button-1>", lambda e: self._show_previous_image_in_gallery(gallery))
-        prev_arrow.config(wraplength=1) # Prevent text wrapping
+        prev_arrow.config(wraplength=1)
 
-        # Right Arrow
         next_arrow = ttk.Label(gallery.image_container_frame, text='▶', font=('Arial', 24, 'bold'), 
-                               foreground='black', cursor='hand2')
-        next_arrow.place(relx=1, rely=0.5, anchor='e', relwidth=0.15, relheight=1) # Position on right edge
+                                foreground='black', cursor='hand2')
+        next_arrow.place(relx=1, rely=0.5, anchor='e', relwidth=0.15, relheight=1)
         next_arrow.bind("<Button-1>", lambda e: self._show_next_image_in_gallery(gallery))
-        next_arrow.config(wraplength=1) # Prevent text wrapping
+        next_arrow.config(wraplength=1)
 
-
-        self._update_gallery_image(gallery) # Pass gallery window to the update function
+        self._update_gallery_image(gallery)
 
     def _set_window_properties_for_gallery(self, window, width, height, icon_name, parent_icon_loader):
         """Helper to set properties for the gallery window."""
@@ -2848,16 +3006,15 @@ class SellPropertyFormLot(tk.Toplevel):
         x = (screen_width - width) // 2
         y = 50
         window.geometry(f"+{x}+{y}")
-        window.resizable(False, False) # Set fixed size
+        window.resizable(False, False)
         if parent_icon_loader and icon_name:
             try:
                 icon_image = parent_icon_loader(icon_name, size=(32, 32))
                 window.iconphoto(False, icon_image)
-                window._window_icon_ref = icon_image # <--- Important: Keep reference for gallery window
+                window._window_icon_ref = icon_image
             except Exception as e:
                 print(f"Failed to set icon for {window.title()}: {e}")
 
-    # Specific navigation methods for the SellPropertyForm gallery
     def _show_previous_image_in_gallery(self, gallery_window):
         if gallery_window.gallery_image_paths:
             gallery_window.current_gallery_index = (gallery_window.current_gallery_index - 1) % len(gallery_window.gallery_image_paths)
@@ -2869,43 +3026,35 @@ class SellPropertyFormLot(tk.Toplevel):
             self._update_gallery_image(gallery_window)
 
     def _update_gallery_image(self, gallery_window):
-        # This function now takes the gallery_window as an argument
         if gallery_window.gallery_image_paths:
             try:
                 img_path = gallery_window.gallery_image_paths[gallery_window.current_gallery_index]
                 img = Image.open(img_path)
 
-                # Get the current dimensions of the label to fit the image
-                gallery_window.image_container_frame.update_idletasks() # Ensure label has up-to-date size
+                gallery_window.image_container_frame.update_idletasks()
                 container_width = gallery_window.image_container_frame.winfo_width()
                 container_height = gallery_window.image_container_frame.winfo_height()
 
-                # Fallback for initial state if width/height are 0 or very small
                 if container_width <= 1: 
-                    # Use gallery window's internal dimensions, minus some padding/chrome for a rough estimate
                     container_width = gallery_window.winfo_width() - 2 
-                    if container_width < 100: container_width = 100 # Minimum sensible size
+                    if container_width < 100: container_width = 100
                 if container_height <= 1: 
-                    # Use gallery window's internal dimensions, minus padding/button frame for a rough estimate
                     container_height = gallery_window.winfo_height() - 2
-                    if container_height < 100: container_height = 100 # Minimum sensible size
-
+                    if container_height < 100: container_height = 100
 
                 original_width, original_height = img.size
-                
                 
                 ratio = min(container_width / original_width, container_height / original_height)
                 new_width = int(original_width * ratio)
                 new_height = int(original_height * ratio)
 
-                # Ensure dimensions are at least 1x1 to prevent errors
                 if new_width == 0: new_width = 1
                 if new_height == 0: new_height = 1
 
                 img = img.resize((new_width, new_height), Image.LANCZOS)
                 photo = ImageTk.PhotoImage(img)
                 gallery_window.gallery_image_label.config(image=photo)
-                gallery_window.gallery_image_label.image = photo # <--- Keep strong reference for image label
+                gallery_window.gallery_image_label.image = photo
             except Exception as e:
                 messagebox.showerror("Image Error", f"Could not load image: {e}")
                 gallery_window.gallery_image_label.config(image='', text="Error loading image.")
@@ -2938,6 +3087,12 @@ class SellPropertyFormBlock(tk.Toplevel):
         
         self.available_properties_data = []
 
+        # --- NEW: Data storage for daily clients ---
+        self.daily_clients_list = []
+        self.daily_clients_map = {}
+        self.selected_client_data = None
+        # -------------------------------------------
+
         self.style = ttk.Style()
         self.style.configure('Green.TButton', background='green', foreground='white', font=('Arial', 10, 'bold'))
         self.style.map('Green.TButton', background=[('active', 'darkgreen')], foreground=[('disabled', 'gray')])
@@ -2949,16 +3104,53 @@ class SellPropertyFormBlock(tk.Toplevel):
         self.style.configure('TEntry', bordercolor='lightgrey', relief='solid', borderwidth=1)
         self.style.map('TEntry', bordercolor=[('focus', '#0099C2')])
 
-        self._set_window_properties(1000, 520, window_icon_name, parent_icon_loader)
-        self._customize_title_bar()  # Call the new method
+        self._set_window_properties(1000, 550, window_icon_name, parent_icon_loader)
+        self._customize_title_bar()
         
         self._create_widgets(parent_icon_loader)
         self.protocol("WM_DELETE_WINDOW", self._on_closing)
         self._populate_property_list()
         
+        # --- NEW: Load daily clients on startup ---
+        self._load_daily_clients()
+        # ------------------------------------------
+        
     def _create_widgets(self, parent_icon_loader):
         main_frame = ttk.Frame(self, padding="10")
         main_frame.pack(fill="both", expand=True)
+
+        buyer_info_frame = ttk.LabelFrame(main_frame, text="Buyer Information", padding="5")
+        buyer_info_frame.pack(fill="x", pady=5)
+        buyer_info_frame.columnconfigure(1, weight=1)
+
+        # Buyer Name Label and Combobox
+        ttk.Label(buyer_info_frame, text="Buyer Name:").grid(row=0, column=0, sticky="w", pady=2, padx=5)
+        
+        # --- FIX: Define and link the StringVar ---
+        self.buyer_name_var = tk.StringVar()
+        self.combo_buyer_name = ttk.Combobox(
+            buyer_info_frame, 
+            textvariable=self.buyer_name_var, 
+            state='normal',
+        )
+        self.combo_buyer_name.grid(row=0, column=1, sticky="ew", pady=2, padx=5)
+        self.combo_buyer_name.configure(takefocus=False)
+        
+        # Bind the functions to the combobox events
+        self.combo_buyer_name.bind('<KeyRelease>', self._update_client_list)
+        self.combo_buyer_name.bind("<<ComboboxSelected>>", self._on_buyer_select)
+
+        # ---------------------------------------------
+
+        ttk.Label(buyer_info_frame, text="Telephone Number:").grid(row=1, column=0, sticky="w", pady=2, padx=5)
+        self.entry_buyer_contact = ttk.Entry(buyer_info_frame)
+        self.entry_buyer_contact.grid(row=1, column=1, sticky="ew", pady=2, padx=5)
+        self.entry_buyer_contact.bind("<Double-Button-1>", lambda event: "break")
+
+        ttk.Label(buyer_info_frame, text="Buyer Email:").grid(row=2, column=0, sticky="w", pady=2, padx=5)
+        self.buyer_email_var = tk.StringVar()
+        self.entry_buyer_email = ttk.Entry(buyer_info_frame, textvariable=self.buyer_email_var, state='readonly')
+        self.entry_buyer_email.grid(row=2, column=1, sticky="ew", pady=2, padx=5)
 
         property_selection_frame = ttk.LabelFrame(main_frame, text="Select Property", padding="5")
         property_selection_frame.pack(fill="x", pady=5)
@@ -3030,19 +3222,7 @@ class SellPropertyFormBlock(tk.Toplevel):
         self.current_title_image_label.pack(fill="both", expand=True, padx=5, pady=5)
         self.current_title_image_label.bind("<Button-1>", lambda e: self._open_image_gallery())
 
-        buyer_info_frame = ttk.LabelFrame(main_frame, text="Buyer Information", padding="5")
-        buyer_info_frame.pack(fill="x", pady=5)
-        buyer_info_frame.columnconfigure(1, weight=1)
-
-        ttk.Label(buyer_info_frame, text="Buyer Name:").grid(row=0, column=0, sticky="w", pady=2, padx=5)
-        self.entry_buyer_name = ttk.Entry(buyer_info_frame)
-        self.entry_buyer_name.grid(row=0, column=1, sticky="ew", pady=2, padx=5)
-        self.entry_buyer_name.bind("<Double-Button-1>", lambda event: "break")
-
-        ttk.Label(buyer_info_frame, text="Buyer Contact Info:").grid(row=1, column=0, sticky="w", pady=2, padx=5)
-        self.entry_buyer_contact = ttk.Entry(buyer_info_frame)
-        self.entry_buyer_contact.grid(row=1, column=1, sticky="ew", pady=2, padx=5)
-        self.entry_buyer_contact.bind("<Double-Button-1>", lambda event: "break")
+        
 
         payment_options_frame = ttk.LabelFrame(main_frame, text="Payment Options", padding="5")
         payment_options_frame.pack(fill="x", pady=5)
@@ -3053,33 +3233,111 @@ class SellPropertyFormBlock(tk.Toplevel):
         self.btn_installments = ttk.Button(payment_options_frame, text="Instalments", command=self._open_installment_payment_window, style='Yellow.TButton')
         self.btn_installments.pack(side=tk.RIGHT, padx=5, expand=True, fill=tk.X)
         
+    # --- NEW: Method to load daily clients into the combobox ---
+    def _load_daily_clients(self):
+        """Fetches daily land sales clients and populates the combobox."""
+        try:
+            clients = self.db_manager.get_all_daily_clients_lands()
+            # The fix: Ensure you are using the correct key returned by the query.
+            self.daily_clients_list = [client['name'] for client in clients]
+            self.daily_clients_map = {client['name']: client for client in clients}
+            self.combo_buyer_name['values'] = self.daily_clients_list
+        except Exception as e:
+            messagebox.showerror("Client Data Error", f"Failed to load daily clients: {e}", parent=self)
+            
+    # --- NEW: Method to populate contact info on combobox selection ---
+    def _on_buyer_select(self, event):
+        current_selection = self.property_listbox.curselection()
+        selected_name = self.combo_buyer_name.get()
+        client_data = self.daily_clients_map.get(selected_name)
+        if client_data:
+            self.entry_buyer_contact.delete(0, tk.END)
+            self.entry_buyer_contact.insert(0, client_data.get('telephone_number', ''))
+            self.buyer_email_var.set(client_data.get('email', ''))
+            self.selected_client_data = client_data
+        else:
+            self.entry_buyer_contact.delete(0, tk.END)
+            self.buyer_email_var.set('')
+            self.selected_client_data = None
+
+        if not self.property_listbox.curselection() and current_selection:
+            self.property_listbox.selection_set(current_selection[0])
+            if current_selection[0] < len(self.available_properties_data):
+               self.selected_property = self.available_properties_data[current_selection[0]]
+
+    # -------------------------------------------------------------------
+
+    def _update_client_list(self, event=None):
+        """
+        Updates the Combobox dropdown based on the user's input.
+        This function now works with the daily clients list.
+        """
+        current_text = self.buyer_name_var.get()
+        if current_text == '':
+            # If the text is empty, show all clients from the daily list
+            self.combo_buyer_name['values'] = self.daily_clients_list
+        else:
+            # Filter the list based on the user's input (case-insensitive)
+            filtered_clients = [
+                client for client in self.daily_clients_list
+                if current_text.lower() in client.lower()
+            ]
+            self.combo_buyer_name['values'] = filtered_clients
+
+    # --- NEW: Validation method for buyer information ---
+    def _validate_buyer_info(self):
+        buyer_name = self.combo_buyer_name.get().strip()
+        buyer_contact = self.entry_buyer_contact.get().strip()
+
+        if not buyer_name or not buyer_contact:
+            messagebox.showwarning("Buyer Information Required", "Please select a buyer from the list and ensure their contact information is correct.", parent=self)
+            return False
+
+        # Check if the entered name is in the valid clients list
+        if buyer_name not in self.daily_clients_map:
+            messagebox.showerror("Invalid Buyer", "The entered buyer is not a valid daily client. Please select a client from the dropdown list.", parent=self)
+            return False
+        
+        # Optionally, you can add a check for contact number matching the map
+        # This adds an extra layer of security but might be too strict if numbers change
+        client_data = self.daily_clients_map.get(buyer_name)
+        if client_data and client_data.get('telephone_number') != buyer_contact:
+            messagebox.showerror("Invalid Contact", "The contact number does not match the selected client. Please use the correct number.", parent=self)
+            return False
+
+        return True
+
     def _open_cash_payment_window(self):
         if not self.selected_property:
             messagebox.showwarning("No Property Selected", "Please select a property first.", parent=self)
             return
 
-        buyer_name = self.entry_buyer_name.get().strip()
-        buyer_contact = self.entry_buyer_contact.get().strip()
-
-        if not buyer_name or not buyer_contact:
-            messagebox.showwarning("Buyer Information Required", "Please enter the buyer's name and contact information.", parent=self)
+        # --- MODIFIED: Call validation method ---
+        if not self._validate_buyer_info():
             return
+        # ----------------------------------------
+        
+        buyer_name = self.combo_buyer_name.get().strip()
+        buyer_contact = self.entry_buyer_contact.get().strip()
+        brought_by = self.selected_client_data.get('brought_by', 'N/A')
 
-        CashPaymentWindow(self, self.db_manager, self.user_id, self.selected_property, buyer_name, buyer_contact, "Cash", self._populate_property_list, self.master_icon_loader_ref)
+        CashPaymentWindow(self, self.db_manager, self.user_id, self.selected_property, buyer_name, buyer_contact, "Cash",brought_by, self._populate_property_list, self.master_icon_loader_ref)
         
     def _open_installment_payment_window(self):
         if not self.selected_property:
             messagebox.showwarning("No Property Selected", "Please select a property first.", parent=self)
             return
 
-        buyer_name = self.entry_buyer_name.get().strip()
+        # --- MODIFIED: Call validation method ---
+        if not self._validate_buyer_info():
+            return
+        # ----------------------------------------
+        brought_by = self.selected_client_data.get('brought_by', 'N/A')
+        
+        buyer_name = self.combo_buyer_name.get().strip()
         buyer_contact = self.entry_buyer_contact.get().strip()
 
-        if not buyer_name or not buyer_contact:
-            messagebox.showwarning("Buyer Information Required", "Please enter the buyer's name and contact information.", parent=self)
-            return
-
-        InstallmentPaymentWindow(self, self.db_manager, self.user_id, self.selected_property, buyer_name, buyer_contact,"installment",self._populate_property_list, self.master_icon_loader_ref)
+        InstallmentPaymentWindow(self, self.db_manager, self.user_id, self.selected_property, buyer_name, buyer_contact,brought_by,"installment",self._populate_property_list, self.master_icon_loader_ref)
     
     def _on_property_select(self, event):
         selected_index = self.property_listbox.curselection()
@@ -3119,8 +3377,10 @@ class SellPropertyFormBlock(tk.Toplevel):
         self.val_prop_price.config(text="")
         self.current_title_image_label.config(image='')
         self.current_title_image_label._image_ref = None
-        self.entry_buyer_name.delete(0, tk.END)
+        # --- MODIFIED: Clear combobox and entry ---
+        self.combo_buyer_name.delete(0, tk.END)
         self.entry_buyer_contact.delete(0, tk.END)
+        # ------------------------------------------
         self.property_listbox.selection_clear(0, tk.END)
         self.selected_property = None
 
@@ -3304,8 +3564,6 @@ class SellPropertyFormBlock(tk.Toplevel):
 
         self._populate_property_list(search_query, min_size, max_size)
 
-    
-
     def _display_single_title_deed_thumbnail(self, title_images_str):
         self._clear_single_title_deed_thumbnail()
 
@@ -3388,14 +3646,14 @@ class SellPropertyFormBlock(tk.Toplevel):
         
         # Left Arrow
         prev_arrow = ttk.Label(gallery.image_container_frame, text='◀', font=('Arial', 24, 'bold'), 
-                               foreground='black', cursor='hand2')
+                                 foreground='black', cursor='hand2')
         prev_arrow.place(relx=0, rely=0.5, anchor='w', relwidth=0.15, relheight=1) # Position on left edge
         prev_arrow.bind("<Button-1>", lambda e: self._show_previous_image_in_gallery(gallery))
         prev_arrow.config(wraplength=1) # Prevent text wrapping
 
         # Right Arrow
         next_arrow = ttk.Label(gallery.image_container_frame, text='▶', font=('Arial', 24, 'bold'), 
-                               foreground='black', cursor='hand2')
+                                 foreground='black', cursor='hand2')
         next_arrow.place(relx=1, rely=0.5, anchor='e', relwidth=0.15, relheight=1) # Position on right edge
         next_arrow.bind("<Button-1>", lambda e: self._show_next_image_in_gallery(gallery))
         next_arrow.config(wraplength=1) # Prevent text wrapping
@@ -3473,6 +3731,8 @@ class SellPropertyFormBlock(tk.Toplevel):
                 messagebox.showerror("Image Error", f"Could not load image: {e}")
                 gallery_window.gallery_image_label.config(image='', text="Error loading image.")
                 gallery_window.gallery_image_label.image = None
+
+
         
 
 class RecordSinglePaymentForm(tk.Toplevel):
@@ -4046,8 +4306,13 @@ class TrackPaymentsForm(tk.Toplevel):
             return
 
         for row_data in transactions_data_for_page:
-            full_date_time = row_data['transaction_date']
 
+
+            if isinstance(row_data['transaction_date'],datetime):
+                full_date_time = row_data['transaction_date'].strftime("%Y-%m-%d %H:%M:%S")
+            
+            else:
+                full_date_time = row_data['transaction_date']
             date_part = full_date_time.split(' ')[0] if ' ' in full_date_time else full_date_time
             time_part = full_date_time.split(' ')[1] if ' ' in full_date_time else ""
             
@@ -4093,7 +4358,7 @@ class TrackPaymentsForm(tk.Toplevel):
                     detail_message += (
                         "CLIENT INFO:\n"
                         f"Name: {client_details['name']}\n"
-                        f"Contact: {client_details['contact_info']}\n\n"
+                        f"Contact: {client_details['telephone_number']}\n\n"
                     )
                 if property_details:
                     detail_message += (
@@ -4501,7 +4766,15 @@ class SoldPropertiesView(tk.Toplevel):
             return
 
         for row in data:
-            full_date_time = row['date_sold']
+
+            if isinstance(row['date_sold'], datetime):
+                full_date_time = row['date_sold'].strftime("%Y-%m-%d %H:%M:%S")
+            
+            else:
+                full_date_time = row['date_sold']
+
+
+            
             date_part = full_date_time.split(' ')[0] if ' ' in full_date_time else full_date_time
             time_part = full_date_time.split(' ')[1] if ' ' in full_date_time else ""
 
@@ -5729,51 +6002,225 @@ class SalesReportsForm(tk.Toplevel):
 
         if not _REPORTLAB_AVAILABLE:
             messagebox.showerror("PDF Error", "ReportLab library is not installed. PDF generation is not available. Please install it using 'pip install reportlab'.")
-            report_text_widget.delete("1.0", tk.END)
+            report_text_widget.delete("1.0", "end")
             report_text_widget.insert("1.0", "Error: ReportLab not installed for PDF generation.")
             return
 
-        report_text_widget.delete("1.0", tk.END) # Clear previous content
+        report_text_widget.delete("1.0", "end") # Clear previous content
         report_text_widget.insert("1.0", "Generating report, please wait...") # Show status
 
-        start_date, end_date = self._get_report_dates(report_type)
-        if start_date is None: 
-            report_text_widget.delete("1.0", tk.END) # Clear "generating" message
+        start_date_str, end_date_str = self._get_report_dates(report_type)
+        if start_date_str is None:
+            report_text_widget.delete("1.0", "end") # Clear "generating" message
             return # Date validation failed
 
         try:
             # Fetch detailed sales transactions for the accounting report
-            detailed_sales_data = self.db_manager.get_detailed_sales_transactions_for_date_range(start_date, end_date)
+            detailed_sales_data = self.db_manager.get_detailed_sales_transactions_for_date_range(start_date_str, end_date_str)
             
             pdf_path = self._generate_pdf_report(
                 "Sales Report",
                 {'data': detailed_sales_data}, # Pass detailed data
                 report_type,
-                start_date,
-                end_date
+                start_date_str,
+                end_date_str
             )
             
             if pdf_path:
-                SuccessMessage(
-                    self,
-                    success=True,
-                    message="Sales Report PDF generated successfully!",
-                    pdf_path=pdf_path,
-                    parent_icon_loader=self.parent_icon_loader_ref
-                )
+                messagebox.showinfo("Success", f"Sales Report PDF generated successfully at:\n{pdf_path}")
                 self._show_pdf_preview(pdf_path, report_text_widget)
             else:
-                SuccessMessage(
-                    self,
-                    success=False,
-                    message="Sales Report PDF generation failed!",
-                    parent_icon_loader=self.parent_icon_loader_ref
-                )
+                messagebox.showerror("Failure", "Sales Report PDF generation failed!")
                 self._show_pdf_preview(None, report_text_widget)
         except Exception as e:
             messagebox.showerror("Report Generation Error", f"An error occurred while generating Sales Report: {e}")
-            report_text_widget.delete("1.0", tk.END)
+            report_text_widget.delete("1.0", "end")
             report_text_widget.insert("1.0", f"Error: {e}")
+
+
+    def _generate_pdf_report(self, report_name, content, report_type, start_date, end_date):
+        """Generates PDF report using ReportLab and returns the file path."""
+        if not _REPORTLAB_AVAILABLE:
+            return None # Error message already shown by calling function
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        period_suffix = ""
+        
+        if report_type == "daily":
+            period_suffix = f"_{start_date}"
+        elif report_type == "monthly":
+            period_suffix = f"_{datetime.strptime(start_date, '%Y-%m-%d').strftime('%Y-%m')}"
+        elif report_type == "custom":
+            period_suffix = f"_{start_date}_to_{end_date}"
+        
+        file_name = f"{report_name.replace(' ', '_')}{period_suffix}_{timestamp}.pdf"
+        file_path = os.path.join(REPORTS_DIR, file_name)
+        
+        try:
+            doc = SimpleDocTemplate(file_path, pagesize=letter)
+            styles = getSampleStyleSheet()
+            story = []
+
+            # --- Business Header with Logo ---
+            logo_path = os.path.join("assets", "NEWCITY.png")  # Adjust path as needed
+            if os.path.exists(logo_path):
+                logo = Image(logo_path, 1 * inch, 1 * inch)
+            else:
+                logo = Paragraph("", styles['Normal'])  # Empty if no logo found
+            
+            # Business Header with Timestamp
+            header_table = Table([
+                [logo,"NEW CITY REAL ESTATE", datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
+            ], colWidths=[4*inch, 2*inch])
+            
+            header_table.setStyle(TableStyle([
+                ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'),
+                ('FONTSIZE', (0,0), (0,-1), 14),
+                ('FONTSIZE', (1,0), (1,-1), 10),
+                ('ALIGN', (1,0), (1,-1), 'RIGHT'),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 12),
+            ]))
+            story.append(header_table)
+            
+            # Report Title
+            story.append(Paragraph(f"<b>{report_name.upper()}</b>", styles['Heading2']))
+            story.append(Paragraph(f"Period: {start_date} to {end_date}", styles['Normal']))
+            story.append(Spacer(1, 12))
+            
+            if "SALES REPORT" in report_name.upper():
+                table_data = [
+                    ["Item", "Title Deed", "Qty", "Actual Price ", "Amount Paid", "Balance"]
+                ]
+                
+                gross_sales = 0.0
+                net_sales = 0.0
+                total_deficit = 0.0 # Initialize here to prevent UnboundLocalError
+                
+                for item in content.get('data', []):
+                    # Ensure numeric values are numbers before adding to sums
+                    actual_price = float(item.get('actual_price', 0)) if item.get('actual_price') is not None else 0.0
+                    amount_paid = float(item.get('amount_paid', 0)) if item.get('amount_paid') is not None else 0.0
+                    balance = float(item.get('balance', 0)) if item.get('balance') is not None else 0.0
+
+                    table_data.append([
+                        item.get('property_type', 'N/A'),
+                        item.get('title_deed', 'N/A'),
+                        "1", # Quantity is always 1 for a property
+                        f" {actual_price:,.2f}",
+                        f" {amount_paid:,.2f}",
+                        f" {balance:,.2f}"
+                    ])
+                    gross_sales += actual_price
+                    net_sales += amount_paid
+                
+                total_deficit = gross_sales - net_sales # Calculate after the loop
+                
+                # Create table
+                t = Table(table_data, colWidths=[1.2*inch, 1.5*inch, 0.5*inch, 1*inch, 1*inch, 1*inch])
+                t.setStyle(TableStyle([
+                    ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                    ('FONTNAME', (0,1), (-1,-1), 'Helvetica'), # Data rows
+                    ('FONTSIZE', (0,0), (-1,-1), 9),
+                    ('ALIGN', (2,0), (-1,-1), 'RIGHT'), # Align Qty, Prices, Balance to right
+                    ('ALIGN', (0,0), (1,-1), 'LEFT'), # Align Item, Title Deed to left
+                    ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                    ('GRID', (0,0), (-1,-3), 0.5, colors.lightgrey), # Grid for data rows only
+                    ('LINEBELOW', (0,0), (-1,0), 1, colors.black), # Line below header
+                    ('LINEABOVE', (0,-2), (-1,-2), 1, colors.black), # Line above separator
+                    ('LINEBELOW', (0,-2), (-1,-2), 1, colors.black), # Line below separator
+                    ('LINEBELOW', (0,-1), (-1,-1), 2, colors.black), # Thick line below totals
+                    ('BACKGROUND', (0,0), (-1,0), colors.lightgrey), # Header background
+                    ('BACKGROUND', (0,-1), (-1,-1), colors.lightgrey), # Totals row background
+                    ('SPAN', (0,-1), (1,-1)), # Span "TOTALS" across Item and Title Deed
+                ]))
+                story.append(t)
+                
+                # Accounting summary below the table (can be removed if table totals are sufficient)
+                story.append(Spacer(1, 12))
+                summary_data = [
+                    ["GROSS SALES:", f"KES {gross_sales:,.2f}"],
+                    ["NET SALES:", f"KES {net_sales:,.2f}"],
+                    ["PENDING:", f"KES {total_deficit:,.2f}"]
+                ]
+                
+                summary_table = Table(summary_data, colWidths=[1.5*inch, 1*inch])
+                summary_table.setStyle(TableStyle([
+                    ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'), # Bold for summary labels
+                    ('FONTNAME', (1,0), (1,-1), 'Helvetica'), # Numbers not bold
+                    ('FONTSIZE', (0,0), (-1,-1), 10),
+                    ('ALIGN', (1,0), (1,-1), 'RIGHT'),
+                    ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                    ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+                ]))
+                story.append(summary_table)
+                
+            elif "SOLD PROPERTIES" in report_name.upper():
+                if content.get('data'):
+                    headers = ["Date", "Title Deed", "Location", "Size(Acres)", "Client", "Paid", "Balance"]
+                    table_data = [headers]
+                    
+                    for prop in content['data']:
+                        date_part = prop['date_sold'].split(' ')[0] if ' ' in prop['date_sold'] else prop['date_sold']
+                        table_data.append([
+                            date_part,
+                            prop['title_deed_number'],
+                            prop['location'],
+                            f"{prop['size']:.2f}",
+                            prop['client_name'],
+                            f"KES {prop['total_amount_paid']:,.2f}",
+                            f"KES {prop['balance']:,.2f}"
+                        ])
+                    
+                    t = Table(table_data, colWidths=[0.8*inch, 1.2*inch, 1.2*inch, 0.7*inch, 1.2*inch, 1*inch, 1*inch])
+                    t.setStyle(TableStyle([
+                        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                        ('FONTNAME', (0,1), (-1,-1), 'Helvetica'),
+                        ('FONTSIZE', (0,0), (-1,-1), 8),
+                        ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+                        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+                        ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
+                    ]))
+                    story.append(t)
+                else:
+                    story.append(Paragraph("No properties sold in this period", styles['Normal']))
+                    
+            elif "PENDING INSTALMENTS" in report_name.upper():
+                if content.get('data'):
+                    headers = ["Date", "Client", "Title Deed", "Original Price", "Paid", "Balance Due"] # Updated header
+                    table_data = [headers]
+                    
+                    for inst in content['data']:
+                        date_part = inst['transaction_date'].split(' ')[0] if ' ' in inst['transaction_date'] else inst['transaction_date']
+                        table_data.append([
+                            date_part,
+                            inst['client_name'],
+                            inst['title_deed_number'],
+                            f"KES {inst['original_price']:,.2f}",
+                            f"KES {inst['total_amount_paid']:,.2f}",
+                            f"KES {inst['balance']:,.2f}"
+                        ])
+                    
+                    t = Table(table_data, colWidths=[0.8*inch, 1.2*inch, 1.2*inch, 1*inch, 1*inch, 1*inch]) # Adjusted colWidths
+                    t.setStyle(TableStyle([
+                        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                        ('FONTNAME', (0,1), (-1,-1), 'Helvetica'),
+                        ('FONTSIZE', (0,0), (-1,-1), 8),
+                        ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+                        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+                        ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
+                    ]))
+                    story.append(t)
+                else:
+                    story.append(Paragraph("No pending instalments found", styles['Normal']))
+            
+            # Build the PDF
+            doc.build(story)
+            return file_path
+            
+        except Exception as e:
+            print(f"PDF generation failed: {e}")
+            return None
+
 
     def _generate_sold_properties_report(self, report_type):
         """Generates sold properties report as PDF and shows preview."""
