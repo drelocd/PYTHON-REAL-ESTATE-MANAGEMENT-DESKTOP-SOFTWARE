@@ -1,0 +1,151 @@
+def _generate_pdf_report(self, report_name, content, report_type, start_date, end_date):
+            """Generates PDF report using ReportLab (with logo, word wrap, footer) 
+            and prompts user to choose where to save it."""
+            if not _REPORTLAB_AVAILABLE:
+                return None
+
+            from datetime import datetime  # ensure correct import
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            period_suffix = ""
+
+            if report_type == "daily":
+                period_suffix = f"_{start_date}"
+            elif report_type == "monthly":
+                period_suffix = f"_{datetime.strptime(start_date, '%Y-%m-%d').strftime('%Y-%m')}"
+            elif report_type == "yearly":
+                period_suffix = f"_{datetime.strptime(start_date, '%Y-%m-%d').strftime('%Y')}"
+            elif report_type == "custom":
+                period_suffix = f"_{start_date}_to_{end_date}"
+
+            file_name = f"{report_name.replace(' ', '_')}{period_suffix}_{timestamp}.pdf"
+
+            # --- Default starting folder: Documents (fallback to Desktop if missing) ---
+            default_dir = os.path.join(os.path.expanduser("~"), "Documents")
+            if not os.path.exists(default_dir):
+                default_dir = os.path.join(os.path.expanduser("~"), "Desktop")
+
+            file_path = filedialog.asksaveasfilename(
+                title="Save Report As",
+                defaultextension=".pdf",
+                initialfile=file_name,
+                initialdir=default_dir,
+                filetypes=[("PDF files", "*.pdf")]
+            )
+
+            if not file_path:  # user cancelled
+                return None
+
+            try:
+                doc = SimpleDocTemplate(file_path, pagesize=letter)
+                styles = getSampleStyleSheet()
+                story = []
+
+                # --- Business Header with Logo ---
+                logo_path = os.path.join(ICONS_DIR, "survey.png")
+
+                if os.path.exists(logo_path):
+                    logo = RLImage(logo_path)
+                    logo._restrictSize(1.2 * inch, 1.2 * inch)
+                else:
+                    logo = Paragraph("", styles['Normal'])
+
+                header_table = Table([
+                    [logo, "NDIRITU MATHENGE & ASSOCIATES", datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
+                ], colWidths=[1.2 * inch, 3.5 * inch, 2 * inch])
+
+                header_table.setStyle(TableStyle([
+                    ('FONTNAME', (1, 0), (1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (1, 0), (1, 0), 14),
+                    ('ALIGN', (2, 0), (2, 0), 'RIGHT'),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
+                ]))
+                story.append(header_table)
+                story.append(Spacer(1, 12))
+
+                # --- Report Title & Period ---
+                story.append(Paragraph(f"<b>{report_name.upper()}</b>", styles['Heading2']))
+                story.append(Paragraph(f"Period: {start_date} to {end_date}", styles['Normal']))
+                story.append(Spacer(1, 12))
+
+                # --- Table Content ---
+                if content.get('data'):
+                    headers = [
+                        "Job ID", "Payment ID", "Title Name", "Title Number", "Description",
+                        "Created", "Payment Date", "Job Status", "Payment Status", "Job Fee",
+                        "Amount Paid", "Balance",
+                    ]
+
+                    # wrapping styles
+                    wrap_style_header = ParagraphStyle('wrap_header', fontSize=8, leading=10, alignment=1)  # centered
+                    wrap_style_body = ParagraphStyle('wrap_body', fontSize=7, leading=9, alignment=0)      # left
+
+                    # wrap headers
+                    table_data = [[Paragraph(h, wrap_style_header) for h in headers]]
+
+                    # helper for safe date conversion
+                    def fmt_date(val):
+                        if not val:
+                            return ""
+                        if isinstance(val, datetime):
+                            return val.strftime("%Y-%m-%d")
+                        return str(val).split(" ")[0]
+
+                    for job in content['data']:
+                        created_val = fmt_date(job.get('job_created'))
+                        payment_date_val = fmt_date(job.get('payment_date'))
+
+                        row = [
+                            Paragraph(str(job.get('job_id', '') or ""), wrap_style_body),
+                            Paragraph(str(job.get('payment_id', '') or ""), wrap_style_body),
+                            Paragraph(str(job.get('title_name', '') or ""), wrap_style_body),
+                            Paragraph(str(job.get('title_number', '') or ""), wrap_style_body),
+                            Paragraph(str(job.get('job_description', '') or ""), wrap_style_body),
+                            Paragraph(created_val, wrap_style_body),
+                            Paragraph(payment_date_val, wrap_style_body),
+                            Paragraph(str(job.get('job_status', '') or ""), wrap_style_body),
+                            Paragraph(str(job.get('payment_status', '') or ""), wrap_style_body),
+                            Paragraph(str(job.get('job_fee', '') or ""), wrap_style_body),
+                            Paragraph(str(job.get('amount_paid', '') or ""), wrap_style_body),
+                            Paragraph(str(job.get('balance', '') or ""), wrap_style_body),
+                        ]
+                        table_data.append(row)
+
+                    t = Table(table_data, repeatRows=1)
+                    t.setStyle(TableStyle([
+                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0, 0), (-1, 0), 8),
+                        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+
+                        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                        ('FONTSIZE', (0, 1), (-1, -1), 7),
+                        ('ALIGN', (0, 1), (-1, -1), 'LEFT'),
+                        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+
+                        ('BOX', (0, 0), (-1, -1), 0.75, colors.black),
+                        ('INNERGRID', (0, 0), (-1, -1), 0.25, colors.black),
+
+                        ('LEFTPADDING', (0, 0), (-1, -1), 3),
+                        ('RIGHTPADDING', (0, 0), (-1, -1), 3),
+                        ('TOPPADDING', (0, 0), (-1, -1), 2),
+                        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+                    ]))
+
+                    story.append(t)
+                else:
+                    story.append(Paragraph("No jobs found for this period and status.", styles['Normal']))
+
+                # --- Footer with Page Number ---
+                def add_page_number(canvas, doc):
+                    page_num = canvas.getPageNumber()
+                    canvas.setFont("Helvetica", 8)
+                    canvas.drawRightString(7.5 * inch, 0.5 * inch, f"Page {page_num}")
+
+                doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
+                return file_path
+
+            except Exception as e:
+                print(f"PDF generation failed: {e}")
+                return None
