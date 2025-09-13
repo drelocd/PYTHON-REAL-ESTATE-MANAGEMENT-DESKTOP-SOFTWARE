@@ -39,6 +39,13 @@ from forms.subdivide_lands_form import subdividelandForm  # NEW: Import the subd
 
 
 db_manager = DatabaseManager()
+if not db_manager._get_connection():
+    messagebox.showerror(
+        "Database Connection Error",
+        "Could not connect to the MySQL database. Please ensure your MySQL server is running and the 'real_estate_db' database exists."
+    )
+    sys.exit(1) # Exit the application if the connection fails
+    
 print("\n--- Checking/Adding Default Users ---")
 
 # Add 'admin' user if they don't exist
@@ -104,7 +111,7 @@ print("--- Default User Setup Complete ---")
 
 # --- Global Constants ---
 # Define the current application version
-APP_VERSION = "1.0.1"  # IMPORTANT: Increment this version number for new releases!
+APP_VERSION = "1.0.2"  # IMPORTANT: Increment this version number for new releases!
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ASSETS_DIR = os.path.join(BASE_DIR, 'assets')
@@ -294,16 +301,18 @@ class SurveySectionView(ttk.Frame):
         client_frame = ttk.Frame(self)
         client_frame.pack(pady=20, padx=20, fill="x")
 
-        ttk.Label(client_frame, text="Search for a Client:").pack(side="left", padx=(0, 10))
+        sn=ttk.Label(client_frame, text="Search for a Client:",font="SegoeUI,10,bold")
+        sn.pack(side="left", padx=(0, 10))
         self.client_search_entry = ttk.Entry(client_frame)
         self.client_search_entry.pack(side="left", expand=True, fill="x", padx=(0, 10))
         self.client_search_entry.bind("<KeyRelease>", self._filter_clients)
+        ToolTip(self.client_search_entry, "Search For Existing Clients Using Name or Telephone Number.")
         
         # This button will now open the unified form
-        style = ttk.Style()
-        # Configure a new style named "Red.TButton"
-        style.configure("Red.TButton", background="white", foreground="black")
-        ttk.Button(client_frame, text="Add Client/File", command=self._open_add_client_and_file_form, style="Red.TButton").pack(side="left", padx=(10, 0))
+        
+        btn=ttk.Button(client_frame, text="Add Client/File",command=self._open_add_client_and_file_form)
+        btn.pack(side="left", padx=(10, 0))
+        ToolTip(btn, "Create New Client File.")
 
         # Client Table
         client_table_frame = ttk.Frame(self)
@@ -332,6 +341,7 @@ class SurveySectionView(ttk.Frame):
         self.client_tree.bind("<Escape>", self._deselect_all)
         self.bind("<Escape>", self._deselect_all)  # Also bind to the frame itself
         self.bind("<Button-1>", self._handle_click_to_deselect)
+        ToolTip(self.client_tree, "Double Click a Client to Open their File Dashboard Where New Tasks are Created .")
 
 
 
@@ -426,8 +436,8 @@ class SurveySectionView(ttk.Frame):
 
         all_files = self.db_manager.get_all_client_files()
         for file in all_files:
-            if search_query in file['client_name'].lower() or search_query in file['file_name'].lower():
-                self.client_tree.insert("", tk.END, values=(file['client_name'], file['file_name'], file['contact']),
+            if search_query in file['client_name'].lower() or search_query in file['file_name'].lower() or search_query in file['telephone_number'].lower():
+                self.client_tree.insert("", tk.END, values=(file['client_name'], file['file_name'], file['telephone_number']),
                                          tags=('client_row',), iid=file['file_id'])
 
 
@@ -470,6 +480,7 @@ class SurveySectionView(ttk.Frame):
             self.user_id,
             parent_icon_loader=self.load_icon_callback
         )
+        self.client_tree.selection_remove(*selected_items)
     def _open_add_client_and_file_form(self):
         """
         Opens the unified form for registering a new client or adding a new file.
@@ -487,6 +498,7 @@ class SurveySectionView(ttk.Frame):
         TrackJobsView(
             self.master,
             self.db_manager,
+            self.user_id,
             self.populate_survey_overview,
             parent_icon_loader=self.load_icon_callback
         )
@@ -539,7 +551,7 @@ class BaseForm(tk.Toplevel):
         self.grab_set()
         self.resizable(False, False)
         
-        self.parent_icon_loader = parent_icon_loader
+        self.icon_loader = parent_icon_loader
         self._window_icon_ref = None
         self._set_window_properties(width, height, icon_name, parent_icon_loader)
         self._customize_title_bar()
@@ -737,7 +749,10 @@ class AddDailyClientForm(BaseForm):
         self.client_id = client_id
         self.refresh_callback = refresh_callback
         self.user_id = user_id
-        self.icon_loader = icon_loader
+        
+        
+        
+        
         
         self.save_icon = None
         self.cancel_icon = None
@@ -755,23 +770,29 @@ class AddDailyClientForm(BaseForm):
         frame = ttk.Frame(self, padding="15")
         frame.pack(fill="both", expand=True)
 
+        # Display the client's name
+        ttk.Label(frame, text=f"Adding daily visit for: {self.client_id}", 
+                  font=('Helvetica', 12, 'bold')).grid(row=0, column=0, columnspan=2, pady=(0, 10))
+        
+          
+
         # Make the second column expandable to stretch the entry fields
         frame.columnconfigure(1, weight=1)
 
-        ttk.Label(frame, text="Purpose:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        ttk.Label(frame, text="Purpose:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
         self.purpose_var = tk.StringVar(self)
         self.purpose_var.set("N/A")
         purpose_options = ["Survey", "Land Sales", "N/A"]
         self.purpose_menu = ttk.Combobox(frame, textvariable=self.purpose_var, values=purpose_options, state="readonly")
-        self.purpose_menu.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+        self.purpose_menu.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
 
-        ttk.Label(frame, text="Brought By:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
+        ttk.Label(frame, text="Brought By:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
         self.brought_by_var = tk.StringVar(self)
         self.brought_by_combobox = ttk.Combobox(frame, textvariable=self.brought_by_var, values=["Self"])
-        self.brought_by_combobox.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+        self.brought_by_combobox.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
 
         button_frame = ttk.Frame(frame)
-        button_frame.grid(row=2, column=0, columnspan=2, pady=10)
+        button_frame.grid(row=3, column=0, columnspan=2, pady=10)
         # Center buttons within their frame
         button_frame.columnconfigure(0, weight=1)
         button_frame.columnconfigure(1, weight=1)
@@ -1823,7 +1844,7 @@ class RealEstateApp(tk.Tk):
         # NEW: Reception Tab
 
         self.reception_section = ReceptionSectionView(self.notebook, self.db_manager, self._load_icon,
-                                                      user_id=self.user_id, user_type=self.user_type)
+                                                      user_id=self.user_id, user_type=self.user_type,parent_icon_loader=self._load_icon)
         self.notebook.add(self.reception_section, text="   Reception   ")
 
         self.sales_section = SalesSectionView(self.notebook, self.db_manager, self._load_icon, user_id=self.user_id,

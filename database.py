@@ -111,6 +111,17 @@ class DatabaseManager:
                 conn.close()
 
     def _create_tables(self):
+
+        # Check if the database already exists and is accessible
+        try:
+            conn = mysql.connector.connect(**self.db_config)
+            conn.close()
+            # If we reached here, the connection was successful.
+            print("Database connection successful.")
+        except mysql.connector.Error as err:
+            print(f"Error connecting to MySQL database: {err}")
+            # Do not proceed with creating tables if the connection failed
+            return False
         """Initializes the database by creating tables if they don't exist."""
         try:
             queries = [
@@ -189,15 +200,6 @@ class DatabaseManager:
                 added_by_user_id INT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (client_id) REFERENCES clients(client_id)
-                )
-                ''',
-                '''
-                CREATE TABLE IF NOT EXISTS buyers (
-                    buyer_id INT PRIMARY KEY AUTO_INCREMENT,
-                    name VARCHAR(255) NOT NULL,
-                    contact VARCHAR(255) NOT NULL,
-                    added_by_user_id INT,
-                    FOREIGN KEY (added_by_user_id) REFERENCES users(user_id)
                 )
                 ''',
                 '''
@@ -302,6 +304,7 @@ class DatabaseManager:
                     status VARCHAR(255) NOT NULL DEFAULT 'Ongoing',
                     added_by VARCHAR(255) NOT NULL,
                     brought_by VARCHAR(255) DEFAULT 'self',
+                    task_type  VARCHAR(255) NOT NULL,
                     timestamp DATETIME NOT NULL,
                     FOREIGN KEY (file_id) REFERENCES client_files(file_id)
                 )
@@ -324,6 +327,7 @@ class DatabaseManager:
                     payment_id INT NOT NULL,
                     payment_amount FLOAT NOT NULL,
                     payment_type VARCHAR(255),
+                    payment_reason VARCHAR(255),
                     payment_date VARCHAR(255) NOT NULL,
                     FOREIGN KEY (payment_id) REFERENCES service_payments(payment_id)
                 )
@@ -338,6 +342,18 @@ class DatabaseManager:
                     collector_phone VARCHAR(255),
                     sign BLOB,
                     FOREIGN KEY (job_id) REFERENCES service_jobs(job_id)
+                )
+                ''',
+                '''
+                CREATE TABLE IF NOT EXISTS cancelled_jobs (
+                    cancellation_id INT PRIMARY KEY AUTO_INCREMENT,
+                    job_id INT NOT NULL,
+                    reason TEXT NOT NULL,
+                    refund_amount FLOAT NOT NULL,
+                    cancelled_by INT NOT NULL,
+                    cancellation_date DATETIME NOT NULL,
+                    FOREIGN KEY (job_id) REFERENCES service_jobs(job_id),
+                    FOREIGN KEY (cancelled_by) REFERENCES users(user_id)
                 )
                 ''',
                 '''
@@ -1432,13 +1448,17 @@ class DatabaseManager:
                 sj.*,
                 cf.file_name,
                 sc.name AS client_name,
-                sc.telephone_number AS telephone_number
+                sc.telephone_number AS telephone_number,
+                sp.amount AS amount_paid,
+                sp.balance AS balance
             FROM
                 service_jobs sj
             JOIN
                 client_files cf ON sj.file_id = cf.file_id
             JOIN
                 service_clients sc ON cf.client_id = sc.client_id
+            LEFT JOIN
+                service_payments sp ON sj.job_id = sp.job_id
             ORDER BY
                 sj.timestamp DESC
         """
@@ -1458,11 +1478,7 @@ class DatabaseManager:
         conditions = []
         params = []
         
-        # --- MODIFIED: Add a hard-coded filter for ongoing or completed jobs ---
-        # This ensures that only relevant jobs are ever included in the results.
-        conditions.append("sj.status IN (%s, %s)")
-        params.append('ongoing')
-        params.append('completed')
+        
         # ---------------------------------------------------------------------
 
         if 'status' in filters and filters['status'] != 'All':
@@ -1499,8 +1515,9 @@ class DatabaseManager:
                 sp.payment_id,
                 sc.name AS client_name,
                 cf.file_name,
-                sj.job_description,
+                sj.task_type,
                 sj.title_number,
+                sj.status,
                 sp.fee,
                 sp.amount,
                 sp.balance,
@@ -1513,9 +1530,58 @@ class DatabaseManager:
         data_params = params + [page_size, offset]
         payments = self._execute_query(data_query, tuple(data_params), fetch_all=True)
         return payments if payments else [], total_count
+    
+
+    def get_job_info_for_payment(self, job_id):
+         query = """
+             SELECT sj.status, sp.balance
+             FROM service_jobs AS sj
+             JOIN service_payments AS sp ON sj.job_id = sp.job_id
+             WHERE sj.job_id = %s
+        """
+         
+         return self._execute_query(query, (job_id,), fetch_one=True)
 
     
-    def update_payment_record(self, payment_id, new_status, final_payment_amount, payment_type):
+
+
+    def cancel_job_with_refund(self, job_id, amount_paid, refund_amount, reason, user_id, payment_reason, payment_type):
+        try:
+            query_fee = "SELECT fee FROM service_jobs WHERE job_id = %s"
+            result = self._execute_query(query_fee, params=(job_id,), fetch_one=True)
+            if not result:
+                print(f"Error: Job ID {job_id} not found.", file=sys.stderr)
+                return False
+            original_fee = result['fee']
+            new_amount_paid = amount_paid - refund_amount
+            new_balance = original_fee - new_amount_paid
+
+            # Step 2: Define all queries and their parameters for the transaction
+            queries_and_params = [
+                ("UPDATE service_payments SET amount = %s, balance = %s WHERE job_id = %s",
+                 (new_amount_paid, new_balance, job_id)),
+
+                ("UPDATE service_jobs SET status = 'Cancelled' WHERE job_id = %s",
+                 (job_id,)),
+
+                ("INSERT INTO cancelled_jobs (job_id, reason, refund_amount, cancelled_by, cancellation_date) VALUES (%s, %s, %s, %s, %s)",
+                 (job_id, reason, refund_amount, user_id, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))),
+
+                ("INSERT INTO service_payments_history (payment_id, payment_amount, payment_type, payment_reason, payment_date) VALUES ((SELECT payment_id FROM service_payments WHERE job_id = %s), %s, %s, %s, %s)",
+                 (job_id, refund_amount, payment_type, payment_reason, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+            ]
+            # Step 3: Execute the transaction using your helper method
+            return self._execute_transaction(*queries_and_params)
+        except Exception as e:
+            print(f"An error occurred in cancel_job_with_refund: {e}", file=sys.stderr)
+            return False
+
+                
+
+
+    
+    def update_payment_record(self, payment_id, new_status, final_payment_amount, payment_type,payment_reason):
+        payment_reason = "Payment"
         select_query = "SELECT amount, balance FROM service_payments WHERE payment_id = %s"
         result = self._execute_query(select_query, (payment_id,), fetch_one=True)
         if not result:
@@ -1535,23 +1601,14 @@ class DatabaseManager:
             print("Update failed, returning early.")
             return False
         
-        insert_query = "INSERT INTO service_payments_history (payment_id, payment_amount, payment_type, payment_date) VALUES (%s, %s, %s, %s)"
+        insert_query = "INSERT INTO service_payments_history (payment_id, payment_amount, payment_type, payment_reason, payment_date) VALUES (%s, %s, %s, %s, %s)"
         payment_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        insert_params = (payment_id, final_payment_amount, payment_type, payment_date)
+        payment_reason = "Payment"
+        insert_params = (payment_id, final_payment_amount, payment_type, payment_reason, payment_date)
         insert_successful = self._execute_query(insert_query, insert_params)
 
         return insert_successful
     
-    def get_payment_history(self, payment_id):
-        query = """
-            SELECT history_id, payment_amount, payment_type, payment_date 
-            FROM service_payments_history 
-            WHERE payment_id = %s 
-            ORDER BY payment_date DESC
-        """
-        params = (payment_id,)
-        history_records = self._execute_query(query, params, fetch_all=True)
-        return history_records if history_records else []
     
     def get_job_details(self, job_id):
         query = """
@@ -1587,13 +1644,13 @@ class DatabaseManager:
 
 
     
-    def add_job(self, file_id, job_description, title_name, title_number, fee, added_by, brought_by):
+    def add_job(self, file_id, job_description, title_name, title_number, fee, added_by, brought_by,task_type):
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         query = '''
-            INSERT INTO service_jobs (file_id, job_description, title_name, title_number, fee, added_by, brought_by, timestamp)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO service_jobs (file_id, job_description, title_name, title_number, fee, added_by, brought_by, task_type,timestamp)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         '''
-        params = (file_id, job_description, title_name, title_number, fee, added_by, brought_by, timestamp)
+        params = (file_id, job_description, title_name, title_number, fee, added_by, brought_by, task_type, timestamp)
         return self._execute_query(query, params)
 
     def update_job_status(self, job_id, new_status):
@@ -1634,7 +1691,7 @@ class DatabaseManager:
             SELECT 
                 sj.job_id,
                 sj.timestamp,
-                sj.job_description,
+                sj.task_type,
                 sj.title_name,
                 sj.title_number,
                 cf.file_name,
@@ -1647,7 +1704,7 @@ class DatabaseManager:
             JOIN 
                 service_clients sc ON cf.client_id = sc.client_id
             WHERE 
-                sj.status = 'Completed'
+                sj.status IN ('Completed', 'Cancelled')
         """
         return self._execute_query(query, fetch_all=True)
     
@@ -1936,7 +1993,7 @@ class DatabaseManager:
             
             query = """
                 SELECT 
-                    p.title_deed_number AS title_deed,
+                    p.title_deed_number AS title_deed_number,
                     p.price AS actual_price,
                     t.total_amount_paid AS amount_paid,
                     t.balance AS balance
@@ -1963,6 +2020,10 @@ class DatabaseManager:
         Retrieves detailed information about properties sold within a specified date range.
         """
         try:
+            start_datetime_obj = datetime.strptime(start_date, '%Y-%m-%d')
+            end_datetime_obj = datetime.strptime(end_date, '%Y-%m-%d')
+            end_datetime_full = datetime.combine(end_datetime_obj, datetime.max.time())
+
             query = """
                 SELECT 
                     p.title_deed_number, 
@@ -1979,21 +2040,26 @@ class DatabaseManager:
                 JOIN 
                     clients c ON t.client_id = c.client_id
                 WHERE 
-                    p.status = 'Sold' AND t.transaction_date BETWEEN ? AND ? || ' 23:59:59'
+                    p.status = 'Sold' 
+                    AND t.transaction_date BETWEEN %s AND %s
                 ORDER BY t.transaction_date ASC
             """
-            results_rows = self._execute_query(query, (start_date, end_date), fetch_all=True)
+            results_rows = self._execute_query(query, (start_datetime_obj, end_datetime_full), fetch_all=True)
             return [dict(row) for row in results_rows] if results_rows else []
         except Exception as e:
             print(f"Error in get_sold_properties_for_date_range_detailed: {e}")
             return []
-
+        
     def get_pending_instalments_for_date_range(self, start_date, end_date):
         """
         Retrieves information about transactions with a balance due within a specified date range.
         The date range applies to the transaction_date.
         """
         try:
+            start_datetime_obj = datetime.strptime(start_date, '%Y-%m-%d')
+            end_datetime_obj = datetime.strptime(end_date, '%Y-%m-%d')
+            end_datetime_full = datetime.combine(end_datetime_obj, datetime.max.time())
+
             query = """
                 SELECT 
                     t.transaction_id,
@@ -2004,7 +2070,7 @@ class DatabaseManager:
                     p.title_deed_number,
                     p.price AS original_price,
                     c.name AS client_name,
-                    c.contact_info AS client_contact_info
+                    c.telephone_number AS client_contact_info
                 FROM 
                     transactions t
                 JOIN 
@@ -2012,10 +2078,12 @@ class DatabaseManager:
                 JOIN 
                     clients c ON t.client_id = c.client_id
                 WHERE 
-                    t.balance > 0 AND t.transaction_date BETWEEN ? AND ? || ' 23:59:59'
+                    t.balance > 0 
+                    AND t.transaction_date BETWEEN %s AND %s
+                    AND t.payment_mode = 'installments'
                 ORDER BY t.transaction_date ASC
             """
-            results_rows = self._execute_query(query, (start_date, end_date), fetch_all=True)
+            results_rows = self._execute_query(query, (start_datetime_obj, end_datetime_full), fetch_all=True)
             return [dict(row) for row in results_rows] if results_rows else []
         except Exception as e:
             print(f"Error in get_pending_instalments_for_date_range: {e}")
@@ -2147,3 +2215,40 @@ class DatabaseManager:
         """Retrieves all system settings."""
         query = "SELECT * FROM system_settings ORDER BY setting_name"
         return self._execute_query(query, fetch_all=True)
+    
+    def get_filtered_cancelled_jobs(self, filters):
+        base_query = """
+            SELECT 
+                cj.cancellation_id,
+                cj.reason,
+                cj.refund_amount,
+                cj.cancellation_date,
+                sj.title_number,
+                sc.name AS client_name,
+                cf.file_name
+                
+            FROM cancelled_jobs AS cj
+            JOIN service_jobs sj ON cj.job_id = sj.job_id
+            JOIN client_files cf ON sj.file_id = cf.file_id
+            JOIN service_clients AS sc ON cf.client_id = sc.client_id
+        """
+        conditions = []
+        params = []
+
+        if filters.get('from_date') and filters.get('to_date'):
+            from_date = filters['from_date']
+            to_date = filters['to_date']
+            conditions.append("cj.cancellation_date BETWEEN %s AND %s")
+            params.append(from_date.strftime('%Y-%m-%d 00:00:00'))
+            params.append(to_date.strftime('%Y-%m-%d 23:59:59'))
+
+        where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
+        query = f"{base_query}{where_clause} ORDER BY cj.cancellation_date DESC"
+        return self._execute_query(query, tuple(params), fetch_all=True)
+    def delete_daily_client(self, visit_id):
+        try:
+            query = "DELETE FROM daily_clients WHERE visit_id = %s"
+            return self._execute_query(query, (visit_id,))
+        except Exception as e:
+            print(f"Error deleting daily client visit ID {visit_id}: {e}", file=sys.stderr)
+            return False
