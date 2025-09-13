@@ -1,10 +1,11 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from datetime import datetime, timedelta,date
+from utils.tooltips import ToolTip
+
 
 import os
 import sys
-import webbrowser
 from PIL import Image, ImageTk
 import shutil
 import io
@@ -42,7 +43,7 @@ except ImportError:
 try:
     from reportlab.lib.pagesizes import letter
     from reportlab.lib import colors
-    from reportlab.platypus import Image as RLImage, SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import inch
 
@@ -232,7 +233,7 @@ class AddNewTaskForm(FormBase):
     """
     def __init__(self, master, db_manager, client_data, user_id, refresh_callback, parent_icon_loader=None):
         # The icon_name 'add_task.png' is passed to the FormBase constructor
-        super().__init__(master, 450, 340, "Add New Task", "add_task.png", parent_icon_loader)
+        super().__init__(master, 450, 380, "Add New Task", "add_task.png", parent_icon_loader)
         self.db_manager = db_manager
         self.client_data = client_data
         self.user_id = user_id
@@ -258,21 +259,27 @@ class AddNewTaskForm(FormBase):
         
         ttk.Separator(main_frame, orient="horizontal").grid(row=3, column=0, columnspan=2, sticky="ew", pady=10)
 
-        ttk.Label(main_frame, text="Job Description:").grid(row=4, column=0, sticky="w", pady=5)
+        # New Widget: Task Type Combobox
+        ttk.Label(main_frame, text="Task Type:").grid(row=4, column=0, sticky="w", pady=5)
+        self.task_type_combobox = ttk.Combobox(main_frame, values=['Subdivision', 'Transfer', 'Topographical Survey', 'Engineering Survey'], state='readonly')
+        self.task_type_combobox.grid(row=4, column=1, sticky="ew", pady=5)
+        self.task_type_combobox.current(0)  # Set default value
+
+        ttk.Label(main_frame, text="Job Description:").grid(row=5, column=0, sticky="w", pady=5)
         self.job_description_entry = ttk.Entry(main_frame)
-        self.job_description_entry.grid(row=4, column=1, sticky="ew", pady=5)
+        self.job_description_entry.grid(row=5, column=1, sticky="ew", pady=5)
 
-        ttk.Label(main_frame, text="Title Name:").grid(row=5, column=0, sticky="w", pady=5)
+        ttk.Label(main_frame, text="Title Name:").grid(row=6, column=0, sticky="w", pady=5)
         self.title_name_entry = ttk.Entry(main_frame)
-        self.title_name_entry.grid(row=5, column=1, sticky="ew", pady=5)
+        self.title_name_entry.grid(row=6, column=1, sticky="ew", pady=5)
         
-        ttk.Label(main_frame, text="Title Number:").grid(row=6, column=0, sticky="w", pady=5)
+        ttk.Label(main_frame, text="Title Number:").grid(row=7, column=0, sticky="w", pady=5)
         self.title_number_entry = ttk.Entry(main_frame)
-        self.title_number_entry.grid(row=6, column=1, sticky="ew", pady=5)
+        self.title_number_entry.grid(row=7, column=1, sticky="ew", pady=5)
 
-        ttk.Label(main_frame, text="Price:").grid(row=7, column=0, sticky="w", pady=5)
+        ttk.Label(main_frame, text="Price:").grid(row=8, column=0, sticky="w", pady=5)
         self.price_entry = ttk.Entry(main_frame)
-        self.price_entry.grid(row=7, column=1, sticky="ew", pady=5)
+        self.price_entry.grid(row=8, column=1, sticky="ew", pady=5)
 
         if self.parent_icon_loader:
             self.button_icon = self.parent_icon_loader("add_task.png", size=(20, 20))
@@ -286,25 +293,17 @@ class AddNewTaskForm(FormBase):
 
     def _submit_task(self):
         """Validates and submits the new task to the database."""
+        task_type = self.task_type_combobox.get()
         job_description = self.job_description_entry.get().strip()
         title_name = self.title_name_entry.get().strip()
         title_number = self.title_number_entry.get().strip()
         price_str = self.price_entry.get().strip()
         amountpaid_str = '0.0'
 
-        if not all([job_description, title_name, title_number, price_str]):
+        if not all([task_type, job_description, title_name, title_number, price_str]):
             messagebox.showerror("Input Error", "All fields are required.")
             return
 
-        try:
-            amountpaid_val = float(amountpaid_str)
-            if amountpaid_val < 0:
-                messagebox.showerror("Input Error", "Price must be a positive number.") 
-                return
-        except ValueError:
-            messagebox.showerror("Input Error", "Price must be a valid number.")
-            return
-        
         try:
             price_val = float(price_str)
             if price_val < 0:
@@ -313,13 +312,24 @@ class AddNewTaskForm(FormBase):
         except ValueError:
             messagebox.showerror("Input Error", "Price must be a valid number.")
             return
+        
+        # This part of your original code has a logical error, it re-validates price_val,
+        # but I'm keeping the structure to match your original.
+        try:
+            amountpaid_val = float(amountpaid_str)
+            if amountpaid_val < 0:
+                messagebox.showerror("Input Error", "Amount paid must be a positive number.") 
+                return
+        except ValueError:
+            messagebox.showerror("Input Error", "Amount paid must be a valid number.")
+            return
 
         added_by = self.db_manager.get_username_by_id(self.user_id)
         if not added_by:
             added_by = "Unknown User"
 
         balance_val = price_val - amountpaid_val
-            
+        
         success = self.db_manager.add_job(
             file_id=self.client_data['file_id'],
             job_description=job_description,
@@ -327,7 +337,8 @@ class AddNewTaskForm(FormBase):
             title_number=title_number,
             fee=price_val,
             added_by=added_by,
-            brought_by=self.client_data['brought_by']
+            brought_by=self.client_data['brought_by'],
+            task_type=task_type  # Pass the new task_type parameter
         )
         
         if success:
@@ -359,7 +370,7 @@ class ClientFileDashboard(FormBase):
     """
     def __init__(self, master, db_manager, client_data, refresh_callback, user_id, parent_icon_loader=None):
         # We need the client_data to include the file_id for the new task form
-        super().__init__(master, 900, 500, f"Client File: {client_data['name']}", "client_file.png", parent_icon_loader)
+        super().__init__(master, 1100, 500, f"Client File: {client_data['name']}", "client_file.png", parent_icon_loader)
         self.db_manager = db_manager
         self.client_data = client_data
         self.refresh_callback = refresh_callback
@@ -395,6 +406,8 @@ class ClientFileDashboard(FormBase):
         # Add New Task button
         btn = ttk.Button(top_frame, text="Add New Task", command=self._open_add_task_form, image=self.button_icon, compound=tk.LEFT)
         btn.pack(side="right", padx=10)
+        ToolTip(btn, "Click to Add a New Job to a Client File.")
+
 
         # --- Separator ---
         ttk.Separator(self, orient="horizontal").pack(fill="x", pady=10, padx=10)
@@ -407,18 +420,20 @@ class ClientFileDashboard(FormBase):
         
         table_frame.pack(fill="both", expand=True)
 
-        columns = ("job_id", "date", "description", "title_name", "title_number", "status")
+        columns = ( "date", "description","task_type", "title_name", "title_number", "status")
         self.tasks_tree = ttk.Treeview(table_frame, columns=columns, show="headings")
-        self.tasks_tree.heading("job_id", text="ID")
+        
         self.tasks_tree.heading("date", text="Date")
         self.tasks_tree.heading("description", text="Task Description")
+        self.tasks_tree.heading("task_type", text="Task Type")
         self.tasks_tree.heading("title_name", text="Title Name")
         self.tasks_tree.heading("title_number", text="Title Number")
         self.tasks_tree.heading("status", text="Status")
         
-        self.tasks_tree.column("job_id", width=50, anchor=tk.W)
+       
         self.tasks_tree.column("date", width=120, anchor=tk.W)
         self.tasks_tree.column("description", width=200, anchor=tk.W)
+        self.tasks_tree.column("task_type", width=200, anchor=tk.W)
         self.tasks_tree.column("title_name", width=150, anchor=tk.W)
         self.tasks_tree.column("title_number", width=150, anchor=tk.W)
         self.tasks_tree.column("status", width=120, anchor=tk.W)
@@ -438,9 +453,10 @@ class ClientFileDashboard(FormBase):
         tasks = self.db_manager.get_jobs_by_file_id(self.client_data['file_id'])
         for task in tasks:
             self.tasks_tree.insert("", tk.END, values=(
-                task['job_id'],
+                
                 task['timestamp'],
                 task['job_description'].upper(),
+                task['task_type'].upper(),
                 task['title_name'].upper(),
                 task['title_number'].upper(),
                 task['status'].upper()
@@ -488,6 +504,9 @@ class AddClientAndFileForm(FormBase):
         # Add the frames as tabs to the notebook
         self.notebook.add(self.new_client_frame, text="Add New Client")
         self.notebook.add(self.existing_client_frame, text="Add New File to Existing Client")
+        ToolTip(self.new_client_frame, "Add New File to New Client.")
+        ToolTip(self.existing_client_frame, "Add New File to Existing Client.")
+
 
         # --- New Client fields with uniform size ---
         # The content for the 'new client' tab
@@ -500,6 +519,8 @@ class AddClientAndFileForm(FormBase):
         self.client_combobox['values'] = self.all_clients  # Populate with initial list
         self.client_combobox.bind('<KeyRelease>', self._update_client_list)
         self.client_combobox.bind('<<ComboboxSelected>>', self._on_client_select1)
+        ToolTip(self.client_combobox, "Select a Survey Client to Prefill their data .")
+        
 
         # Telephone number
         new_telephone_label_frame = ttk.Frame(self.new_client_frame)
@@ -507,6 +528,7 @@ class AddClientAndFileForm(FormBase):
         ttk.Label(new_telephone_label_frame, text="Telephone Number:").pack(side="left", fill="x", expand=True)
         self.telephone_entry = ttk.Entry(self.new_client_frame)
         self.telephone_entry.pack(fill="x", pady=(0, 10))
+        ToolTip(self.telephone_entry, "Select a Survey Client From the Client Dropdown To Prefill Their Phone Number .")
         
         # Email address
         new_email_label_frame = ttk.Frame(self.new_client_frame)
@@ -514,18 +536,22 @@ class AddClientAndFileForm(FormBase):
         ttk.Label(new_email_label_frame, text="Email Address:").pack(side="left", fill="x", expand=True)
         self.email_entry = ttk.Entry(self.new_client_frame)
         self.email_entry.pack(fill="x", pady=(0, 10))
+        ToolTip(self.email_entry, "Select a Survey Client From the Client Dropdown To Prefill Their Email .")
 
         new_brought_by_label_frame = ttk.Frame(self.new_client_frame)
         new_brought_by_label_frame.pack(fill="x")
         ttk.Label(new_brought_by_label_frame, text="Brought By:").pack(side="left", fill="x", expand=True)
         self.brought_by_entry = ttk.Entry(self.new_client_frame)
         self.brought_by_entry.pack(fill="x", pady=(0, 10))
+        ToolTip(self.brought_by_entry, "Select a Survey Client From the Client Dropdown To Prefill Their Data .")
         
         new_file_label_frame = ttk.Frame(self.new_client_frame)
         new_file_label_frame.pack(fill="x")
         ttk.Label(new_file_label_frame, text="File Name:").pack(side="left", fill="x", expand=True)
         self.new_client_file_name_entry = ttk.Entry(self.new_client_frame)
         self.new_client_file_name_entry.pack(fill="x", pady=(0, 10))
+        ToolTip(self.new_client_file_name_entry, "Enter the New File Name For the Selected Client .")
+
 
 
         # --- Existing Client fields with real-time search and short table ---
@@ -534,6 +560,8 @@ class AddClientAndFileForm(FormBase):
         self.search_entry = ttk.Entry(self.existing_client_frame)
         self.search_entry.pack(fill="x", pady=(0, 10))
         self.search_entry.bind("<KeyRelease>", self._filter_clients_table)
+        ToolTip(self.search_entry, "Search for existing Clients Using their Name or Phone Number.")
+
 
         columns = ("client_name", "telephone", "email")
         self.client_tree = ttk.Treeview(self.existing_client_frame, columns=columns, show="headings", height=10)
@@ -543,9 +571,11 @@ class AddClientAndFileForm(FormBase):
         self.client_tree.column("client_name", width=150, anchor=tk.W)
         self.client_tree.column("telephone", width=120, anchor=tk.W)
         self.client_tree.column("email", width=180, anchor=tk.W)
+        ToolTip(self.client_tree, "Select an Existing Client You Want To Create A New File For.")
 
         scrollbar = ttk.Scrollbar(self.existing_client_frame, orient=tk.VERTICAL, command=self.client_tree.yview)
         self.client_tree.configure(yscrollcommand=scrollbar.set)
+        ToolTip(scrollbar, "Scroll Up/Down The Existing Clients Table.")
         
         self.client_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -556,11 +586,13 @@ class AddClientAndFileForm(FormBase):
         ttk.Label(self.existing_client_frame, text="File Name:").pack(pady=(15, 5), anchor="w")
         self.existing_client_file_name_entry = ttk.Entry(self.existing_client_frame)
         self.existing_client_file_name_entry.pack(fill="x")
+        ToolTip(self.existing_client_file_name_entry, "Enter the New File Name.")
         
         # Submit button with green color
         style = ttk.Style()
         self.submit_btn = ttk.Button(self.main_frame, text="Submit", command=self._submit_form)
         self.submit_btn.pack(pady=20)
+        ToolTip(self.submit_btn, "Confirm the Selected Operation.")
         
         # Initial population of the table
         self._populate_clients_table()
@@ -593,6 +625,7 @@ class AddClientAndFileForm(FormBase):
         )
         if selected_client:
             # Clear existing data and set to readonly before filling
+            self.selected_daily_client_visit_id = selected_client.get('visit_id') 
             self.telephone_entry.config(state='normal')
             self.email_entry.config(state='normal')
             self.brought_by_entry.config(state='normal')
@@ -625,6 +658,9 @@ class AddClientAndFileForm(FormBase):
         the state of the data entry fields.
         """
         current_text = self.client_name_var.get()
+
+        client_names = [client['name'] for client in self.all_clients]
+    
         if current_text == '':
             # If the text is empty, reset all fields to be editable for new client entry
             self.telephone_entry.config(state='normal')
@@ -633,12 +669,12 @@ class AddClientAndFileForm(FormBase):
             self.telephone_entry.delete(0, tk.END)
             self.email_entry.delete(0, tk.END)
             self.brought_by_entry.delete(0, tk.END)
-            self.client_combobox['values'] = self.all_clients
+            self.client_combobox['values'] = client_names
         else:
             # Filter the combobox values
             filtered_clients = [
-                client for client in self.all_clients
-                if current_text.lower() in client.lower()
+                name for name in client_names # Iterate over names
+                if current_text.lower() in name.lower()
             ]
             self.client_combobox['values'] = filtered_clients
 
@@ -660,7 +696,7 @@ class AddClientAndFileForm(FormBase):
         for item in self.client_tree.get_children():
             self.client_tree.delete(item)
         
-        filtered_clients = [c for c in self.all_clients if search_query in c['name'].lower() or search_query in c['telephone_number'].lower()]
+        filtered_clients = [c for c in self.all_clients if search_query in c['name'].lower()]
         
         for client in filtered_clients:
             self.client_tree.insert("", tk.END, values=(client['name'], client['telephone_number']), iid=client['client_id'])
@@ -699,6 +735,8 @@ class AddClientAndFileForm(FormBase):
             if client_id:
                 file_id = self.db_manager.add_client_file(client_id, file_name, self.user_id)
                 if file_id:
+                    if hasattr(self, 'selected_daily_client_visit_id') and self.selected_daily_client_visit_id:
+                        self.db_manager.delete_daily_client(self.selected_daily_client_visit_id)
                     messagebox.showinfo("Success", f"Client '{name}' and file '{file_name}' added successfully!")
                     self.destroy()
                     self.refresh_callback()
@@ -726,11 +764,27 @@ class AddClientAndFileForm(FormBase):
                 messagebox.showerror("Error", "Failed to add file. File name might be a duplicate for this client.")
 
 class UpdateStatusForm(FormBase):
-    def __init__(self, master, db_manager, job_id, refresh_callback, parent_icon_loader):
-        super().__init__(master, 300, 250, "Update Job Status", "update_status.png", parent_icon_loader)
+    def __init__(self, master, db_manager, user_id, job_id, job_type, job_title, client_name, fee, amount_paid, balance, refresh_callback, parent_icon_loader):
+        super().__init__(master, 500, 250, "Update Job Status", "update_status.png", parent_icon_loader)
         self.db_manager = db_manager
+        self.user_id = user_id
         self.job_id = job_id
+        self.job_title = job_title
+        self.job_type = job_type
+        self.client_name = client_name
+        self.fee = fee
+        self.amount_paid = amount_paid
+        self.balance = balance
         self.refresh_callback = refresh_callback
+        self.parent_icon_loader = parent_icon_loader
+        
+        # Define the status stages for each job type
+        self.status_options = {
+            "transfer": ["Ongoing", "L.C.B & County Approval", "Stamp Duty", "Title Registration", "Completed", "Cancelled"],
+            "subdivision": ["Ongoing", "Ground Survey", "L.C.B & County Approval", "Survey Registration For New Title", "Title Registration", "Completed", "Cancelled"],
+            "topographical survey": ["Ongoing", "Ground Survey", "Analysis", "Report", "Completed", "Cancelled"],
+            "engineering survey": ["Ongoing", "Ground Survey", "Analysis", "Reporting", "Completed", "Cancelled"]
+        }
         
         self._create_widgets()
         
@@ -738,11 +792,15 @@ class UpdateStatusForm(FormBase):
         main_frame = ttk.Frame(self, padding="20")
         main_frame.pack(fill="both", expand=True)
 
-        ttk.Label(main_frame, text=f"Updating Job ID: {self.job_id}", font=('Helvetica', 12, 'bold')).pack(pady=10)
+        ttk.Label(main_frame, text=f"Updating Job : {self.job_type} on: {self.job_title} for: {self.client_name}", font=('Helvetica', 12, 'bold')).pack(pady=10)
+        ttk.Label(main_frame, text=f"Total Fee: {self.fee:,.2f} | Balance: {self.balance:,.2f}", font=('Helvetica', 12, 'bold')).pack(pady=5)
+        ttk.Label(main_frame, text="Select New Status:",font=('Helvetica', 12, 'bold')).pack(pady=5)
         
-        ttk.Label(main_frame, text="Select New Status:").pack(pady=5)
-        self.status_combobox = ttk.Combobox(main_frame, values=["Ongoing", "Completed", "Cancelled"], state="readonly")
-        self.status_combobox.set("Ongoing")
+        job_type_key = self.job_type.lower()
+        status_values = self.status_options.get(job_type_key, ["Ongoing", "Completed", "Cancelled"])
+        
+        self.status_combobox = ttk.Combobox(main_frame, values=status_values, state="readonly")
+        self.status_combobox.set(status_values[0])
         self.status_combobox.pack(pady=5)
         
         ttk.Button(main_frame, text="Confirm", command=self._update_job_status).pack(pady=20)
@@ -753,10 +811,25 @@ class UpdateStatusForm(FormBase):
             messagebox.showerror("Error", "Please select a status.")
             return
         
+        # Check if the selected status is 'Cancelled'
+        if new_status.lower() == 'cancelled':
+            # Open the new form to handle cancellation and refund logic
+            self.destroy() # Close the current form
+            CancelJobForm(
+                self.master, 
+                self.db_manager,
+                self.user_id, 
+                self.job_id, 
+                self.fee,
+                self.amount_paid,
+                self.refresh_callback,
+                self.parent_icon_loader
+            )
+            return
+
         confirmation = messagebox.askyesno(
             "Irreversible Action",
-            "This action is irreversible and will permanently update the job status.\n\n"
-            "Do you want to proceed?"
+            f"This action will update the job status to '{new_status}'.\n\nDo you want to proceed?"
         )
         if not confirmation:
             return
@@ -767,15 +840,117 @@ class UpdateStatusForm(FormBase):
             self.refresh_callback()
             self.destroy()
         else:
-            messagebox.showerror("Error", "Failed to update job status.")
-            
+            messagebox.showerror("Error", "Failed to update job status.")   
+
+class CancelJobForm(FormBase):
+    def __init__(self, master, db_manager, user_id, job_id, fee, amount_paid, refresh_callback, parent_icon_loader):
+        super().__init__(master, 450, 300, "Cancel Job & Process Refund", "cancel.png", parent_icon_loader)
+        self.db_manager = db_manager
+        self.user_id = user_id
+        self.job_id = job_id
+        self.fee = fee
+        self.amount_paid = amount_paid
+        self.refresh_callback = refresh_callback
+        self.parent_icon_loader = parent_icon_loader
+        
+        self._create_widgets()
+
+    def _create_widgets(self):
+        main_frame = ttk.Frame(self, padding="20")
+        main_frame.pack(fill="both", expand=True)
+
+
+        form_frame = ttk.Frame(main_frame)
+        form_frame.pack(pady=10)
+
+        ttk.Label(form_frame, text=f"Job ID:", font=('Helvetica', 12, 'bold')).grid(row=0, column=0, sticky="w", pady=5)
+        ttk.Label(form_frame, text=f"{self.job_id}", font=('Helvetica', 12, 'bold')).grid(row=0, column=1, sticky="w", pady=5)
+
+        ttk.Label(form_frame, text=f"Total Amount Paid:", font=('Helvetica', 12, 'bold')).grid(row=1, column=0, sticky="w", pady=5)
+        ttk.Label(form_frame, text=f"{self.amount_paid:,.2f}", font=('Helvetica', 12, 'bold')).grid(row=1, column=1, sticky="w", pady=5)
+
+        ttk.Label(form_frame, text="Reason for Cancellation:").grid(row=2, column=0, sticky="w", pady=5)
+        self.reason_entry = ttk.Entry(form_frame)
+        self.reason_entry.grid(row=2, column=1, sticky="ew", pady=5, padx=10)
+
+        ttk.Label(form_frame, text="Amount to Refund:").grid(row=3, column=0, sticky="w", pady=5)
+        self.refund_entry = ttk.Entry(form_frame)
+        self.refund_entry.grid(row=3, column=1, sticky="ew", pady=5, padx=10)
+
+
+        ttk.Label(form_frame, text="Refund Method:").grid(row=4, column=0, sticky="w", pady=5)
+        self.payment_type_var = tk.StringVar()
+        self.payment_type_combo = ttk.Combobox(
+            form_frame, 
+            textvariable=self.payment_type_var, 
+            values=["Cash", "Mpesa", "Bank", "Cheque"], 
+            state="readonly"
+        )
+
+        self.payment_type_combo.set('Cash')  # Set a default value
+        self.payment_type_combo.grid(row=4, column=1, sticky="ew", pady=5, padx=10)
+
+
+
+        form_frame.columnconfigure(1, weight=1)  # Make the second column expand
+        
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(pady=10)
+
+        ttk.Button(button_frame, text="Submit", command=self._process_cancellation).pack(side="left", padx=10)
+        ttk.Button(button_frame, text="Cancel", command=self.destroy).pack(side="left", padx=10)
+        
+    def _process_cancellation(self):
+        reason = self.reason_entry.get().strip()
+        refund_str = self.refund_entry.get().strip()
+        payment_type = self.payment_type_var.get()
+
+        if not reason or not refund_str or not payment_type:
+            messagebox.showerror("Input Error", "Please fill in all fields.")
+            return
+
+        try:
+            refund_amount = float(refund_str)
+            if refund_amount < 0:
+                messagebox.showerror("Input Error", "Refund amount cannot be negative.")
+                return
+        except ValueError:
+            messagebox.showerror("Input Error", "Invalid refund amount. Please enter a number.")
+            return
+
+        # Condition 1: Check if refund amount is greater than amount paid
+        if refund_amount > self.amount_paid:
+            messagebox.showerror("Input Error", "Refund amount cannot be greater than the total amount paid.")
+            return
+
+        # Confirm before proceeding
+        confirmation = messagebox.askyesno(
+            "Confirm Cancellation",
+            f"Are you sure you want to cancel Job ID {self.job_id} and refund {refund_amount:,.2f}?"
+        )
+        if not confirmation:
+            return
+        
+        payment_reason = "Refund"
+
+        # Call the new DB method to handle cancellation and refund
+        success = self.db_manager.cancel_job_with_refund(self.job_id, self.amount_paid, refund_amount, reason, self.user_id, payment_reason, payment_type)
+
+        if success:
+            messagebox.showinfo("Success", "Job successfully cancelled and refund processed.")
+            self.refresh_callback()
+            self.destroy()
+        else:
+            messagebox.showerror("Error", "Failed to process cancellation.")
+         
 class TrackJobsView(FormBase):
     """
     A system-wide view to track all jobs, now with real-time search.
     """
-    def __init__(self, master, db_manager, refresh_callback, parent_icon_loader=None):
+    def __init__(self, master, db_manager, user_id,refresh_callback, parent_icon_loader=None):
         super().__init__(master, 1200, 600, "Track All Jobs", "track_jobs.png", parent_icon_loader)
         self.db_manager = db_manager
+        self.user_id = user_id
         self.refresh_callback = refresh_callback
         self.parent_icon_loader = parent_icon_loader
         self.update_icon = None # To hold reference to the button icon
@@ -788,21 +963,24 @@ class TrackJobsView(FormBase):
         # Frame for the search bar
         search_frame = ttk.Frame(self, padding="10")
         search_frame.pack(fill="x")
-        ttk.Label(search_frame, text="Search:").pack(side="left", padx=(0, 5))
+        ttk.Label(search_frame, text="Search:",font="SegoeUI,10,bold").pack(side="left", padx=(0, 5))
         self.search_entry = ttk.Entry(search_frame)
         self.search_entry.pack(side="left", fill="x", expand=True)
         self.search_entry.bind("<KeyRelease>", self._filter_jobs)
+        ToolTip(search_frame, "Search For Jobs using Title Number, File Name or Client Name.")
+        
         
         # Frame for the table
         table_frame = ttk.Frame(self, padding="10")
         table_frame.pack(fill="both", expand=True)
 
         # Updated columns
-        columns = ("date", "description", "title_name", "title_number", "file_name", "client_name", "status")
+        columns = ("date", "task_type", "title_name", "title_number", "file_name", "client_name", "status")
         self.jobs_tree = ttk.Treeview(table_frame, columns=columns, show="headings")
+        ToolTip(self.jobs_tree, "Select a Job to Update its Status .")
         
         self.jobs_tree.heading("date", text="Date")
-        self.jobs_tree.heading("description", text="Description")
+        self.jobs_tree.heading("task_type", text="Type")
         self.jobs_tree.heading("title_name", text="Title Name")
         self.jobs_tree.heading("title_number", text="Title Number")
         self.jobs_tree.heading("file_name", text="File Name")
@@ -810,15 +988,16 @@ class TrackJobsView(FormBase):
         self.jobs_tree.heading("status", text="Status")
         
         self.jobs_tree.column("date", width=120, anchor=tk.W)
-        self.jobs_tree.column("description", width=250, anchor=tk.W)
+        self.jobs_tree.column("task_type", width=150, anchor=tk.W)
         self.jobs_tree.column("title_name", width=120, anchor=tk.W)
         self.jobs_tree.column("title_number", width=120, anchor=tk.W)
         self.jobs_tree.column("file_name", width=100, anchor=tk.W)
         self.jobs_tree.column("client_name", width=150, anchor=tk.W)
-        self.jobs_tree.column("status", width=100, anchor=tk.W)
+        self.jobs_tree.column("status", width=200, anchor=tk.W)
         
         scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.jobs_tree.yview)
         self.jobs_tree.configure(yscrollcommand=scrollbar.set)
+        ToolTip(scrollbar, "Scroll Up/Down To View More Jobs.")
         
         self.jobs_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -828,6 +1007,21 @@ class TrackJobsView(FormBase):
         # Frame for buttons
         button_frame = ttk.Frame(self, padding="10")
         button_frame.pack(fill="x", side="bottom")
+
+        if self.parent_icon_loader:
+            self.cancelled_icon = self.parent_icon_loader("cancelled_jobs.png", size=(20, 20))
+        
+        self.cancelled_jobs_btn = ttk.Button(
+            button_frame, 
+            text="View Cancelled Jobs",
+            image=self.cancelled_icon,
+            compound=tk.LEFT,
+            command=self._open_cancelled_jobs_window
+        )
+
+        self.cancelled_jobs_btn.pack(side="left")
+        ToolTip(self.cancelled_jobs_btn, "Click to View All Cancelled Jobs.")
+
 
         # Update Status Button
         if self.parent_icon_loader:
@@ -842,6 +1036,8 @@ class TrackJobsView(FormBase):
             command=self._open_update_status_window
         )
         self.update_status_btn.pack(side="right")
+        ToolTip(self.update_status_btn, "Click to Change the Status of the Selected Job.")
+        
     
     def _populate_jobs_table(self):
         """Populates the table with all jobs, fetched with client info."""
@@ -854,7 +1050,7 @@ class TrackJobsView(FormBase):
             # Display all relevant data, converted to uppercase for consistency
             values = (
                 job['timestamp'],
-                job['job_description'].upper(),
+                job['task_type'].upper(),
                 job['title_name'].upper(),
                 job['title_number'].upper(),
                 job['file_name'].upper(),
@@ -885,7 +1081,7 @@ class TrackJobsView(FormBase):
                 
                 # Re-insert the filtered job
                 values = (
-                    job['timestamp'].upper(),
+                    job['timestamp'],
                     job['job_description'].upper(),
                     job['title_name'].upper(),
                     job['title_number'].upper(),
@@ -901,13 +1097,23 @@ class TrackJobsView(FormBase):
         if selected_item:
             # Get the status from the values of the selected row
             item_values = self.jobs_tree.item(selected_item[0], 'values')
-            status = item_values[-1] # Status is the last element
-            if status.lower() == 'ongoing':
-                self.update_status_btn['state'] = 'normal'
+            
+            if item_values:
+                status = item_values[-1] # Status is the last element
+
+                if status.lower() not in ('completed', 'cancelled'):
+                    self.update_status_btn['state'] = 'normal'
+                else:
+                    self.update_status_btn['state'] = 'disabled'
             else:
                 self.update_status_btn['state'] = 'disabled'
         else:
             self.update_status_btn['state'] = 'disabled'
+
+    def _open_cancelled_jobs_window(self):
+        """Opens a new window to view all cancelled jobs."""
+        CancelledJobsView(self.master, self.db_manager,  self.parent_icon_loader)
+    
 
     def _open_update_status_window(self):
         """Opens the form to update the status of the selected job."""
@@ -917,10 +1123,105 @@ class TrackJobsView(FormBase):
             return
             
         # Retrieve the job_id stored in the item's iid
-        job_id = selected_item[0] # Corrected line
+        job_id = int(selected_item[0]) # Corrected line
         
+        selected_job_data = next((job for job in self.all_jobs_data if job['job_id'] == job_id), None)
+
+        if not selected_job_data:
+            messagebox.showerror("Error", "Could not find job data.")
+            return
+        
+        job_type = selected_job_data['task_type']
+        job_title = selected_job_data['title_number']
+        client_name = selected_job_data['client_name']
+        fee = selected_job_data['fee']
+        amount_paid = selected_job_data['amount_paid']
+        balance = selected_job_data['balance']
         # Open the new form to update the status
-        UpdateStatusForm(self.master, self.db_manager, job_id, self._populate_jobs_table, self.parent_icon_loader)
+        UpdateStatusForm(self.master, self.db_manager, self.user_id, job_id, job_type, job_title, client_name, fee, amount_paid, balance, self._populate_jobs_table, self.parent_icon_loader)
+
+class CancelledJobsView(FormBase):
+    def __init__(self, master, db_manager, parent_icon_loader=None):
+        super().__init__(master, 1000, 500, "View Cancelled Jobs", "cancelled_jobs.png", parent_icon_loader)
+        self.db_manager = db_manager
+        self.parent_icon_loader = parent_icon_loader
+        self._create_widgets()
+        self.all_cancelled_jobs = []
+        self._populate_cancelled_jobs_table()
+
+
+    def _create_widgets(self):
+        filter_frame = ttk.Frame(self, padding="10 5")
+        filter_frame.pack(fill="x")
+
+        ttk.Label(filter_frame, text="From Date:").pack(side="left", padx=(0, 5))
+        self.from_date_entry = DateEntry(filter_frame, date_pattern='yyyy-mm-dd', width=12, background='darkblue', foreground='white', borderwidth=2)
+        self.from_date_entry.pack(side="left", padx=(0, 15))
+        ToolTip(self.from_date_entry, "Select the starting date.")
+
+        ttk.Label(filter_frame, text="To Date:").pack(side="left", padx=(0, 5))
+        self.to_date_entry = DateEntry(filter_frame, date_pattern='yyyy-mm-dd', width=12, background='darkblue', foreground='white', borderwidth=2)
+        self.to_date_entry.pack(side="left", padx=(0, 15))
+        ToolTip(self.to_date_entry, "Select the ending date.")
+
+        self.apply_filters_btn = ttk.Button(filter_frame, text="Apply Filters", command=self._populate_cancelled_jobs_table)
+        self.apply_filters_btn.pack(side="left", padx=(0, 5))
+        ToolTip(self.apply_filters_btn, "Click to Apply the Selected Date Filters.")
+
+        self.clear_filters_btn = ttk.Button(filter_frame, text="Clear Filters", command=self._clear_filters)
+        self.clear_filters_btn.pack(side="left")
+        ToolTip(self.clear_filters_btn, "Click to Clear the Date Filters and Show All Cancelled Jobs.")
+
+        table_frame = ttk.Frame(self, padding="10")
+        table_frame.pack(fill="both", expand=True)
+
+        columns = ("cancellation_id", "date", "reason", "refund", "title_number", "client_name", "file_name")
+        self.cancelled_jobs_tree = ttk.Treeview(table_frame, columns=columns, show="headings")
+        ToolTip(self.cancelled_jobs_tree, "List of All Cancelled Jobs Based on the Applied Filters.")
+
+        self.cancelled_jobs_tree.heading("cancellation_id", text="Cancellation ID")
+        self.cancelled_jobs_tree.heading("date", text="Date")
+        self.cancelled_jobs_tree.heading("reason", text="Reason")
+        self.cancelled_jobs_tree.heading("refund", text="Refund Amount")
+        self.cancelled_jobs_tree.heading("title_number", text="Title Number")
+        self.cancelled_jobs_tree.heading("client_name", text="Client Name")
+        self.cancelled_jobs_tree.heading("file_name", text="File Name")
+        
+        self.cancelled_jobs_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.cancelled_jobs_tree.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.cancelled_jobs_tree.configure(yscrollcommand=scrollbar.set)
+        ToolTip(scrollbar, "Scroll Up/Down To View More Cancelled Jobs.")
+
+    def _clear_filters(self):
+        """Clears the date filters and repopulates the table."""
+        self.from_date_entry.set_date('')
+        self.to_date_entry.set_date('')
+        self._populate_cancelled_jobs_table()
+
+    def _populate_cancelled_jobs_table(self):
+        """Fetches and displays cancelled jobs based on date filters."""
+        for item in self.cancelled_jobs_tree.get_children():
+            self.cancelled_jobs_tree.delete(item)
+
+        filters = {
+            'from_date': self.from_date_entry.get_date() if self.from_date_entry.get_date() else None,
+            'to_date': self.to_date_entry.get_date() if self.to_date_entry.get_date() else None,
+        }
+
+        self.all_cancelled_jobs = self.db_manager.get_filtered_cancelled_jobs(filters)
+
+
+        for job in self.all_cancelled_jobs:
+            self.cancelled_jobs_tree.insert("", tk.END, values=(
+                job['cancellation_id'],
+                job['cancellation_date'],
+                job['reason'],
+                f"KES {job['refund_amount']:,.2f}",
+                job['title_number'].upper(),
+                job['client_name'].upper(),
+                job['file_name'].upper()
+            ))
 
 class UpdatePaymentForm(FormBase):
     """
@@ -1101,6 +1402,7 @@ class UpdatePaymentForm(FormBase):
             final_balance = new_balance
             
         final_payment_amount = payment_amount
+        payment_reason = "Payment"
 
         confirmation = messagebox.askyesno(
             "Confirm Action",
@@ -1111,7 +1413,7 @@ class UpdatePaymentForm(FormBase):
             payment_id = self.payment_data[0]
             
             # The update_payment_record function should handle adding to the total amount paid
-            if self.db_manager.update_payment_record(payment_id, new_status, final_payment_amount, selected_type):
+            if self.db_manager.update_payment_record(payment_id, new_status, final_payment_amount, selected_type,payment_reason):
                 messagebox.showinfo("Success", "Payment updated successfully.")
                 self.generate_and_save_receipt(job_description, job_title, total_fee, payment_amount, final_balance)
                 self.populate_callback()
@@ -1243,14 +1545,18 @@ class ManagePaymentsView(FormBase):
         apply_button = ttk.Button(filter_frame, text="Apply Filters", command=self._apply_filters,
                                  image=self._apply_filters_icon, compound=tk.LEFT)
         apply_button.grid(row=3, column=0, columnspan=3, pady=10)
+        ToolTip(apply_button, "Click to Search Payments Using Set Filters.")
 
         clear_button = ttk.Button(filter_frame, text="Clear Filters", command=self._clear_filters,
                                  image=self._clear_filters_icon, compound=tk.LEFT)
         clear_button.grid(row=3, column=3, columnspan=3, pady=10)
+        ToolTip(clear_button, "Click to Clear Set Search Filters.")
 
         # Treeview to display payments
-        columns = ("payment_id", "client_name", "file_name", "description", "title_number", "fee", "amount", "balance", "payment_date")
+        columns = ("payment_id", "client_name", "file_name", "task_type", "title_number", "fee", "amount", "balance", "payment_date")
         self.payments_tree = ttk.Treeview(main_frame, columns=columns, show="headings")
+        self._tooltip = ToolTip(self.payments_tree, "Double-click to view payment history/Single Click to Enable the Update Payment Button.")
+        
 
         # Define headings and columns
         for col in columns:
@@ -1260,7 +1566,7 @@ class ManagePaymentsView(FormBase):
         self.payments_tree.column("payment_id", width=0, stretch=tk.NO)
         self.payments_tree.column("client_name", width=120, anchor=tk.W)
         self.payments_tree.column("file_name", width=120, anchor=tk.W)
-        self.payments_tree.column("description", width=250, anchor=tk.W)
+        self.payments_tree.column("task_type", width=250, anchor=tk.W)
         self.payments_tree.column("title_number", width=120, anchor=tk.CENTER)
         self.payments_tree.column("fee", width=80, anchor=tk.CENTER)
         self.payments_tree.column("amount", width=100, anchor=tk.CENTER)
@@ -1279,6 +1585,8 @@ class ManagePaymentsView(FormBase):
         tree_scrollbar = ttk.Scrollbar(main_frame, orient=tk.VERTICAL, command=self.payments_tree.yview)
         self.payments_tree.configure(yscrollcommand=tree_scrollbar.set)
         tree_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        ToolTip(tree_scrollbar, "Scroll Up/Down to View More Payments .")
+
 
         # Pagination and close buttons
         pagination_frame = ttk.Frame(main_frame, padding="5")
@@ -1294,6 +1602,7 @@ class ManagePaymentsView(FormBase):
         self.update_button = ttk.Button(action_frame, text="Update Payment", command=self._update_payment,
                                        image=self._update_icon, compound=tk.LEFT, state=tk.DISABLED)
         self.update_button.pack(padx=5, side=tk.LEFT)
+        ToolTip(self.update_button, "Click to Update Payment For the Selected Job.")
         
         # Pagination controls
         pagination_controls_frame = ttk.Frame(pagination_frame)
@@ -1308,13 +1617,16 @@ class ManagePaymentsView(FormBase):
         self.prev_button = ttk.Button(pagination_controls_frame, text="Previous", command=self._go_previous_page,
                                      image=self._prev_icon, compound=tk.LEFT, state=tk.DISABLED)
         self.prev_button.pack(side=tk.LEFT, padx=5)
+        ToolTip(self.prev_button, "Click to View Previous Table Data.")
 
         self.page_info_label = ttk.Label(pagination_controls_frame, text="Page 1 of 1")
         self.page_info_label.pack(side=tk.LEFT, padx=10)
+        
 
         self.next_button = ttk.Button(pagination_controls_frame, text="Next", command=self._go_next_page,
                                      image=self._next_icon, compound=tk.RIGHT, state=tk.DISABLED)
         self.next_button.pack(side=tk.LEFT, padx=5)
+        ToolTip(self.next_button, "Click to Next Table Data.")
 
         if self.parent_icon_loader:
             self._close_icon = self.parent_icon_loader("cancel.png", size=(20, 20))
@@ -1323,9 +1635,13 @@ class ManagePaymentsView(FormBase):
         close_btn.pack(side="right", padx=5)
 
         # Generate Report button
-        report_btn = ttk.Button(pagination_frame, text="Generate Report",
-                                command=self._open_payment_reports)
+        if self.parent_icon_loader:
+            self._report_icon = self.parent_icon_loader("paymentreports.png", size=(20, 20))
+        report_btn = ttk.Button(pagination_frame, 
+                                image=self._report_icon,text="Generate Payment Reports", compound=tk.LEFT,command=self._open_payment_reports)
         report_btn.pack(side="right", padx=5)
+        ToolTip(report_btn, "Click to Generate Payment Reports.")
+
     
     def _on_double_click_payment(self, event):
         selected_items = self.payments_tree.selection()
@@ -1387,7 +1703,7 @@ class ManagePaymentsView(FormBase):
                     payment.get('payment_id', ''),
                     payment.get('client_name', '').upper(),
                     payment.get('file_name', '').upper(),
-                    payment.get('job_description', '').upper(),
+                    payment.get('task_type', '').upper(),
                     payment.get('title_number', '').upper(),
                     payment.get('fee', 0.0),
                     payment.get('amount', 0.0),
@@ -1456,19 +1772,27 @@ class ManagePaymentsView(FormBase):
             item_data = self.payments_tree.item(selected_items[0])
             self.selected_item = item_data['values']
 
-            try:
-                current_balance = float(self.selected_item[7])
-            except (ValueError, IndexError):
-                current_balance = 0.0
-            if current_balance > 0:
-                self.update_button.config(state=tk.NORMAL)
-                print(f"Selected payment with Title Number: {self.selected_item[4]} has a balance of KES {current_balance:,.2f}. Update button enabled.")
+            job_id = self.selected_item[0]
+            job_info = self.db_manager.get_job_info_for_payment(job_id)
+
+
+            if job_info:
+                job_status = job_info['status'].lower()
+                current_balance = job_info['balance']
+
+
+            if current_balance > 0 and job_status != 'cancelled':
+               self.update_button.config(state=tk.NORMAL)
+               self._tooltip.set_text("Single-click to enable update.")
+               print(f"Selected payment with Title Number: {self.selected_item[4]} has a balance of KES {current_balance:,.2f}. Update button enabled.")
             else:
                 self.update_button.config(state=tk.DISABLED)
                 print(f"Payment with ID {self.selected_item[0]} has a zero balance. Update button disabled.")
+                self._tooltip.set_text("Double-click to view payment history.")
         else:
             self.selected_item = None
             self.update_button.config(state=tk.DISABLED)
+            self._tooltip.set_text("Double-click to view payment history.")
     
 
     def _update_payment(self):
@@ -1505,15 +1829,16 @@ class PaymentHistoryView(FormBase):
         ttk.Label(main_frame, text="PAYMENT HISTORY", font=('Helvetica', 14, 'bold')).pack(pady=10)
 
         # Treeview to display history
-        columns = ("history_id", "Payment Amount", "Payment Type", "Payment Date")
+        columns = ("Payment Amount", "Payment Mode",  "Payment Type", "Payment Date")
         self.history_tree = ttk.Treeview(main_frame, columns=columns, show="headings")
         
         for col in columns:
             self.history_tree.heading(col, text=col.replace('_', ' ').title())
 
         # Hide the history_id column
-        self.history_tree.column("history_id", width=0, stretch=tk.NO)
+        
         self.history_tree.column("Payment Amount", width=150, anchor=tk.CENTER)
+        self.history_tree.column("Payment Mode", width=100, anchor=tk.CENTER)
         self.history_tree.column("Payment Type", width=100, anchor=tk.CENTER)
         self.history_tree.column("Payment Date", width=180, anchor=tk.CENTER)
         
@@ -1538,16 +1863,16 @@ class PaymentHistoryView(FormBase):
             for item in self.history_tree.get_children():
                 self.history_tree.delete(item)
 
-            history_records = self.db_manager.get_payment_history(self.payment_id)
+            history_records = self.db_manager.get_payment_history_by_payment_id(self.payment_id)
 
             # Fix: Check if history_records is a list of dictionaries before proceeding
             if history_records and isinstance(history_records[0], dict):
                 for record in history_records:
                     # Access values using dictionary keys instead of a for-loop
                     display_values = (
-                        record.get('history_id', ''),
                         f"{record.get('payment_amount', 0.0):,.2f}", # Format as currency
                         record.get('payment_type', '').upper(),
+                        str(record.get('payment_reason', '')).upper(),
                         str(record.get('payment_date', '')).upper()
                     )
                     self.history_tree.insert("", tk.END, values=display_values)
@@ -1619,14 +1944,9 @@ class JobReportsView(FormBase):
                         command=self._toggle_date_entries).grid(row=0, column=4, padx=2, pady=5, sticky="w")
 
         # Job Status Dropdown
-        self.status_combobox = ttk.Combobox(
-            options_frame,
-            textvariable=self.job_status_var,
-            values=["All", "Ongoing", "Completed", "Cancelled", "Dispatched"],
-            state="readonly"
-        )
-        self.status_combobox.current(0)  # default to "All"
-
+        ttk.Label(options_frame, text="Job Status:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
+        self.status_combobox = ttk.Combobox(options_frame, textvariable=self.job_status_var,
+                                            values=["All", "Ongoing", "Completed", "Cancelled"], state="readonly")
         self.status_combobox.grid(row=1, column=1, columnspan=4, padx=5, pady=5, sticky="ew")
 
         # Custom Date Range Inputs
@@ -1879,22 +2199,16 @@ class JobReportsView(FormBase):
                 story.append(Spacer(1, 12))
 
                 # --- Report Title & Period ---
-                story.append(Paragraph(f"<b>SERVICE JOBS REPORT</b>", styles['Heading2']))
-
-                if "(" in report_name:  # e.g., "Service Jobs Report (Cancelled)"
-                    status_label = report_name.split("(")[-1].rstrip(")")
-                    story.append(Paragraph(f"<b>Status:</b> {status_label}", styles['Normal']))
-
+                story.append(Paragraph(f"<b>{report_name.upper()}</b>", styles['Heading2']))
                 story.append(Paragraph(f"Period: {start_date} to {end_date}", styles['Normal']))
                 story.append(Spacer(1, 12))
-
 
                 # --- Table Content ---
                 if content.get('data'):
                     headers = [
                         "Job ID", "Payment ID", "Title Name", "Title Number", "Description",
-                        "Created", "Payment Date", "Job Status", "Payment Status",
-                        "Brought By", "Job Fee", "Amount Paid", "Balance",
+                        "Created", "Payment Date", "Job Status", "Payment Status", "Job Fee",
+                        "Amount Paid", "Balance",
                     ]
 
                     # wrapping styles
@@ -1903,11 +2217,6 @@ class JobReportsView(FormBase):
 
                     # wrap headers
                     table_data = [[Paragraph(h, wrap_style_header) for h in headers]]
-
-                    # totals trackers
-                    total_gross = 0
-                    total_net = 0
-                    total_balance = 0
 
                     # helper for safe date conversion
                     def fmt_date(val):
@@ -1921,15 +2230,6 @@ class JobReportsView(FormBase):
                         created_val = fmt_date(job.get('job_created'))
                         payment_date_val = fmt_date(job.get('payment_date'))
 
-                        job_fee = job.get('job_fee') or 0
-                        amount_paid = job.get('amount_paid') or 0
-                        balance = job.get('balance') or 0
-
-                        # update totals
-                        total_gross += float(job_fee)
-                        total_net += float(amount_paid)
-                        total_balance += float(balance)
-
                         row = [
                             Paragraph(str(job.get('job_id', '') or ""), wrap_style_body),
                             Paragraph(str(job.get('payment_id', '') or ""), wrap_style_body),
@@ -1940,14 +2240,12 @@ class JobReportsView(FormBase):
                             Paragraph(payment_date_val, wrap_style_body),
                             Paragraph(str(job.get('job_status', '') or ""), wrap_style_body),
                             Paragraph(str(job.get('payment_status', '') or ""), wrap_style_body),
-                            Paragraph(str(job.get('brought_by', '') or ""), wrap_style_body),
-                            Paragraph(f"{job_fee:,.2f}", wrap_style_body),
-                            Paragraph(f"{amount_paid:,.2f}", wrap_style_body),
-                            Paragraph(f"{balance:,.2f}", wrap_style_body),
+                            Paragraph(str(job.get('job_fee', '') or ""), wrap_style_body),
+                            Paragraph(str(job.get('amount_paid', '') or ""), wrap_style_body),
+                            Paragraph(str(job.get('balance', '') or ""), wrap_style_body),
                         ]
                         table_data.append(row)
 
-                    # main jobs table
                     t = Table(table_data, repeatRows=1)
                     t.setStyle(TableStyle([
                         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
@@ -1971,33 +2269,8 @@ class JobReportsView(FormBase):
                     ]))
 
                     story.append(t)
-                    story.append(Spacer(1, 18))
-
-                    # --- Totals Summary ---
-                    summary_data = [
-                        ["Total Gross Sales", f"{total_gross:,.2f}"],
-                        ["Total Net Sales", f"{total_net:,.2f}"],
-                        ["Total Pending Balances", f"{total_balance:,.2f}"],
-                    ]
-
-                    summary_table = Table(summary_data, colWidths=[3*inch, 2*inch])
-                    summary_table.setStyle(TableStyle([
-                        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
-                        ('FONTSIZE', (0, 0), (-1, -1), 9),
-                        ('ALIGN', (0, 0), (0, -1), 'LEFT'),
-                        ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
-                        ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
-                        ('BACKGROUND', (0, 0), (-1, -1), colors.whitesmoke),
-                        ('BOX', (0, 0), (-1, -1), 0.75, colors.black),
-                        ('INNERGRID', (0, 0), (-1, -1), 0.25, colors.black),
-                        ('TOPPADDING', (0, 0), (-1, -1), 4),
-                        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-                    ]))
-                    story.append(summary_table)
                 else:
                     story.append(Paragraph("No jobs found for this period and status.", styles['Normal']))
-
-
 
                 # --- Footer with Page Number ---
                 def add_page_number(canvas, doc):
@@ -2013,52 +2286,21 @@ class JobReportsView(FormBase):
                 return None
 
     def _show_pdf_preview(self, pdf_path, report_text_widget):
-        """Displays PDF generation status in the preview area, with clickable file path and hand cursor."""
-        report_text_widget.delete(1.0, tk.END)
-
+        """Displays PDF generation status in the preview area."""
         if pdf_path and os.path.exists(pdf_path):
-            preview_text = f"Report successfully generated.\n\n"
-            preview_text += "You saved this report as:\n"
+            preview_text = f"PDF successfully generated and saved to:\n{pdf_path}\n\n"
+            preview_text += "Note: A full PDF preview is not available directly within Tkinter. You can open the file from the saved location.\n\n"
 
-            # Insert text before the path
+            # Add a basic file info
+            preview_text += f"File size: {os.path.getsize(pdf_path) / 1024:.1f} KB"
+
+            report_text_widget.delete(1.0, tk.END)
             report_text_widget.insert(tk.END, preview_text)
-
-            # Insert the clickable path
-            start_index = report_text_widget.index(tk.INSERT)
-            report_text_widget.insert(tk.END, pdf_path + "\n\n")
-            end_index = report_text_widget.index(tk.INSERT)
-
-            # Tag the path and make it look like a link
-            report_text_widget.tag_add("file_link", start_index, end_index)
-            report_text_widget.tag_config("file_link", foreground="blue", underline=True)
-
-            # Bind click event to open the PDF
-            def open_file(event, path=pdf_path):
-                try:
-                    webbrowser.open_new(path)  # opens with default app
-                except Exception as e:
-                    messagebox.showerror("Open File Error", f"Could not open file:\n{e}")
-
-            report_text_widget.tag_bind("file_link", "<Button-1>", open_file)
-
-            # 🔹 Change cursor on hover
-            report_text_widget.tag_bind("file_link", "<Enter>", lambda e: report_text_widget.config(cursor="hand2"))
-            report_text_widget.tag_bind("file_link", "<Leave>", lambda e: report_text_widget.config(cursor=""))
-
-            # Add note and file size
-            extra_info = (
-                "Note: Full PDF preview isn't available inside Application, "
-                "but you can open the file directly from the link above.\n\n"
-                f"File size: {os.path.getsize(pdf_path)/1024:.1f} KB"
-            )
-            report_text_widget.insert(tk.END, extra_info)
-
         else:
-            report_text_widget.insert(
-                tk.END,
-                "PDF generation failed. Please check the error logs or ensure ReportLab is installed and data is available."
-            )
- 
+            report_text_widget.delete(1.0, tk.END)
+            report_text_widget.insert(tk.END,
+                                      "PDF generation failed. Please check the error logs or ensure ReportLab is installed and data is available.")
+            
                         
 class PaymentReportsView(FormBase):
     """
@@ -2126,7 +2368,7 @@ class PaymentReportsView(FormBase):
         self.tree.pack(fill="both", expand=True, pady=10)
 
     def _export_to_pdf(self):
-        """Exports the payment report to a branded PDF file."""
+        """Exports the payment report to a PDF file."""
         if not _REPORTLAB_AVAILABLE:
             messagebox.showerror("Error", "ReportLab is not installed. Cannot export PDF.")
             return
@@ -2141,104 +2383,42 @@ class PaymentReportsView(FormBase):
             return
 
         try:
-            doc = SimpleDocTemplate(file_path, pagesize=letter,
-                                    leftMargin=50, rightMargin=50,
-                                    topMargin=50, bottomMargin=40)
+            doc = SimpleDocTemplate(file_path, pagesize=letter)
             styles = getSampleStyleSheet()
             elements = []
 
-            # --- Header with Logo and Company Name ---
-            logo_path = os.path.join(ICONS_DIR, "survey.png")
-            if os.path.exists(logo_path):
-                logo = RLImage(logo_path, width=1.0*inch, height=1.0*inch)
-            else:
-                logo = Paragraph("", styles['Normal'])
+            # Title
+            elements.append(Paragraph("Payment Sales Report", styles['Title']))
+            elements.append(Spacer(1, 12))
 
-            company_name = Paragraph("<b>NDIRITU MATHENGE & ASSOCIATES</b>", styles['Title'])
-            header_table = Table([
-                ["", [logo, company_name], ""]
-            ], colWidths=[2*inch, 3*inch, 2*inch])
-
-            header_table.setStyle(TableStyle([
-                ('ALIGN', (1, 0), (1, 0), 'CENTER'),
-                ('VALIGN', (1, 0), (1, 0), 'MIDDLE'),
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('SPAN', (1, 0), (1, 0)),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
-            ]))
-            elements.append(header_table)
-            elements.append(Spacer(1, 0.2 * inch))
-
-            # --- Report Title ---
-            report_title = Paragraph("PAYMENT SALES REPORT", styles['Heading2'])
-            elements.append(report_title)
-
-            # --- Period Info ---
+            # Period info
             period_text = f"Report Type: {self.report_type_var.get().capitalize()}"
             if self.report_type_var.get() == "custom":
                 period_text += f" (From {self.from_date_var.get()} To {self.to_date_var.get()})"
-            else:
-                period_text += f" ({self.from_date_var.get()})"
             elements.append(Paragraph(period_text, styles['Normal']))
-            elements.append(Spacer(1, 0.2 * inch))
+            elements.append(Spacer(1, 12))
 
-            # --- Table Data ---
+            # Table data
             data = [["Date", "Gross Sales", "Net Sales"]]
-            total_gross, total_net = 0.0, 0.0
-
             for item in self.tree.get_children():
                 row = self.tree.item(item)['values']
-                # row = [date, gross_str, net_str]
-                date = str(row[0])
-                gross = row[1].replace("KES", "").replace(",", "").strip()
-                net = row[2].replace("KES", "").replace(",", "").strip()
-                gross_val = float(gross) if gross else 0.0
-                net_val = float(net) if net else 0.0
-
-                total_gross += gross_val
-                total_net += net_val
-
                 data.append([
-                    date,
-                    f"KES {gross_val:,.2f}",
-                    f"KES {net_val:,.2f}"
+                    str(row[0]),
+                    str(row[1]),
+                    str(row[2])
                 ])
 
             table = Table(data, colWidths=[120, 150, 150])
             table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                 ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, -1), 9),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.whitesmoke, colors.beige]),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
             ]))
             elements.append(table)
-
-            # --- Totals Summary ---
-            elements.append(Spacer(1, 0.3 * inch))
-            summary_data = [
-                ["TOTAL GROSS SALES:", f"KES {total_gross:,.2f}"],
-                ["TOTAL NET SALES:", f"KES {total_net:,.2f}"]
-            ]
-            summary_table = Table(summary_data, colWidths=[2*inch, 2*inch])
-            summary_table.setStyle(TableStyle([
-                ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, -1), 10),
-                ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-            ]))
-            elements.append(summary_table)
-
-            # --- Footer ---
-            elements.append(Spacer(1, 0.3 * inch))
-            footer = Paragraph(
-                f"<font size='8' color='#888888'>Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</font>",
-                styles['Normal']
-            )
-            elements.append(footer)
 
             # Build PDF
             doc.build(elements)

@@ -6,10 +6,11 @@ import shutil
 from datetime import datetime, timedelta
 from PIL import Image, ImageTk
 import io
+import webbrowser
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.platypus import Image as RLImage, SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from tkcalendar import DateEntry # Import DateEntry for the date picker
@@ -45,7 +46,7 @@ if os.name == 'nt':
 
 
 try:
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.platypus import Image as RLImage, SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
     from reportlab.lib.styles import getSampleStyleSheet
     from reportlab.lib.pagesizes import letter
     from reportlab.lib import colors
@@ -59,6 +60,8 @@ except ImportError:
 # Define paths relative to the project root
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, 'data')
+ASSETS_DIR = os.path.join(BASE_DIR, 'assets')
+ICONS_DIR = os.path.join(ASSETS_DIR, 'icons')
 PROPERTY_IMAGES_DIR = os.path.join(DATA_DIR, 'images')
 TITLE_DEEDS_DIR = os.path.join(DATA_DIR, 'deeds')
 RECEIPTS_DIR = os.path.join(DATA_DIR, 'receipts')
@@ -1911,7 +1914,6 @@ class CashPaymentWindow(tk.Toplevel):
         """
         Generates a PDF receipt and prompts the user to save it using a file dialog.
         """
-        # Create a dictionary to hold all receipt data
         receipt_data = {
             'transaction_id': kwargs.get('transaction_id', 'N/A'),
             'transaction_date': kwargs.get('transaction_date', datetime.now().strftime("%Y-%m-%d")),
@@ -1921,21 +1923,20 @@ class CashPaymentWindow(tk.Toplevel):
             'prop_price': kwargs.get('prop_price', 0.0),
             'buyer_name': kwargs.get('buyer_name', 'N/A'),
             'buyer_contact': kwargs.get('buyer_contact', 'N/A'),
-            'brought_by': kwargs.get('brought_by', 'N/A'), # New: Get the 'brought by' data
+            'brought_by': kwargs.get('brought_by', 'N/A'),
             'payment_mode': kwargs.get('payment_mode', 'N/A'),
             'amount_paid': kwargs.get('amount_paid', 0.0),
             'discount': kwargs.get('discount', 0.0),
             'balance': kwargs.get('balance', 0.0)
         }
-        
-        # Calculate net price
         receipt_data['net_price'] = receipt_data['prop_price'] - receipt_data['discount']
 
-        # Get the path to save the file
+        # Suggest default filename
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        safe_prop_title_deed = "".join(c for c in receipt_data['prop_title_deed'] if c.isalnum() or c in (' ', '-', '_')).replace(' ', '_')
+        safe_prop_title_deed = "".join(c for c in receipt_data['prop_title_deed']
+                                    if c.isalnum() or c in (' ', '-', '_')).replace(' ', '_')
         default_filename = f"receipt_{timestamp}_{safe_prop_title_deed}.pdf"
-        
+
         filepath = filedialog.asksaveasfilename(
             defaultextension=".pdf",
             filetypes=[("PDF files", "*.pdf")],
@@ -1948,62 +1949,126 @@ class CashPaymentWindow(tk.Toplevel):
             return
 
         try:
-            doc = SimpleDocTemplate(filepath, pagesize=letter)
+            doc = SimpleDocTemplate(filepath, pagesize=letter,
+                                    leftMargin=50, rightMargin=50,
+                                    topMargin=50, bottomMargin=40)
             story = []
 
             styles = getSampleStyleSheet()
-            normal_style = styles['Normal']
-            h1_style = ParagraphStyle(
-                'Title',
-                parent=styles['h1'],
+            normal = styles['Normal']
+            normal.fontSize = 10
+            normal.leading = 14
+
+            header_style = ParagraphStyle("Header",
+                parent=styles['Heading1'],
                 alignment=TA_CENTER,
-                spaceAfter=12
+                fontSize=14,
+                spaceAfter=6
             )
-            h2_style = ParagraphStyle(
-                'SectionHeader',
-                parent=styles['h2'],
+            section_header = ParagraphStyle("SectionHeader",
+                parent=styles['Heading2'],
+                fontSize=11,
+                textColor=colors.darkblue,
                 spaceAfter=6,
                 spaceBefore=12
             )
 
-            story.append(Paragraph("<b><font size='16'>PROPERTY SALE RECEIPT</font></b>", h1_style))
-            story.append(Paragraph("<b><font size='14'>NEWCITY REAL ESTATE</font></b>", h2_style))
-            story.append(Spacer(1, 0.2 * inch))
+            # --- Logo + Company Name ---
+            logo_path = os.path.join(ICONS_DIR, "NEWCITY.png")
+            if os.path.exists(logo_path):
+                logo = RLImage(logo_path, width=1.0*inch, height=1.0*inch)
+            else:
+                logo = Paragraph("", normal)
 
-            story.append(Paragraph(f"<b>Date:</b> {receipt_data['transaction_date']}", normal_style))
-            story.append(Paragraph(f"<b>Transaction ID:</b> {receipt_data['transaction_id']}", normal_style))
-            story.append(Spacer(1, 0.2 * inch))
+            header_table = Table([
+                ["", [logo, Paragraph("<b>NEWCITY REAL ESTATE</b>", header_style)], ""]
+            ], colWidths=[2*inch, 3*inch, 2*inch])
+            header_table.setStyle(TableStyle([
+                ('ALIGN', (1,0), (1,0), 'CENTER'),
+                ('VALIGN', (1,0), (1,0), 'MIDDLE')
+            ]))
+            story.append(header_table)
+            story.append(Spacer(1, 0.2*inch))
 
-            story.append(Paragraph("<b>BUYER DETAILS:</b>", h2_style))
-            story.append(Paragraph(f"<b>Name:</b> {receipt_data['buyer_name']}", normal_style))
-            story.append(Paragraph(f"<b>Contact:</b> {receipt_data['buyer_contact']}", normal_style))
-            # New: Add 'brought by' line to the receipt
-            story.append(Paragraph(f"<b>Referred By:</b> {receipt_data['brought_by']}", normal_style))
-            story.append(Spacer(1, 0.2 * inch))
+            # --- Receipt Title ---
+            story.append(Paragraph("<b>PROPERTY SALE RECEIPT</b>", header_style))
+            story.append(Spacer(1, 0.2*inch))
 
-            story.append(Paragraph("<b>PROPERTY DETAILS:</b>", h2_style))
-            story.append(Paragraph(f"<b>Title Deed:</b> {receipt_data['prop_title_deed']}", normal_style))
-            story.append(Paragraph(f"<b>Location:</b> {receipt_data['prop_location']}", normal_style))
-            story.append(Paragraph(f"<b>Size:</b> {receipt_data['prop_size']}", normal_style))
-            story.append(Spacer(1, 0.2 * inch))
+            # --- Transaction Info ---
+            tx_table = Table([[
+                "Date:", receipt_data['transaction_date'],
+                "Transaction ID:", receipt_data['transaction_id']
+            ]], colWidths=[1*inch, 2*inch, 1.2*inch, 2*inch])
+            tx_table.setStyle(TableStyle([
+                ('FONTNAME', (0,0), (-1,-1), 'Helvetica'),
+                ('FONTSIZE', (0,0), (-1,-1), 10),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+            ]))
+            story.append(tx_table)
 
-            story.append(Paragraph("<b>FINANCIAL SUMMARY:</b>", h2_style))
-            story.append(Paragraph(f"<b>Original Price:</b> KES {receipt_data['prop_price']:,.2f}", normal_style))
-            story.append(Paragraph(f"<b>Discount:</b> KES {receipt_data['discount']:,.2f}", normal_style))
-            story.append(Paragraph(f"<b>Net Price:</b> KES {receipt_data['net_price']:,.2f}", normal_style))
-            story.append(Paragraph(f"<b>Amount Paid:</b> KES {receipt_data['amount_paid']:,.2f}", normal_style))
-            story.append(Paragraph(f"<b>Balance Due:</b> KES {receipt_data['balance']:,.2f}", normal_style))
-            story.append(Paragraph(f"<b>Payment Mode:</b> {receipt_data['payment_mode']}", normal_style))
-            story.append(Spacer(1, 0.4 * inch))
+            # --- Buyer Details ---
+            story.append(Paragraph("BUYER DETAILS", section_header))
+            buyer_table = Table([
+                ["Name:", receipt_data['buyer_name']],
+                ["Contact:", receipt_data['buyer_contact']],
+                ["Referred By:", receipt_data['brought_by']]
+            ], colWidths=[1.2*inch, 4*inch])
+            buyer_table.setStyle(TableStyle([
+                ('FONTNAME', (0,0), (-1,-1), 'Helvetica'),
+                ('FONTSIZE', (0,0), (-1,-1), 10),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+            ]))
+            story.append(buyer_table)
 
-            story.append(Paragraph("<center>Thank you for your business!</center>", normal_style))
-            story.append(Paragraph("<center><font size='8' color='#888888'>Generated on " + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "</font></center>", normal_style))
+            # --- Property Details ---
+            story.append(Paragraph("PROPERTY DETAILS", section_header))
+            prop_table = Table([
+                ["Title Deed:", receipt_data['prop_title_deed']],
+                ["Location:", receipt_data['prop_location']],
+                ["Size:", f"{receipt_data['prop_size']} Acres"]
+            ], colWidths=[1.2*inch, 4*inch])
+            prop_table.setStyle(TableStyle([
+                ('FONTNAME', (0,0), (-1,-1), 'Helvetica'),
+                ('FONTSIZE', (0,0), (-1,-1), 10),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+            ]))
+            story.append(prop_table)
+
+            # --- Financial Summary ---
+            story.append(Paragraph("FINANCIAL SUMMARY", section_header))
+            finance_table = Table([
+                ["Original Price:", f"KES {receipt_data['prop_price']:,.2f}"],
+                ["Discount:", f"KES {receipt_data['discount']:,.2f}"],
+                ["Net Price:", f"KES {receipt_data['net_price']:,.2f}"],
+                ["Amount Paid:", f"KES {receipt_data['amount_paid']:,.2f}"],
+                ["Balance Due:", f"KES {receipt_data['balance']:,.2f}"],
+                ["Payment Mode:", receipt_data['payment_mode']]
+            ], colWidths=[1.5*inch, 3.7*inch])
+            finance_table.setStyle(TableStyle([
+                ('FONTNAME', (0,0), (-1,-1), 'Helvetica'),
+                ('FONTSIZE', (0,0), (-1,-1), 10),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+                ('ALIGN', (1,0), (1,-1), 'RIGHT'),
+                ('BACKGROUND', (0,2), (-1,2), colors.whitesmoke),  # Net Price row
+                ('BACKGROUND', (0,4), (-1,4), colors.lightgrey),   # Balance Due row
+                ('FONTNAME', (0,2), (-1,4), 'Helvetica-Bold'),
+            ]))
+            story.append(finance_table)
+
+            # --- Footer ---
+            story.append(Spacer(1, 0.3*inch))
+            story.append(Paragraph("<b><i>Thank you for your business!</i></b>", normal))
+            story.append(Paragraph(
+                f"<font size='8' color='#888888'>Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</font>",
+                normal
+            ))
 
             doc.build(story)
             messagebox.showinfo("Receipt Generated", f"Receipt saved successfully to:\n{filepath}")
 
         except Exception as e:
-            messagebox.showerror("PDF Generation Error", f"An error occurred while generating or saving the receipt PDF: {e}")
+            messagebox.showerror("PDF Generation Error",
+                f"An error occurred while generating or saving the receipt PDF: {e}")
             
     def cancel(self):
         self.destroy()
@@ -2321,7 +2386,6 @@ class InstallmentPaymentWindow(tk.Toplevel):
         """
         Generates a PDF receipt and prompts the user to save it using a file dialog.
         """
-        # Create a dictionary to hold all receipt data
         receipt_data = {
             'transaction_id': kwargs.get('transaction_id', 'N/A'),
             'transaction_date': kwargs.get('transaction_date', datetime.now().strftime("%Y-%m-%d")),
@@ -2331,21 +2395,18 @@ class InstallmentPaymentWindow(tk.Toplevel):
             'prop_price': kwargs.get('prop_price', 0.0),
             'buyer_name': kwargs.get('buyer_name', 'N/A'),
             'buyer_contact': kwargs.get('buyer_contact', 'N/A'),
-            'brought_by': kwargs.get('brought_by', 'N/A'), # New: Get the 'brought by' data
+            'brought_by': kwargs.get('brought_by', 'N/A'),
             'payment_mode': kwargs.get('payment_mode', 'N/A'),
             'amount_paid': kwargs.get('amount_paid', 0.0),
             'discount': kwargs.get('discount', 0.0),
             'balance': kwargs.get('balance', 0.0)
         }
-        
-        # Calculate net price
         receipt_data['net_price'] = receipt_data['prop_price'] - receipt_data['discount']
 
-        # Get the path to save the file
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         safe_prop_title_deed = "".join(c for c in receipt_data['prop_title_deed'] if c.isalnum() or c in (' ', '-', '_')).replace(' ', '_')
         default_filename = f"receipt_{timestamp}_{safe_prop_title_deed}.pdf"
-        
+
         filepath = filedialog.asksaveasfilename(
             defaultextension=".pdf",
             filetypes=[("PDF files", "*.pdf")],
@@ -2358,56 +2419,119 @@ class InstallmentPaymentWindow(tk.Toplevel):
             return
 
         try:
-            doc = SimpleDocTemplate(filepath, pagesize=letter)
+            doc = SimpleDocTemplate(filepath, pagesize=letter,
+                                    leftMargin=50, rightMargin=50,
+                                    topMargin=50, bottomMargin=40)
             story = []
 
             styles = getSampleStyleSheet()
-            normal_style = styles['Normal']
-            h1_style = ParagraphStyle(
-                'Title',
-                parent=styles['h1'],
+            normal = styles['Normal']
+            normal.fontSize = 10
+            normal.leading = 14
+
+            header_style = ParagraphStyle("Header",
+                parent=styles['Heading1'],
                 alignment=TA_CENTER,
-                spaceAfter=12
+                fontSize=14,
+                spaceAfter=6
             )
-            h2_style = ParagraphStyle(
-                'SectionHeader',
-                parent=styles['h2'],
+            section_header = ParagraphStyle("SectionHeader",
+                parent=styles['Heading2'],
+                fontSize=11,
+                textColor=colors.darkblue,
                 spaceAfter=6,
                 spaceBefore=12
             )
 
-            story.append(Paragraph("<b><font size='16'>PROPERTY SALE RECEIPT</font></b>", h1_style))
-            story.append(Paragraph("<b><font size='14'>NEWCITY REAL ESTATE</font></b>", h2_style))
-            story.append(Spacer(1, 0.2 * inch))
+            # --- Logo + Company Name ---
+            logo_path = os.path.join(ICONS_DIR, "NEWCITY.png")
+            if os.path.exists(logo_path):
+                logo = RLImage(logo_path, width=1.0*inch, height=1.0*inch)
+            else:
+                logo = Paragraph("", normal)
 
-            story.append(Paragraph(f"<b>Date:</b> {receipt_data['transaction_date']}", normal_style))
-            story.append(Paragraph(f"<b>Transaction ID:</b> {receipt_data['transaction_id']}", normal_style))
-            story.append(Spacer(1, 0.2 * inch))
+            header_table = Table([
+                ["", [logo, Paragraph("<b>NEWCITY REAL ESTATE</b>", header_style)], ""]
+            ], colWidths=[2*inch, 3*inch, 2*inch])
+            header_table.setStyle(TableStyle([
+                ('ALIGN', (1,0), (1,0), 'CENTER'),
+                ('VALIGN', (1,0), (1,0), 'MIDDLE')
+            ]))
+            story.append(header_table)
+            story.append(Spacer(1, 0.2*inch))
 
-            story.append(Paragraph("<b>BUYER DETAILS:</b>", h2_style))
-            story.append(Paragraph(f"<b>Name:</b> {receipt_data['buyer_name']}", normal_style))
-            story.append(Paragraph(f"<b>Contact:</b> {receipt_data['buyer_contact']}", normal_style))
-            # New: Add 'brought by' line to the receipt
-            story.append(Paragraph(f"<b>Referred By:</b> {receipt_data['brought_by']}", normal_style))
-            story.append(Spacer(1, 0.2 * inch))
+            # --- Receipt Title ---
+            story.append(Paragraph("<b>PROPERTY SALE RECEIPT</b>", header_style))
+            story.append(Spacer(1, 0.2*inch))
 
-            story.append(Paragraph("<b>PROPERTY DETAILS:</b>", h2_style))
-            story.append(Paragraph(f"<b>Title Deed:</b> {receipt_data['prop_title_deed']}", normal_style))
-            story.append(Paragraph(f"<b>Location:</b> {receipt_data['prop_location']}", normal_style))
-            story.append(Paragraph(f"<b>Size:</b> {receipt_data['prop_size']},Acres", normal_style))
-            story.append(Spacer(1, 0.2 * inch))
+            # --- Transaction Info ---
+            tx_table = Table([[
+                "Date:", receipt_data['transaction_date'],
+                "Transaction ID:", receipt_data['transaction_id']
+            ]], colWidths=[1*inch, 2*inch, 1.2*inch, 2*inch])
+            tx_table.setStyle(TableStyle([
+                ('FONTNAME', (0,0), (-1,-1), 'Helvetica'),
+                ('FONTSIZE', (0,0), (-1,-1), 10),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+            ]))
+            story.append(tx_table)
 
-            story.append(Paragraph("<b>FINANCIAL SUMMARY:</b>", h2_style))
-            story.append(Paragraph(f"<b>Original Price:</b> KES {receipt_data['prop_price']:,.2f}", normal_style))
-            story.append(Paragraph(f"<b>Discount:</b> KES {receipt_data['discount']:,.2f}", normal_style))
-            story.append(Paragraph(f"<b>Net Price:</b> KES {receipt_data['net_price']:,.2f}", normal_style))
-            story.append(Paragraph(f"<b>Amount Paid:</b> KES {receipt_data['amount_paid']:,.2f}", normal_style))
-            story.append(Paragraph(f"<b>Balance Due:</b> KES {receipt_data['balance']:,.2f}", normal_style))
-            story.append(Paragraph(f"<b>Payment Mode:</b> {receipt_data['payment_mode']}", normal_style))
-            story.append(Spacer(1, 0.4 * inch))
+            # --- Buyer Details ---
+            story.append(Paragraph("BUYER DETAILS", section_header))
+            buyer_table = Table([
+                ["Name:", receipt_data['buyer_name']],
+                ["Contact:", receipt_data['buyer_contact']],
+                ["Referred By:", receipt_data['brought_by']]
+            ], colWidths=[1.2*inch, 4*inch])
+            buyer_table.setStyle(TableStyle([
+                ('FONTNAME', (0,0), (-1,-1), 'Helvetica'),
+                ('FONTSIZE', (0,0), (-1,-1), 10),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+            ]))
+            story.append(buyer_table)
 
-            story.append(Paragraph("<center>Thank you for your business!</center>", normal_style))
-            story.append(Paragraph("<center><font size='8' color='#888888'>Generated on " + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "</font></center>", normal_style))
+            # --- Property Details ---
+            story.append(Paragraph("PROPERTY DETAILS", section_header))
+            prop_table = Table([
+                ["Title Deed:", receipt_data['prop_title_deed']],
+                ["Location:", receipt_data['prop_location']],
+                ["Size:", f"{receipt_data['prop_size']} Acres"]
+            ], colWidths=[1.2*inch, 4*inch])
+            prop_table.setStyle(TableStyle([
+                ('FONTNAME', (0,0), (-1,-1), 'Helvetica'),
+                ('FONTSIZE', (0,0), (-1,-1), 10),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+            ]))
+            story.append(prop_table)
+
+            # --- Financial Summary ---
+            story.append(Paragraph("FINANCIAL SUMMARY", section_header))
+            finance_table = Table([
+                ["Original Price:", f"KES {receipt_data['prop_price']:,.2f}"],
+                ["Discount:", f"KES {receipt_data['discount']:,.2f}"],
+                ["Net Price:", f"KES {receipt_data['net_price']:,.2f}"],
+                ["Amount Paid:", f"KES {receipt_data['amount_paid']:,.2f}"],
+                ["Balance Due:", f"KES {receipt_data['balance']:,.2f}"],
+                ["Payment Mode:", receipt_data['payment_mode']]
+            ], colWidths=[1.5*inch, 3.7*inch])
+            finance_table.setStyle(TableStyle([
+                ('FONTNAME', (0,0), (-1,-1), 'Helvetica'),
+                ('FONTSIZE', (0,0), (-1,-1), 10),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+                ('ALIGN', (1,0), (1,-1), 'RIGHT'),
+                ('BACKGROUND', (0,2), (-1,2), colors.whitesmoke),  # Net Price row
+                ('BACKGROUND', (0,4), (-1,4), colors.lightgrey),   # Balance Due row
+                ('FONTNAME', (0,2), (-1,4), 'Helvetica-Bold'),
+            ]))
+            story.append(finance_table)
+
+            # --- Footer ---
+            story.append(Spacer(1, 0.3*inch))
+            story.append(Paragraph("<b><i>Thank you for your business!</i></b>", normal))
+            story.append(Paragraph(
+                f"<font size='8' color='#888888'>Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</font>",
+                normal
+            ))
 
             doc.build(story)
             messagebox.showinfo("Receipt Generated", f"Receipt saved successfully to:\n{filepath}")
@@ -5793,40 +5917,48 @@ class SalesReportsForm(tk.Toplevel):
             return False
 
     def _generate_pdf_report(self, report_name, content, report_type, start_date, end_date):
-        """Generates PDF report using ReportLab and returns the file path."""
+        """Generates PDF report using ReportLab and returns the chosen file path."""
         if not _REPORTLAB_AVAILABLE:
-            return None # Error message already shown by calling function
+            return None  # Error message already shown
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         period_suffix = ""
-        
         if report_type == "daily":
             period_suffix = f"_{start_date}"
         elif report_type == "monthly":
             period_suffix = f"_{datetime.strptime(start_date, '%Y-%m-%d').strftime('%Y-%m')}"
         elif report_type == "custom":
             period_suffix = f"_{start_date}_to_{end_date}"
-        
-        file_name = f"{report_name.replace(' ', '_')}{period_suffix}_{timestamp}.pdf"
-        file_path = os.path.join(REPORTS_DIR, file_name)
-        
+
+        default_filename = f"{report_name.replace(' ', '_')}{period_suffix}_{timestamp}.pdf"
+
+        # Ask user for save location
+        file_path = filedialog.asksaveasfilename(
+            parent=self,
+            defaultextension=".pdf",
+            initialfile=default_filename,
+            filetypes=[("PDF files", "*.pdf")],
+            title="Save Report As"
+        )
+        if not file_path:  # Cancelled
+            return None
+
         try:
             doc = SimpleDocTemplate(file_path, pagesize=letter)
             styles = getSampleStyleSheet()
             story = []
 
             # --- Business Header with Logo ---
-            logo_path = os.path.join("assets", "NEWCITY.png")  # Adjust path as needed
+            logo_path = os.path.join(ICONS_DIR, "NEWCITY.png")
             if os.path.exists(logo_path):
-                logo = Image(logo_path, 1 * inch, 1 * inch)
+                logo = RLImage(logo_path)
+                logo._restrictSize(1.2 * inch, 1.2 * inch)
             else:
-                logo = Paragraph("", styles['Normal'])  # Empty if no logo found
-            
-            # Business Header with Timestamp
+                logo = Paragraph("", styles['Normal'])  # Fallback: empty
+
             header_table = Table([
-                [logo,"NEW CITY REAL ESTATE", datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
+                [logo, "NEW CITY REAL ESTATE", datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
             ], colWidths=[4*inch, 2*inch])
-            
             header_table.setStyle(TableStyle([
                 ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'),
                 ('FONTSIZE', (0,0), (0,-1), 14),
@@ -5835,96 +5967,98 @@ class SalesReportsForm(tk.Toplevel):
                 ('BOTTOMPADDING', (0,0), (-1,-1), 12),
             ]))
             story.append(header_table)
-            
+
             # Report Title
             story.append(Paragraph(f"<b>{report_name.upper()}</b>", styles['Heading2']))
             story.append(Paragraph(f"Period: {start_date} to {end_date}", styles['Normal']))
             story.append(Spacer(1, 12))
+
             
+            # ----------------------------
+            # SALES REPORT
+            # ----------------------------
             if "SALES REPORT" in report_name.upper():
-                # Accounting-style transaction table
-                table_data = [
-                    ["Item", "Title Deed", "Qty", "Actual Price ", "Amount Paid", "Balance"]
-                ]
-                
-                gross_sales = 0.0
-                net_sales = 0.0
-                
+                table_data = [["Item", "Title Deed", "Actual Price", "Amount Paid", "Balance"]]
+                gross_sales, net_sales = 0.0, 0.0
+
                 for item in content.get('data', []):
-                    # Ensure numeric values are numbers before adding to sums
-                    actual_price = float(item.get('actual_price', 0)) if item.get('actual_price') is not None else 0.0
-                    amount_paid = float(item.get('amount_paid', 0)) if item.get('amount_paid') is not None else 0.0
-                    balance = float(item.get('balance', 0)) if item.get('balance') is not None else 0.0
+                    actual_price = float(item.get('actual_price') or 0)
+                    amount_paid = float(item.get('amount_paid') or 0)
+                    balance = float(item.get('balance') or 0)
 
                     table_data.append([
                         item.get('property_type', 'N/A'),
-                        item.get('title_deed', 'N/A'),
-                        "1", # Quantity is always 1 for a property
-                        f" {actual_price:,.2f}",
-                        f" {amount_paid:,.2f}",
-                        f" {balance:,.2f}"
+                        item.get('title_deed_number') or item.get('title_deed', 'N/A'),
+                        f"KES {actual_price:,.2f}",
+                        f"KES {amount_paid:,.2f}",
+                        f"KES {balance:,.2f}"
                     ])
                     gross_sales += actual_price
                     net_sales += amount_paid
-                    total_deficit = gross_sales - net_sales
 
-                
-                # Create table
-                t = Table(table_data, colWidths=[1.2*inch, 1.5*inch, 0.5*inch, 1*inch, 1*inch, 1*inch])
+                total_deficit = gross_sales - net_sales
+
+                t = Table(table_data, colWidths=[1.2*inch, 1.5*inch, 1*inch, 1*inch, 1*inch])
                 t.setStyle(TableStyle([
                     ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                    ('FONTNAME', (0,1), (-1,-1), 'Helvetica'), # Data rows
+                    ('FONTNAME', (0,1), (-1,-1), 'Helvetica'),
                     ('FONTSIZE', (0,0), (-1,-1), 9),
-                    ('ALIGN', (2,0), (-1,-1), 'RIGHT'), # Align Qty, Prices, Balance to right
-                    ('ALIGN', (0,0), (1,-1), 'LEFT'), # Align Item, Title Deed to left
+                    ('ALIGN', (2,0), (-1,-1), 'RIGHT'),
+                    ('ALIGN', (0,0), (1,-1), 'LEFT'),
                     ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-                    ('GRID', (0,0), (-1,-3), 0.5, colors.lightgrey), # Grid for data rows only
-                    ('LINEBELOW', (0,0), (-1,0), 1, colors.black), # Line below header
-                    ('LINEABOVE', (0,-2), (-1,-2), 1, colors.black), # Line above separator
-                    ('LINEBELOW', (0,-2), (-1,-2), 1, colors.black), # Line below separator
-                    ('LINEBELOW', (0,-1), (-1,-1), 2, colors.black), # Thick line below totals
-                    ('BACKGROUND', (0,0), (-1,0), colors.lightgrey), # Header background
-                    ('BACKGROUND', (0,-1), (-1,-1), colors.lightgrey), # Totals row background
-                    ('SPAN', (0,-1), (1,-1)), # Span "TOTALS" across Item and Title Deed
+                    ('GRID', (0,0), (-1,-3), 0.5, colors.lightgrey),
+                    ('LINEBELOW', (0,0), (-1,0), 1, colors.black),
+                    ('LINEABOVE', (0,-2), (-1,-2), 1, colors.black),
+                    ('LINEBELOW', (0,-2), (-1,-2), 1, colors.black),
+                    ('LINEBELOW', (0,-1), (-1,-1), 2, colors.black),
+                    ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
+                    ('BACKGROUND', (0,-1), (-1,-1), colors.lightgrey),
+                    ('SPAN', (0,-1), (1,-1)),
                 ]))
                 story.append(t)
-                
-                # Accounting summary below the table (can be removed if table totals are sufficient)
+
                 story.append(Spacer(1, 12))
                 summary_data = [
                     ["GROSS SALES:", f"KES {gross_sales:,.2f}"],
                     ["NET SALES:", f"KES {net_sales:,.2f}"],
                     ["PENDING:", f"KES {total_deficit:,.2f}"]
                 ]
-                
                 summary_table = Table(summary_data, colWidths=[1.5*inch, 1*inch])
                 summary_table.setStyle(TableStyle([
-                    ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'), # Bold for summary labels
-                    ('FONTNAME', (1,0), (1,-1), 'Helvetica'), # Numbers not bold
+                    ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'),
+                    ('FONTNAME', (1,0), (1,-1), 'Helvetica'),
                     ('FONTSIZE', (0,0), (-1,-1), 10),
                     ('ALIGN', (1,0), (1,-1), 'RIGHT'),
                     ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-                    ('BOTTOMPADDING', (0,0), (-1,-1), 6),
                 ]))
                 story.append(summary_table)
-                
+
+            # ----------------------------
+            # SOLD PROPERTIES
+            # ----------------------------
             elif "SOLD PROPERTIES" in report_name.upper():
                 if content.get('data'):
                     headers = ["Date", "Title Deed", "Location", "Size(Acres)", "Client", "Paid", "Balance"]
                     table_data = [headers]
-                    
                     for prop in content['data']:
-                        date_part = prop['date_sold'].split(' ')[0] if ' ' in prop['date_sold'] else prop['date_sold']
+                        # Handle datetime or string date
+                        date_value = prop.get('date_sold')
+                        if isinstance(date_value, datetime):
+                            date_part = date_value.strftime("%Y-%m-%d")
+                        elif isinstance(date_value, str):
+                            date_part = date_value.split(' ')[0]
+                        else:
+                            date_part = "N/A"
+
                         table_data.append([
                             date_part,
-                            prop['title_deed_number'],
-                            prop['location'],
-                            f"{prop['size']:.2f}",
-                            prop['client_name'],
-                            f"KES {prop['total_amount_paid']:,.2f}",
-                            f"KES {prop['balance']:,.2f}"
+                            prop.get('title_deed_number') or prop.get('title_deed', 'N/A'),
+                            prop.get('location', 'N/A'),
+                            f"{prop.get('size', 0):.2f}",
+                            prop.get('client_name', 'N/A'),
+                            f"KES {prop.get('total_amount_paid', 0):,.2f}",
+                            f"KES {prop.get('balance', 0):,.2f}"
                         ])
-                    
                     t = Table(table_data, colWidths=[0.8*inch, 1.2*inch, 1.2*inch, 0.7*inch, 1.2*inch, 1*inch, 1*inch])
                     t.setStyle(TableStyle([
                         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
@@ -5937,24 +6071,33 @@ class SalesReportsForm(tk.Toplevel):
                     story.append(t)
                 else:
                     story.append(Paragraph("No properties sold in this period", styles['Normal']))
-                    
+
+            # ----------------------------
+            # PENDING INSTALMENTS
+            # ----------------------------
             elif "PENDING INSTALMENTS" in report_name.upper():
                 if content.get('data'):
-                    headers = ["Date", "Client", "Title Deed", "Original Price", "Paid", "Balance Due"] # Updated header
+                    headers = ["Date", "Client", "Title Deed", "Original Price", "Paid", "Balance Due"]
                     table_data = [headers]
-                    
                     for inst in content['data']:
-                        date_part = inst['transaction_date'].split(' ')[0] if ' ' in inst['transaction_date'] else inst['transaction_date']
+                        # Handle datetime or string date
+                        date_value = inst.get('transaction_date')
+                        if isinstance(date_value, datetime):
+                            date_part = date_value.strftime("%Y-%m-%d")
+                        elif isinstance(date_value, str):
+                            date_part = date_value.split(' ')[0]
+                        else:
+                            date_part = "N/A"
+
                         table_data.append([
                             date_part,
-                            inst['client_name'],
-                            inst['title_deed_number'],
-                            f"KES {inst['original_price']:,.2f}",
-                            f"KES {inst['total_amount_paid']:,.2f}",
-                            f"KES {inst['balance']:,.2f}"
+                            inst.get('client_name', 'N/A'),
+                            inst.get('title_deed_number') or inst.get('title_deed', 'N/A'),
+                            f"KES {inst.get('original_price', 0):,.2f}",
+                            f"KES {inst.get('total_amount_paid', 0):,.2f}",
+                            f"KES {inst.get('balance', 0):,.2f}"
                         ])
-                    
-                    t = Table(table_data, colWidths=[0.8*inch, 1.2*inch, 1.2*inch, 1*inch, 1*inch, 1*inch]) # Adjusted colWidths
+                    t = Table(table_data, colWidths=[0.8*inch, 1.2*inch, 1.2*inch, 1*inch, 1*inch, 1*inch])
                     t.setStyle(TableStyle([
                         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
                         ('FONTNAME', (0,1), (-1,-1), 'Helvetica'),
@@ -5966,31 +6109,62 @@ class SalesReportsForm(tk.Toplevel):
                     story.append(t)
                 else:
                     story.append(Paragraph("No pending instalments found", styles['Normal']))
-            
+
             # Build the PDF
             doc.build(story)
             return file_path
-            
+
         except Exception as e:
             print(f"PDF generation failed: {e}")
             return None
-
+        
     def _show_pdf_preview(self, pdf_path, report_text_widget):
-        """Displays PDF generation status in the preview area."""
+        """Displays PDF generation status in the preview area, with clickable file path and hand cursor."""
+        report_text_widget.delete(1.0, tk.END)
+
         if pdf_path and os.path.exists(pdf_path):
-            preview_text = f"PDF successfully generated and saved to:\n{pdf_path}\n\n"
-            preview_text += "Note: A full PDF preview is not available directly within Tkinter. You can open the file from the saved location.\n\n"
-            
-            # Add a basic file info
-            preview_text += f"File size: {os.path.getsize(pdf_path)/1024:.1f} KB"
-            
-            report_text_widget.delete(1.0, tk.END)
+            preview_text = f"Report successfully generated.\n\n"
+            preview_text += "You saved this report as:\n"
+
+            # Insert text before the path
             report_text_widget.insert(tk.END, preview_text)
+
+            # Insert the clickable path
+            start_index = report_text_widget.index(tk.INSERT)
+            report_text_widget.insert(tk.END, pdf_path + "\n\n")
+            end_index = report_text_widget.index(tk.INSERT)
+
+            # Tag the path and make it look like a link
+            report_text_widget.tag_add("file_link", start_index, end_index)
+            report_text_widget.tag_config("file_link", foreground="blue", underline=True)
+
+            # Bind click event to open the PDF
+            def open_file(event, path=pdf_path):
+                try:
+                    webbrowser.open_new(path)  # opens with default app
+                except Exception as e:
+                    messagebox.showerror("Open File Error", f"Could not open file:\n{e}")
+
+            report_text_widget.tag_bind("file_link", "<Button-1>", open_file)
+
+            # 🔹 Change cursor on hover
+            report_text_widget.tag_bind("file_link", "<Enter>", lambda e: report_text_widget.config(cursor="hand2"))
+            report_text_widget.tag_bind("file_link", "<Leave>", lambda e: report_text_widget.config(cursor=""))
+
+            # Add note and file size
+            extra_info = (
+                "Note: Full PDF preview isn't available inside Application, "
+                "but you can open the file directly from the link above.\n\n"
+                f"File size: {os.path.getsize(pdf_path)/1024:.1f} KB"
+            )
+            report_text_widget.insert(tk.END, extra_info)
+
         else:
-            report_text_widget.delete(1.0, tk.END)
-            report_text_widget.insert(tk.END, "PDF generation failed. Please check the error logs or ensure ReportLab is installed and data is available.")
-
-
+            report_text_widget.insert(
+                tk.END,
+                "PDF generation failed. Please check the error logs or ensure ReportLab is installed and data is available."
+            )
+    
     # --- Report Generation Functions ---
 
     def _generate_sales_report(self, report_type):
@@ -6038,189 +6212,7 @@ class SalesReportsForm(tk.Toplevel):
             report_text_widget.insert("1.0", f"Error: {e}")
 
 
-    def _generate_pdf_report(self, report_name, content, report_type, start_date, end_date):
-        """Generates PDF report using ReportLab and returns the file path."""
-        if not _REPORTLAB_AVAILABLE:
-            return None # Error message already shown by calling function
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        period_suffix = ""
-        
-        if report_type == "daily":
-            period_suffix = f"_{start_date}"
-        elif report_type == "monthly":
-            period_suffix = f"_{datetime.strptime(start_date, '%Y-%m-%d').strftime('%Y-%m')}"
-        elif report_type == "custom":
-            period_suffix = f"_{start_date}_to_{end_date}"
-        
-        file_name = f"{report_name.replace(' ', '_')}{period_suffix}_{timestamp}.pdf"
-        file_path = os.path.join(REPORTS_DIR, file_name)
-        
-        try:
-            doc = SimpleDocTemplate(file_path, pagesize=letter)
-            styles = getSampleStyleSheet()
-            story = []
-
-            # --- Business Header with Logo ---
-            logo_path = os.path.join("assets", "NEWCITY.png")  # Adjust path as needed
-            if os.path.exists(logo_path):
-                logo = Image(logo_path, 1 * inch, 1 * inch)
-            else:
-                logo = Paragraph("", styles['Normal'])  # Empty if no logo found
-            
-            # Business Header with Timestamp
-            header_table = Table([
-                [logo,"NEW CITY REAL ESTATE", datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
-            ], colWidths=[4*inch, 2*inch])
-            
-            header_table.setStyle(TableStyle([
-                ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'),
-                ('FONTSIZE', (0,0), (0,-1), 14),
-                ('FONTSIZE', (1,0), (1,-1), 10),
-                ('ALIGN', (1,0), (1,-1), 'RIGHT'),
-                ('BOTTOMPADDING', (0,0), (-1,-1), 12),
-            ]))
-            story.append(header_table)
-            
-            # Report Title
-            story.append(Paragraph(f"<b>{report_name.upper()}</b>", styles['Heading2']))
-            story.append(Paragraph(f"Period: {start_date} to {end_date}", styles['Normal']))
-            story.append(Spacer(1, 12))
-            
-            if "SALES REPORT" in report_name.upper():
-                table_data = [
-                    ["Item", "Title Deed", "Qty", "Actual Price ", "Amount Paid", "Balance"]
-                ]
-                
-                gross_sales = 0.0
-                net_sales = 0.0
-                total_deficit = 0.0 # Initialize here to prevent UnboundLocalError
-                
-                for item in content.get('data', []):
-                    # Ensure numeric values are numbers before adding to sums
-                    actual_price = float(item.get('actual_price', 0)) if item.get('actual_price') is not None else 0.0
-                    amount_paid = float(item.get('amount_paid', 0)) if item.get('amount_paid') is not None else 0.0
-                    balance = float(item.get('balance', 0)) if item.get('balance') is not None else 0.0
-
-                    table_data.append([
-                        item.get('property_type', 'N/A'),
-                        item.get('title_deed', 'N/A'),
-                        "1", # Quantity is always 1 for a property
-                        f" {actual_price:,.2f}",
-                        f" {amount_paid:,.2f}",
-                        f" {balance:,.2f}"
-                    ])
-                    gross_sales += actual_price
-                    net_sales += amount_paid
-                
-                total_deficit = gross_sales - net_sales # Calculate after the loop
-                
-                # Create table
-                t = Table(table_data, colWidths=[1.2*inch, 1.5*inch, 0.5*inch, 1*inch, 1*inch, 1*inch])
-                t.setStyle(TableStyle([
-                    ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                    ('FONTNAME', (0,1), (-1,-1), 'Helvetica'), # Data rows
-                    ('FONTSIZE', (0,0), (-1,-1), 9),
-                    ('ALIGN', (2,0), (-1,-1), 'RIGHT'), # Align Qty, Prices, Balance to right
-                    ('ALIGN', (0,0), (1,-1), 'LEFT'), # Align Item, Title Deed to left
-                    ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-                    ('GRID', (0,0), (-1,-3), 0.5, colors.lightgrey), # Grid for data rows only
-                    ('LINEBELOW', (0,0), (-1,0), 1, colors.black), # Line below header
-                    ('LINEABOVE', (0,-2), (-1,-2), 1, colors.black), # Line above separator
-                    ('LINEBELOW', (0,-2), (-1,-2), 1, colors.black), # Line below separator
-                    ('LINEBELOW', (0,-1), (-1,-1), 2, colors.black), # Thick line below totals
-                    ('BACKGROUND', (0,0), (-1,0), colors.lightgrey), # Header background
-                    ('BACKGROUND', (0,-1), (-1,-1), colors.lightgrey), # Totals row background
-                    ('SPAN', (0,-1), (1,-1)), # Span "TOTALS" across Item and Title Deed
-                ]))
-                story.append(t)
-                
-                # Accounting summary below the table (can be removed if table totals are sufficient)
-                story.append(Spacer(1, 12))
-                summary_data = [
-                    ["GROSS SALES:", f"KES {gross_sales:,.2f}"],
-                    ["NET SALES:", f"KES {net_sales:,.2f}"],
-                    ["PENDING:", f"KES {total_deficit:,.2f}"]
-                ]
-                
-                summary_table = Table(summary_data, colWidths=[1.5*inch, 1*inch])
-                summary_table.setStyle(TableStyle([
-                    ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'), # Bold for summary labels
-                    ('FONTNAME', (1,0), (1,-1), 'Helvetica'), # Numbers not bold
-                    ('FONTSIZE', (0,0), (-1,-1), 10),
-                    ('ALIGN', (1,0), (1,-1), 'RIGHT'),
-                    ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-                    ('BOTTOMPADDING', (0,0), (-1,-1), 6),
-                ]))
-                story.append(summary_table)
-                
-            elif "SOLD PROPERTIES" in report_name.upper():
-                if content.get('data'):
-                    headers = ["Date", "Title Deed", "Location", "Size(Acres)", "Client", "Paid", "Balance"]
-                    table_data = [headers]
-                    
-                    for prop in content['data']:
-                        date_part = prop['date_sold'].split(' ')[0] if ' ' in prop['date_sold'] else prop['date_sold']
-                        table_data.append([
-                            date_part,
-                            prop['title_deed_number'],
-                            prop['location'],
-                            f"{prop['size']:.2f}",
-                            prop['client_name'],
-                            f"KES {prop['total_amount_paid']:,.2f}",
-                            f"KES {prop['balance']:,.2f}"
-                        ])
-                    
-                    t = Table(table_data, colWidths=[0.8*inch, 1.2*inch, 1.2*inch, 0.7*inch, 1.2*inch, 1*inch, 1*inch])
-                    t.setStyle(TableStyle([
-                        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                        ('FONTNAME', (0,1), (-1,-1), 'Helvetica'),
-                        ('FONTSIZE', (0,0), (-1,-1), 8),
-                        ('ALIGN', (0,0), (-1,-1), 'LEFT'),
-                        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-                        ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
-                    ]))
-                    story.append(t)
-                else:
-                    story.append(Paragraph("No properties sold in this period", styles['Normal']))
-                    
-            elif "PENDING INSTALMENTS" in report_name.upper():
-                if content.get('data'):
-                    headers = ["Date", "Client", "Title Deed", "Original Price", "Paid", "Balance Due"] # Updated header
-                    table_data = [headers]
-                    
-                    for inst in content['data']:
-                        date_part = inst['transaction_date'].split(' ')[0] if ' ' in inst['transaction_date'] else inst['transaction_date']
-                        table_data.append([
-                            date_part,
-                            inst['client_name'],
-                            inst['title_deed_number'],
-                            f"KES {inst['original_price']:,.2f}",
-                            f"KES {inst['total_amount_paid']:,.2f}",
-                            f"KES {inst['balance']:,.2f}"
-                        ])
-                    
-                    t = Table(table_data, colWidths=[0.8*inch, 1.2*inch, 1.2*inch, 1*inch, 1*inch, 1*inch]) # Adjusted colWidths
-                    t.setStyle(TableStyle([
-                        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                        ('FONTNAME', (0,1), (-1,-1), 'Helvetica'),
-                        ('FONTSIZE', (0,0), (-1,-1), 8),
-                        ('ALIGN', (0,0), (-1,-1), 'LEFT'),
-                        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-                        ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
-                    ]))
-                    story.append(t)
-                else:
-                    story.append(Paragraph("No pending instalments found", styles['Normal']))
-            
-            # Build the PDF
-            doc.build(story)
-            return file_path
-            
-        except Exception as e:
-            print(f"PDF generation failed: {e}")
-            return None
-
+    #removed
 
     def _generate_sold_properties_report(self, report_type):
         """Generates sold properties report as PDF and shows preview."""

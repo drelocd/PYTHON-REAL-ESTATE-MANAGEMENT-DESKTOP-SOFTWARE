@@ -12,7 +12,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from tkcalendar import DateEntry
-import sqlite3
+from utils.tooltips import ToolTip
 
 # Assuming database.py is in the same directory or accessible via PYTHONPATH
 # The DatabaseManager class is now fully functional
@@ -310,7 +310,9 @@ class DispatchJobsView(FormBase):
         self.update_icon = None
         self.apply_icon = None
         self.clear_icon = None
+
         
+
         self._create_widgets()
         self.populate_completed_jobs_table()
         self.populate_dispatch_records_table()
@@ -344,16 +346,17 @@ class DispatchJobsView(FormBase):
         self.search_entry = ttk.Entry(search_frame)
         self.search_entry.pack(side="left", fill="x", expand=True)
         self.search_entry.bind("<KeyRelease>", self._on_search_change)
+        ToolTip(self.search_entry, "Search Jobs Using Title Name, File Name, Client Name, Title Number or Task Type .")
 
         table_frame = ttk.Frame(self.dispatch_jobs_tab, padding="10")
         table_frame.pack(fill="both", expand=True)
 
-        columns = ("job_id", "date", "description", "title_name", "title_number", "file_name", "client_name", "status")
+        columns = ("job_id", "date", "task_type", "title_name", "title_number", "file_name", "client_name", "status")
         self.completed_jobs_tree = ttk.Treeview(table_frame, columns=columns, show="headings")
         
         self.completed_jobs_tree.heading("job_id", text="Job ID")
         self.completed_jobs_tree.heading("date", text="Date")
-        self.completed_jobs_tree.heading("description", text="Description")
+        self.completed_jobs_tree.heading("task_type", text="Task Type")
         self.completed_jobs_tree.heading("title_name", text="Title Name")
         self.completed_jobs_tree.heading("title_number", text="Title Number")
         self.completed_jobs_tree.heading("file_name", text="File Name")
@@ -362,7 +365,7 @@ class DispatchJobsView(FormBase):
         
         self.completed_jobs_tree.column("job_id", width=60, anchor=tk.CENTER)
         self.completed_jobs_tree.column("date", width=120, anchor=tk.W)
-        self.completed_jobs_tree.column("description", width=250, anchor=tk.W)
+        self.completed_jobs_tree.column("task_type", width=250, anchor=tk.W)
         self.completed_jobs_tree.column("title_name", width=120, anchor=tk.W)
         self.completed_jobs_tree.column("title_number", width=120, anchor=tk.W)
         self.completed_jobs_tree.column("file_name", width=100, anchor=tk.W)
@@ -376,6 +379,7 @@ class DispatchJobsView(FormBase):
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
         self.completed_jobs_tree.bind("<<TreeviewSelect>>", self._update_dispatch_button_state)
+        ToolTip(self.completed_jobs_tree, "Click to Select a Job to dispatch.")
         
         button_frame = ttk.Frame(self.dispatch_jobs_tab, padding="10")
         button_frame.pack(fill="x", side="bottom")
@@ -394,6 +398,8 @@ class DispatchJobsView(FormBase):
             command=self._open_dispatch_details_window
         )
         self.dispatch_job_btn.pack(side="right")
+        ToolTip(self.dispatch_job_btn, "Click to Open Dispatch Form For Selected Job.")
+
         
     def _create_dispatch_records_tab(self):
         """Creates the widgets for the 'Dispatch Records' tab."""
@@ -435,6 +441,7 @@ class DispatchJobsView(FormBase):
             command=self._apply_filters
         )
         apply_button.grid(row=2, column=0, columnspan=2, pady=10, sticky="e")
+        ToolTip(apply_button, "Click to Search Using Set Filters .")
 
         clear_button = ttk.Button(
             filter_frame, 
@@ -444,12 +451,13 @@ class DispatchJobsView(FormBase):
             command=self._clear_filters
         )
         clear_button.grid(row=2, column=2, columnspan=2, pady=10, sticky="w")
+        ToolTip(clear_button, "Click to Remove Set Filters .")
 
         table_frame = ttk.Frame(main_frame, padding="10")
         table_frame.pack(fill="both", expand=True)
         
         columns = (
-            "job_id", "dispatch_date", "title_name", "title_number", "job_description", 
+            "job_id", "dispatch_date", "title_name", "title_number", "task_type", 
             "collected_by", "collector_phone", "reason_for_dispatch"
         )
         self.dispatch_records_tree = ttk.Treeview(table_frame, columns=columns, show="headings")
@@ -459,7 +467,7 @@ class DispatchJobsView(FormBase):
         self.dispatch_records_tree.heading("dispatch_date", text="Date")
         self.dispatch_records_tree.heading("title_name", text="Title Name")
         self.dispatch_records_tree.heading("title_number", text="Title Number")
-        self.dispatch_records_tree.heading("job_description", text="Description")
+        self.dispatch_records_tree.heading("task_type", text="Task Type")
         self.dispatch_records_tree.heading("collected_by", text="Collected By")
         self.dispatch_records_tree.heading("collector_phone", text="Phone Number")
         self.dispatch_records_tree.heading("reason_for_dispatch", text="Reason for Dispatch")
@@ -467,7 +475,7 @@ class DispatchJobsView(FormBase):
         self.dispatch_records_tree.column("dispatch_date", width=100, anchor=tk.W)
         self.dispatch_records_tree.column("title_name", width=150, anchor=tk.W)
         self.dispatch_records_tree.column("title_number", width=120, anchor=tk.W)
-        self.dispatch_records_tree.column("job_description", width=250, anchor=tk.W)
+        self.dispatch_records_tree.column("task_type", width=250, anchor=tk.W)
         self.dispatch_records_tree.column("collected_by", width=150, anchor=tk.W)
         self.dispatch_records_tree.column("collector_phone", width=120, anchor=tk.W)
         self.dispatch_records_tree.column("reason_for_dispatch", width=300, anchor=tk.W)
@@ -479,7 +487,14 @@ class DispatchJobsView(FormBase):
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
         self.dispatch_records_tree.bind("<Double-1>", self._save_signature_file)
+        ToolTip(self.dispatch_records_tree, "Double Click a Record to Download Signed Dispatch Form .")
         
+
+        style = ttk.Style()
+        style.configure("Completed.Treeview", background="green")
+        style.configure("Cancelled.Treeview", background="red")
+        style.configure("Default.Treeview", background="white")
+
     def _on_search_change(self, event):
         """Calls the filter function whenever the search entry changes."""
         search_text = self.search_entry.get().strip()
@@ -504,21 +519,31 @@ class DispatchJobsView(FormBase):
                 str(job.get('title_number', '')).lower(),
                 str(job.get('file_name', '')).lower(),
                 str(job.get('client_name', '')).lower(),
-                str(job.get('job_description', '')).lower()
+                str(job.get('task_type', '')).lower()
             ]
             
             if any(lower_search_text in s for s in search_data):
+                job_status = str(job.get('status', '')).upper()
+                if job_status == 'COMPLETED':
+                    tag = "Completed"
+                elif job_status == 'CANCELLED':
+                    tag = "Cancelled"
+                else:
+                    tag = "Default"
+
+
+
                 values = (
                     job.get('job_id', ''),
                     job.get('timestamp', ''),
-                    str(job.get('job_description', '')).upper(),
+                    str(job.get('task_type', '')).upper(),
                     str(job.get('title_name', '')).upper(),
                     str(job.get('title_number', '')).upper(),
                     str(job.get('file_name', '')).upper(),
                     str(job.get('client_name', '')).upper(),
-                    str(job.get('status', '')).upper()
+                    job_status
                 )
-                self.completed_jobs_tree.insert("", tk.END, values=values)
+                self.completed_jobs_tree.insert("", tk.END, values=values, tags=(tag,))
             
     def populate_dispatch_records_table(self):
         """Populates the 'Dispatch Records' table with dispatched jobs."""
