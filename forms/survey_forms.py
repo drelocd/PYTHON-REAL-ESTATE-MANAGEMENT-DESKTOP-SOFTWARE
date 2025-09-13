@@ -4,6 +4,7 @@ from datetime import datetime, timedelta,date
 
 import os
 import sys
+import webbrowser
 from PIL import Image, ImageTk
 import shutil
 import io
@@ -41,7 +42,7 @@ except ImportError:
 try:
     from reportlab.lib.pagesizes import letter
     from reportlab.lib import colors
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.platypus import Image as RLImage, SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import inch
 
@@ -740,7 +741,7 @@ class UpdateStatusForm(FormBase):
         ttk.Label(main_frame, text=f"Updating Job ID: {self.job_id}", font=('Helvetica', 12, 'bold')).pack(pady=10)
         
         ttk.Label(main_frame, text="Select New Status:").pack(pady=5)
-        self.status_combobox = ttk.Combobox(main_frame, values=["Completed","Cancelled"], state="readonly")
+        self.status_combobox = ttk.Combobox(main_frame, values=["Ongoing", "Completed", "Cancelled"], state="readonly")
         self.status_combobox.set("Ongoing")
         self.status_combobox.pack(pady=5)
         
@@ -1618,9 +1619,14 @@ class JobReportsView(FormBase):
                         command=self._toggle_date_entries).grid(row=0, column=4, padx=2, pady=5, sticky="w")
 
         # Job Status Dropdown
-        ttk.Label(options_frame, text="Job Status:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
-        self.status_combobox = ttk.Combobox(options_frame, textvariable=self.job_status_var,
-                                            values=["All", "Ongoing", "Completed", "Cancelled"], state="readonly")
+        self.status_combobox = ttk.Combobox(
+            options_frame,
+            textvariable=self.job_status_var,
+            values=["All", "Ongoing", "Completed", "Cancelled", "Dispatched"],
+            state="readonly"
+        )
+        self.status_combobox.current(0)  # default to "All"
+
         self.status_combobox.grid(row=1, column=1, columnspan=4, padx=5, pady=5, sticky="ew")
 
         # Custom Date Range Inputs
@@ -1873,16 +1879,22 @@ class JobReportsView(FormBase):
                 story.append(Spacer(1, 12))
 
                 # --- Report Title & Period ---
-                story.append(Paragraph(f"<b>{report_name.upper()}</b>", styles['Heading2']))
+                story.append(Paragraph(f"<b>SERVICE JOBS REPORT</b>", styles['Heading2']))
+
+                if "(" in report_name:  # e.g., "Service Jobs Report (Cancelled)"
+                    status_label = report_name.split("(")[-1].rstrip(")")
+                    story.append(Paragraph(f"<b>Status:</b> {status_label}", styles['Normal']))
+
                 story.append(Paragraph(f"Period: {start_date} to {end_date}", styles['Normal']))
                 story.append(Spacer(1, 12))
+
 
                 # --- Table Content ---
                 if content.get('data'):
                     headers = [
                         "Job ID", "Payment ID", "Title Name", "Title Number", "Description",
-                        "Created", "Payment Date", "Job Status", "Payment Status", "Job Fee",
-                        "Amount Paid", "Balance",
+                        "Created", "Payment Date", "Job Status", "Payment Status",
+                        "Brought By", "Job Fee", "Amount Paid", "Balance",
                     ]
 
                     # wrapping styles
@@ -1891,6 +1903,11 @@ class JobReportsView(FormBase):
 
                     # wrap headers
                     table_data = [[Paragraph(h, wrap_style_header) for h in headers]]
+
+                    # totals trackers
+                    total_gross = 0
+                    total_net = 0
+                    total_balance = 0
 
                     # helper for safe date conversion
                     def fmt_date(val):
@@ -1904,6 +1921,15 @@ class JobReportsView(FormBase):
                         created_val = fmt_date(job.get('job_created'))
                         payment_date_val = fmt_date(job.get('payment_date'))
 
+                        job_fee = job.get('job_fee') or 0
+                        amount_paid = job.get('amount_paid') or 0
+                        balance = job.get('balance') or 0
+
+                        # update totals
+                        total_gross += float(job_fee)
+                        total_net += float(amount_paid)
+                        total_balance += float(balance)
+
                         row = [
                             Paragraph(str(job.get('job_id', '') or ""), wrap_style_body),
                             Paragraph(str(job.get('payment_id', '') or ""), wrap_style_body),
@@ -1914,12 +1940,14 @@ class JobReportsView(FormBase):
                             Paragraph(payment_date_val, wrap_style_body),
                             Paragraph(str(job.get('job_status', '') or ""), wrap_style_body),
                             Paragraph(str(job.get('payment_status', '') or ""), wrap_style_body),
-                            Paragraph(str(job.get('job_fee', '') or ""), wrap_style_body),
-                            Paragraph(str(job.get('amount_paid', '') or ""), wrap_style_body),
-                            Paragraph(str(job.get('balance', '') or ""), wrap_style_body),
+                            Paragraph(str(job.get('brought_by', '') or ""), wrap_style_body),
+                            Paragraph(f"{job_fee:,.2f}", wrap_style_body),
+                            Paragraph(f"{amount_paid:,.2f}", wrap_style_body),
+                            Paragraph(f"{balance:,.2f}", wrap_style_body),
                         ]
                         table_data.append(row)
 
+                    # main jobs table
                     t = Table(table_data, repeatRows=1)
                     t.setStyle(TableStyle([
                         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
@@ -1943,8 +1971,33 @@ class JobReportsView(FormBase):
                     ]))
 
                     story.append(t)
+                    story.append(Spacer(1, 18))
+
+                    # --- Totals Summary ---
+                    summary_data = [
+                        ["Total Gross Sales", f"{total_gross:,.2f}"],
+                        ["Total Net Sales", f"{total_net:,.2f}"],
+                        ["Total Pending Balances", f"{total_balance:,.2f}"],
+                    ]
+
+                    summary_table = Table(summary_data, colWidths=[3*inch, 2*inch])
+                    summary_table.setStyle(TableStyle([
+                        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0, 0), (-1, -1), 9),
+                        ('ALIGN', (0, 0), (0, -1), 'LEFT'),
+                        ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+                        ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
+                        ('BACKGROUND', (0, 0), (-1, -1), colors.whitesmoke),
+                        ('BOX', (0, 0), (-1, -1), 0.75, colors.black),
+                        ('INNERGRID', (0, 0), (-1, -1), 0.25, colors.black),
+                        ('TOPPADDING', (0, 0), (-1, -1), 4),
+                        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+                    ]))
+                    story.append(summary_table)
                 else:
                     story.append(Paragraph("No jobs found for this period and status.", styles['Normal']))
+
+
 
                 # --- Footer with Page Number ---
                 def add_page_number(canvas, doc):
@@ -1960,21 +2013,52 @@ class JobReportsView(FormBase):
                 return None
 
     def _show_pdf_preview(self, pdf_path, report_text_widget):
-        """Displays PDF generation status in the preview area."""
+        """Displays PDF generation status in the preview area, with clickable file path and hand cursor."""
+        report_text_widget.delete(1.0, tk.END)
+
         if pdf_path and os.path.exists(pdf_path):
-            preview_text = f"PDF successfully generated and saved to:\n{pdf_path}\n\n"
-            preview_text += "Note: A full PDF preview is not available directly within Tkinter. You can open the file from the saved location.\n\n"
+            preview_text = f"Report successfully generated.\n\n"
+            preview_text += "You saved this report as:\n"
 
-            # Add a basic file info
-            preview_text += f"File size: {os.path.getsize(pdf_path) / 1024:.1f} KB"
-
-            report_text_widget.delete(1.0, tk.END)
+            # Insert text before the path
             report_text_widget.insert(tk.END, preview_text)
+
+            # Insert the clickable path
+            start_index = report_text_widget.index(tk.INSERT)
+            report_text_widget.insert(tk.END, pdf_path + "\n\n")
+            end_index = report_text_widget.index(tk.INSERT)
+
+            # Tag the path and make it look like a link
+            report_text_widget.tag_add("file_link", start_index, end_index)
+            report_text_widget.tag_config("file_link", foreground="blue", underline=True)
+
+            # Bind click event to open the PDF
+            def open_file(event, path=pdf_path):
+                try:
+                    webbrowser.open_new(path)  # opens with default app
+                except Exception as e:
+                    messagebox.showerror("Open File Error", f"Could not open file:\n{e}")
+
+            report_text_widget.tag_bind("file_link", "<Button-1>", open_file)
+
+            # 🔹 Change cursor on hover
+            report_text_widget.tag_bind("file_link", "<Enter>", lambda e: report_text_widget.config(cursor="hand2"))
+            report_text_widget.tag_bind("file_link", "<Leave>", lambda e: report_text_widget.config(cursor=""))
+
+            # Add note and file size
+            extra_info = (
+                "Note: Full PDF preview isn't available inside Application, "
+                "but you can open the file directly from the link above.\n\n"
+                f"File size: {os.path.getsize(pdf_path)/1024:.1f} KB"
+            )
+            report_text_widget.insert(tk.END, extra_info)
+
         else:
-            report_text_widget.delete(1.0, tk.END)
-            report_text_widget.insert(tk.END,
-                                      "PDF generation failed. Please check the error logs or ensure ReportLab is installed and data is available.")
-            
+            report_text_widget.insert(
+                tk.END,
+                "PDF generation failed. Please check the error logs or ensure ReportLab is installed and data is available."
+            )
+ 
                         
 class PaymentReportsView(FormBase):
     """
@@ -2042,7 +2126,7 @@ class PaymentReportsView(FormBase):
         self.tree.pack(fill="both", expand=True, pady=10)
 
     def _export_to_pdf(self):
-        """Exports the payment report to a PDF file."""
+        """Exports the payment report to a branded PDF file."""
         if not _REPORTLAB_AVAILABLE:
             messagebox.showerror("Error", "ReportLab is not installed. Cannot export PDF.")
             return
@@ -2057,42 +2141,104 @@ class PaymentReportsView(FormBase):
             return
 
         try:
-            doc = SimpleDocTemplate(file_path, pagesize=letter)
+            doc = SimpleDocTemplate(file_path, pagesize=letter,
+                                    leftMargin=50, rightMargin=50,
+                                    topMargin=50, bottomMargin=40)
             styles = getSampleStyleSheet()
             elements = []
 
-            # Title
-            elements.append(Paragraph("Payment Sales Report", styles['Title']))
-            elements.append(Spacer(1, 12))
+            # --- Header with Logo and Company Name ---
+            logo_path = os.path.join(ICONS_DIR, "survey.png")
+            if os.path.exists(logo_path):
+                logo = RLImage(logo_path, width=1.0*inch, height=1.0*inch)
+            else:
+                logo = Paragraph("", styles['Normal'])
 
-            # Period info
+            company_name = Paragraph("<b>NDIRITU MATHENGE & ASSOCIATES</b>", styles['Title'])
+            header_table = Table([
+                ["", [logo, company_name], ""]
+            ], colWidths=[2*inch, 3*inch, 2*inch])
+
+            header_table.setStyle(TableStyle([
+                ('ALIGN', (1, 0), (1, 0), 'CENTER'),
+                ('VALIGN', (1, 0), (1, 0), 'MIDDLE'),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('SPAN', (1, 0), (1, 0)),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
+            ]))
+            elements.append(header_table)
+            elements.append(Spacer(1, 0.2 * inch))
+
+            # --- Report Title ---
+            report_title = Paragraph("PAYMENT SALES REPORT", styles['Heading2'])
+            elements.append(report_title)
+
+            # --- Period Info ---
             period_text = f"Report Type: {self.report_type_var.get().capitalize()}"
             if self.report_type_var.get() == "custom":
                 period_text += f" (From {self.from_date_var.get()} To {self.to_date_var.get()})"
+            else:
+                period_text += f" ({self.from_date_var.get()})"
             elements.append(Paragraph(period_text, styles['Normal']))
-            elements.append(Spacer(1, 12))
+            elements.append(Spacer(1, 0.2 * inch))
 
-            # Table data
+            # --- Table Data ---
             data = [["Date", "Gross Sales", "Net Sales"]]
+            total_gross, total_net = 0.0, 0.0
+
             for item in self.tree.get_children():
                 row = self.tree.item(item)['values']
+                # row = [date, gross_str, net_str]
+                date = str(row[0])
+                gross = row[1].replace("KES", "").replace(",", "").strip()
+                net = row[2].replace("KES", "").replace(",", "").strip()
+                gross_val = float(gross) if gross else 0.0
+                net_val = float(net) if net else 0.0
+
+                total_gross += gross_val
+                total_net += net_val
+
                 data.append([
-                    str(row[0]),
-                    str(row[1]),
-                    str(row[2])
+                    date,
+                    f"KES {gross_val:,.2f}",
+                    f"KES {net_val:,.2f}"
                 ])
 
             table = Table(data, colWidths=[120, 150, 150])
             table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
                 ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.whitesmoke, colors.beige]),
             ]))
             elements.append(table)
+
+            # --- Totals Summary ---
+            elements.append(Spacer(1, 0.3 * inch))
+            summary_data = [
+                ["TOTAL GROSS SALES:", f"KES {total_gross:,.2f}"],
+                ["TOTAL NET SALES:", f"KES {total_net:,.2f}"]
+            ]
+            summary_table = Table(summary_data, colWidths=[2*inch, 2*inch])
+            summary_table.setStyle(TableStyle([
+                ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
+                ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ]))
+            elements.append(summary_table)
+
+            # --- Footer ---
+            elements.append(Spacer(1, 0.3 * inch))
+            footer = Paragraph(
+                f"<font size='8' color='#888888'>Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</font>",
+                styles['Normal']
+            )
+            elements.append(footer)
 
             # Build PDF
             doc.build(elements)
