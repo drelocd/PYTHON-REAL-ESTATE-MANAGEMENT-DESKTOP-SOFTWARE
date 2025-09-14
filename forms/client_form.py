@@ -378,7 +378,7 @@ class AddClientForm(BaseForm):
     """A modal form for adding a new client."""
 
     def __init__(self, parent, db_manager, user_id, refresh_callback, icon_loader):
-        super().__init__(parent, "Add New Client", 400, 300, "client.png", icon_loader)
+        super().__init__(parent, "Add New Client", 400, 250, "client.png", icon_loader)
 
         self.db_manager = db_manager
         self.user_id = user_id

@@ -52,7 +52,7 @@ class ActivityLogViewerForm(tk.Toplevel):
     def _set_window_icon(self):
         """Sets the window icon, preferring .ico, then .png."""
         ico_path = os.path.join(ICONS_DIR, "activity_log.ico")
-        png_path = os.path.join(ICONS_DIR, "activity_log.png")
+        png_path = os.path.join(ICONS_DIR, "activity_logs.png")
 
         if os.path.exists(ico_path):
             try:

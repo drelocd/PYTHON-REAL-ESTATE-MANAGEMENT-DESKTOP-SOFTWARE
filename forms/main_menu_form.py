@@ -16,6 +16,8 @@ try:
     from forms.agents_signup_form import AgentSignupForm
     from forms.admin_manage_payments_form import ManagePaymentPlansForm
     from forms.activity_log_viewer_form import ActivityLogViewerForm
+    from forms.projects_form import ProjectsPanel
+    from forms.system_settings_form import SystemSettingsForm
 except ImportError as e:
     messagebox.showerror("Import Error", f"Could not import required modules. "
                                          f"Please ensure admin_panel.py and signup_form.py are in the 'forms' directory. Error: {e}")
@@ -52,6 +54,7 @@ class MainMenuForm(tk.Toplevel):
         self._start_x = 0
         self._start_y = 0
         self.icons = {}  # To store PhotoImage references
+        self.icon_images = {}
 
         # Set the window properties and create the custom title bar
         self._set_window_properties(600, 350, "admin_panel.png")
@@ -161,6 +164,27 @@ class MainMenuForm(tk.Toplevel):
                     self.icons[path] = tk_img
                 return tk_img
         return img
+    
+    def _load_icon(self, icon_name, size=(40, 40)):
+        path = os.path.join(ICONS_DIR, icon_name)
+        if not os.path.exists(path):
+            print(f"Warning: Icon not found at {path}")
+            img = Image.new('RGB', size, color='red')
+            tk_img = ImageTk.PhotoImage(img)
+            self.icon_images[path] = tk_img
+            return tk_img
+        try:
+            img = Image.open(path)
+            img = img.resize(size, Image.Resampling.LANCZOS)
+            tk_img = ImageTk.PhotoImage(img)
+            self.icon_images[path] = tk_img
+            return tk_img
+        except Exception as e:
+            print(f"Error loading icon {icon_name}: {e}")
+            img = Image.new('RGB', size, color='gray')
+            tk_img = ImageTk.PhotoImage(img)
+            self.icon_images[path] = tk_img
+            return tk_img
 
     def _create_widgets(self):
         """Creates and places the buttons in the main menu with a new layout."""
@@ -187,7 +211,7 @@ class MainMenuForm(tk.Toplevel):
 
         # Load icons for the buttons
         self.manage_users_icon = self._load_icon_for_button("manage_users.png")
-        self.add_new_user_icon = self._load_icon_for_button("add_user.png")
+        self.add_new_project_icon = self._load_icon_for_button("project.png")
         self.settings_icon = self._load_icon_for_button("system_settings.png")
         self.logs_icon = self._load_icon_for_button("activity_logs.png")
         self.admin_menu_icon = self._load_icon_for_button("manage_agents.png") # Assuming a new icon for the main menu
@@ -218,10 +242,10 @@ class MainMenuForm(tk.Toplevel):
         # Button 3: Add New User (Signup)
         btn_add_user = ttk.Button(
             button_container,
-            text="Add New User",
-            image=self.add_new_user_icon,
+            text="Manage Projects",
+            image=self.add_new_project_icon,
             compound=tk.LEFT,
-            command=self._open_signup_form,
+            command=self._open_projects_panel,
             style=button_style,
         )
         btn_add_user.grid(row=1, column=0, padx=5, pady=5, ipadx=button_padding, ipady=button_padding, sticky=button_sticky)
@@ -273,12 +297,11 @@ class MainMenuForm(tk.Toplevel):
         else:
             messagebox.showerror("Error", "AdminManageAgentsPanel module is not available.")
 
-    def _open_signup_form(self):
-        """Opens the SignupForm window."""
-        if SignupForm:
-            SignupForm(self, self.db_manager, parent_icon_loader=self._load_icon_for_button, refresh_callback=None)
-        else:
-            messagebox.showerror("Error", "SignupForm module is not available.")
+    def _open_projects_panel(self):
+        """Opens the ProjectsPanel window."""
+        # Pass the user_id to the new panel
+        ProjectsPanel(self, self.db_manager, parent_icon_loader=self._load_icon_for_button, user_id=self.user_id)
+
     
     def _open_manage_payment_plans(self):
         if ManagePaymentPlansForm:
@@ -286,14 +309,11 @@ class MainMenuForm(tk.Toplevel):
         else:
             messagebox.showerror("Error", "ManagePaymentPlansForm module is not available.")
 
-    def _open_system_settings(self):
-        """payment for opening the System Settings window."""
-        messagebox.showinfo("System Settings", "This function is not yet implemented.")
+    def _open_system_settings(self):  # NEW METHOD
+        """Opens the SystemSettingsForm window."""
+        SystemSettingsForm(self, self.db_manager, self.user_id, parent_icon_loader=self._load_icon)
 
-    def _open_activity_logs(self):
-        """payment for opening the Activity Logs window."""
-        if ActivityLogViewerForm:
-            ActivityLogViewerForm(self, self.db_manager, self.user_id, parent_icon_loader=self._load_icon_for_button)
-        else:
-            messagebox.showerror("Error", "ManagePaymentPlansForm module is not available.")
+    def _open_activity_logs(self):  # NEW METHOD
+        """Opens the ActivityLogViewerForm window."""
+        ActivityLogViewerForm(self, self.db_manager, parent_icon_loader=self._load_icon)
 

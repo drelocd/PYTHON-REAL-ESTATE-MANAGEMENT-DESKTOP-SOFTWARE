@@ -1142,15 +1142,27 @@ class TrackJobsView(FormBase):
 
 class CancelledJobsView(FormBase):
     def __init__(self, master, db_manager, parent_icon_loader=None):
-        super().__init__(master, 1000, 500, "View Cancelled Jobs", "cancelled_jobs.png", parent_icon_loader)
+        super().__init__(master, 1200, 500, "View Cancelled Jobs", "cancelled_jobs.png", parent_icon_loader)
         self.db_manager = db_manager
         self.parent_icon_loader = parent_icon_loader
-        self._create_widgets()
         self.all_cancelled_jobs = []
+
+        self._load_button_icons()
+        self._create_widgets()
         self._populate_cancelled_jobs_table()
 
+    def _load_button_icons(self):
+        """Load icons for buttons."""
+        try:
+            self.apply_icon_img = self.parent_icon_loader("filter.png", size=(16, 16))
+            self.clear_icon_img = self.parent_icon_loader("clear_filter.png", size=(16, 16))
+        except Exception as e:
+            print(f"Failed to load button icons: {e}")
+            self.apply_icon_img = None
+            self.clear_icon_img = None
 
     def _create_widgets(self):
+        """Creates and packs all the widgets for the UI."""
         filter_frame = ttk.Frame(self, padding="10 5")
         filter_frame.pack(fill="x")
 
@@ -1164,29 +1176,40 @@ class CancelledJobsView(FormBase):
         self.to_date_entry.pack(side="left", padx=(0, 15))
         ToolTip(self.to_date_entry, "Select the ending date.")
 
-        self.apply_filters_btn = ttk.Button(filter_frame, text="Apply Filters", command=self._populate_cancelled_jobs_table)
+        self.apply_filters_btn = ttk.Button(filter_frame, text="Apply Filters", compound=tk.LEFT, image=self.apply_icon_img, command=self._populate_cancelled_jobs_table)
         self.apply_filters_btn.pack(side="left", padx=(0, 5))
         ToolTip(self.apply_filters_btn, "Click to Apply the Selected Date Filters.")
 
-        self.clear_filters_btn = ttk.Button(filter_frame, text="Clear Filters", command=self._clear_filters)
+        self.clear_filters_btn = ttk.Button(filter_frame, text="Clear Filters", compound=tk.LEFT, image=self.clear_icon_img, command=self._clear_filters)
         self.clear_filters_btn.pack(side="left")
         ToolTip(self.clear_filters_btn, "Click to Clear the Date Filters and Show All Cancelled Jobs.")
 
         table_frame = ttk.Frame(self, padding="10")
         table_frame.pack(fill="both", expand=True)
 
-        columns = ("cancellation_id", "date", "reason", "refund", "title_number", "client_name", "file_name")
+        columns = ("date", "task_type", "reason", "cancelled_by", "refund", "title_number", "client_name", "file_name")
         self.cancelled_jobs_tree = ttk.Treeview(table_frame, columns=columns, show="headings")
         ToolTip(self.cancelled_jobs_tree, "List of All Cancelled Jobs Based on the Applied Filters.")
-
-        self.cancelled_jobs_tree.heading("cancellation_id", text="Cancellation ID")
+        
         self.cancelled_jobs_tree.heading("date", text="Date")
+        self.cancelled_jobs_tree.heading("task_type", text="Task Type")
         self.cancelled_jobs_tree.heading("reason", text="Reason")
+        self.cancelled_jobs_tree.heading("cancelled_by", text="Cancelled By")
         self.cancelled_jobs_tree.heading("refund", text="Refund Amount")
         self.cancelled_jobs_tree.heading("title_number", text="Title Number")
         self.cancelled_jobs_tree.heading("client_name", text="Client Name")
         self.cancelled_jobs_tree.heading("file_name", text="File Name")
         
+        # Set column widths
+        self.cancelled_jobs_tree.column("date", width=80)
+        self.cancelled_jobs_tree.column("task_type", width=150)
+        self.cancelled_jobs_tree.column("reason", width=150)
+        self.cancelled_jobs_tree.column("cancelled_by", width=120)
+        self.cancelled_jobs_tree.column("refund", width=100)
+        self.cancelled_jobs_tree.column("title_number", width=100)
+        self.cancelled_jobs_tree.column("client_name", width=120)
+        self.cancelled_jobs_tree.column("file_name", width=120)
+
         self.cancelled_jobs_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.cancelled_jobs_tree.yview)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -1211,12 +1234,12 @@ class CancelledJobsView(FormBase):
 
         self.all_cancelled_jobs = self.db_manager.get_filtered_cancelled_jobs(filters)
 
-
         for job in self.all_cancelled_jobs:
             self.cancelled_jobs_tree.insert("", tk.END, values=(
-                job['cancellation_id'],
                 job['cancellation_date'],
+                job['task_type'],
                 job['reason'],
+                job['cancelled_by_username'].upper(),
                 f"KES {job['refund_amount']:,.2f}",
                 job['title_number'].upper(),
                 job['client_name'].upper(),

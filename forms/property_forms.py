@@ -5,7 +5,7 @@ from tkinter import font as tkfont
 import shutil
 from datetime import datetime, timedelta
 from PIL import Image, ImageTk
-import io
+import re
 import webbrowser
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
@@ -272,7 +272,7 @@ class DatePicker(tk.Toplevel):
 
 
 class AddPropertyForm(tk.Toplevel):
-    def __init__(self, master, db_manager, refresh_callback, user_id, parent_icon_loader=None,window_icon_name="add_property.png"):
+    def __init__(self, master, db_manager, refresh_callback, user_id, parent_icon_loader=None, window_icon_name="add_property.png"):
         super().__init__(master)
         self.title("Add New Property")
         self.resizable(False, False)
@@ -281,8 +281,7 @@ class AddPropertyForm(tk.Toplevel):
 
         self.db_manager = db_manager
         self.refresh_callback = refresh_callback
-        self._window_icon_ref = None  # For icon persistence
-
+        self._window_icon_ref = None
         self.selected_title_images = []
         self.selected_property_images = []
         self.user_id = user_id
@@ -294,55 +293,59 @@ class AddPropertyForm(tk.Toplevel):
         self._cancel_add_prop_icon = None
 
         # Set window properties and customize title bar
-        self._set_window_properties(700, 500, window_icon_name, parent_icon_loader)
+        self._set_window_properties(700, 550, window_icon_name, parent_icon_loader)
         self._customize_title_bar()
+
+        # Fetch clients and projects on initialization
+        self.all_clients_data = []
         self.all_clients = self._fetch_clients()
+        self.all_projects_data = []
+        self.all_projects = self._fetch_projects()
 
         self._create_widgets(parent_icon_loader)
 
     def _fetch_clients(self):
         """Fetches all existing client names from the database."""
         try:
-            # Assumes db_manager.get_all_clients() returns a list of dictionaries
-            # like [{'name': 'Client A', ...}, {'name': 'Client B', ...}]
             self.all_clients_data = self.db_manager.get_all_clients()
             self.all_clients_data.sort(key=lambda x: x['name'])
-            
-            # Extract only the 'name' from each dictionary
             client_names = [client['name'] for client in self.all_clients_data]
-            
             return client_names
         except Exception as e:
             messagebox.showerror("Database Error", f"Failed to fetch client list: {e}")
             return []
 
+    def _fetch_projects(self):
+        """Fetches all existing project names and their IDs from the database."""
+        try:
+            self.all_projects_data = self.db_manager.get_all_projects()
+            self.all_projects_data.sort(key=lambda x: x['name'])
+            project_names = [project['name'] for project in self.all_projects_data]
+            return project_names
+        except Exception as e:
+            messagebox.showerror("Database Error", f"Failed to fetch project list: {e}")
+            return []
+
     def _on_client_select(self, event):
+        """
+        Populates the telephone and email fields when a client is selected.
+        These fields are now read-only.
+        """
         selected_name = self.client_name_var.get()
         selected_client = next(
             (client for client in self.all_clients_data if client['name'] == selected_name),
+            None
         )
         if selected_client:
-            # Fill telephone
+            self.entry_telephone.config(state="normal")
             self.entry_telephone.delete(0, tk.END)
             self.entry_telephone.insert(0, selected_client.get('telephone_number', ''))
+            self.entry_telephone.config(state="readonly")
 
-            # Fill email
+            self.entry_email.config(state="normal")
             self.entry_email.delete(0, tk.END)
             self.entry_email.insert(0, selected_client.get('email', ''))
-
-    def _on_telephone_edit(self, event):
-        current_name = self.client_name_var.get()
-        current_telephone = self.entry_telephone.get()
-        matching_client = next((c for c in self.all_clients_data if c['name'] == current_name), None)
-        if matching_client and matching_client.get('telephone_number') != current_telephone:
-            self.client_name_var.set('')
-
-    def _on_email_edit(self, event):
-        current_name = self.client_name_var.get()
-        current_email = self.entry_email.get()
-        matching_client = next((c for c in self.all_clients_data if c['name'] == current_name), None)
-        if matching_client and matching_client.get('email') != current_email:
-            self.client_name_var.set('')
+            self.entry_email.config(state="readonly")
 
     def _update_client_list(self, event=None):
         """Updates the Combobox dropdown based on the user's input."""
@@ -359,34 +362,17 @@ class AddPropertyForm(tk.Toplevel):
     def _customize_title_bar(self):
         """Customizes the title bar appearance."""
         try:
-            # Windows-specific title bar customization
-            if os.name == 'nt':
-                from ctypes import windll, byref, sizeof, c_int
-                
+            if os.name == 'nt' and windll:
                 DWMWA_CAPTION_COLOR = 35
                 DWMWA_TEXT_COLOR = 36
                 
                 hwnd = windll.user32.GetParent(self.winfo_id())
+                color = c_int(0x00663300)
+                windll.dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, byref(color), sizeof(color))
                 
-                # Set title bar color to dark blue (RGB: 0, 51, 102)
-                color = c_int(0x00663300)  # BGR format for Windows
-                windll.dwmapi.DwmSetWindowAttribute(
-                    hwnd, 
-                    DWMWA_CAPTION_COLOR, 
-                    byref(color), 
-                    sizeof(color)
-                )
-                
-                # Set title text color to white
-                text_color = c_int(0x00FFFFFF)  # White in BGR
-                windll.dwmapi.DwmSetWindowAttribute(
-                    hwnd, 
-                    DWMWA_TEXT_COLOR, 
-                    byref(text_color), 
-                    sizeof(text_color)
-                )
+                text_color = c_int(0x00FFFFFF)
+                windll.dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_TEXT_COLOR, byref(text_color), sizeof(text_color))
             else:
-                # Fallback for non-Windows systems
                 self._create_custom_title_bar()
         except Exception as e:
             print(f"Could not customize title bar: {e}")
@@ -394,14 +380,10 @@ class AddPropertyForm(tk.Toplevel):
 
     def _create_custom_title_bar(self):
         """Creates a custom title bar when native customization isn't available."""
-        # Remove native title bar
         self.overrideredirect(True)
-        
-        # Create custom title bar frame
         title_bar = tk.Frame(self, bg='#003366', relief='raised', bd=0, height=50)
         title_bar.pack(fill=tk.X)
         
-        # Title label
         title_label = tk.Label(
             title_bar, 
             text="Add New Property",
@@ -411,7 +393,6 @@ class AddPropertyForm(tk.Toplevel):
         )
         title_label.pack(side=tk.LEFT, padx=10)
         
-        # Close button
         close_button = tk.Button(
             title_bar, 
             text='×', 
@@ -424,19 +405,16 @@ class AddPropertyForm(tk.Toplevel):
         )
         close_button.pack(side=tk.RIGHT, padx=5)
         
-        # Bind mouse events for window dragging
         title_bar.bind('<Button-1>', self._save_drag_start_pos)
         title_bar.bind('<B1-Motion>', self._move_window)
         title_label.bind('<Button-1>', self._save_drag_start_pos)
         title_label.bind('<B1-Motion>', self._move_window)
 
     def _save_drag_start_pos(self, event):
-        """Saves the initial position for window dragging."""
         self._start_x = event.x
         self._start_y = event.y
 
     def _move_window(self, event):
-        """Handles window movement for custom title bar."""
         x = self.winfo_pointerx() - self._start_x
         y = self.winfo_pointery() - self._start_y
         self.geometry(f'+{x}+{y}')
@@ -464,9 +442,7 @@ class AddPropertyForm(tk.Toplevel):
 
         main_frame.columnconfigure(0, weight=0)
         main_frame.columnconfigure(1, weight=1)
-        self.all_clients_data = []
-        self.all_clients = self._fetch_clients()
-
+        
         row = 0
 
         # Property Type Selection
@@ -476,27 +452,32 @@ class AddPropertyForm(tk.Toplevel):
         self.property_type_combobox.grid(row=row, column=1, sticky="ew", pady=2, padx=5)
         row += 1
 
+        # Project Selection (NEW)
+        ttk.Label(main_frame, text="Project Name:").grid(row=row, column=0, sticky="w", pady=2, padx=5)
+        self.project_var = tk.StringVar(value=self.all_projects[0] if self.all_projects else "")
+        self.project_combobox = ttk.Combobox(main_frame, textvariable=self.project_var, values=self.all_projects, state="readonly")
+        self.project_combobox.grid(row=row, column=1, sticky="ew", pady=2, padx=5)
+        row += 1
+
         ttk.Label(main_frame, text="Client Name:").grid(row=row, column=0, sticky="w", pady=2, padx=5)
         self.client_name_var = tk.StringVar()
         self.client_combobox = ttk.Combobox(main_frame, textvariable=self.client_name_var)
         self.client_combobox.grid(row=row, column=1, sticky="ew", pady=2, padx=5)
-        self.client_combobox['values'] = self.all_clients  # Populate with initial list
-        self.client_combobox.bind('<KeyRelease>', self._update_client_list)  # Bind for real-time filtering
+        self.client_combobox['values'] = self.all_clients
+        self.client_combobox.bind('<KeyRelease>', self._update_client_list)
         self.client_combobox.bind('<<ComboboxSelected>>', self._on_client_select)
         row += 1
 
         # Telephone
         ttk.Label(main_frame, text="Telephone Number:").grid(row=row, column=0, sticky="w", pady=2, padx=5)
-        self.entry_telephone = ttk.Entry(main_frame, width=40)
+        self.entry_telephone = ttk.Entry(main_frame, width=40, state="readonly")
         self.entry_telephone.grid(row=row, column=1, sticky="ew", pady=2, padx=5)
-        self.entry_telephone.bind('<KeyRelease>', self._on_telephone_edit)
         row += 1
 
         # Email
         ttk.Label(main_frame, text="Email Address:").grid(row=row, column=0, sticky="w", pady=2, padx=5)
-        self.entry_email = ttk.Entry(main_frame, width=40)
+        self.entry_email = ttk.Entry(main_frame, width=40, state="readonly")
         self.entry_email.grid(row=row, column=1, sticky="ew", pady=2, padx=5)
-        self.entry_email.bind('<KeyRelease>', self._on_email_edit)
         row += 1
 
         ttk.Label(main_frame, text="Title Deed Number:").grid(row=row, column=0, sticky="w", pady=2, padx=5)
@@ -615,8 +596,8 @@ class AddPropertyForm(tk.Toplevel):
 
     def _add_property(self):
         # Retrieve all data from the form fields
-        property_type = self.property_type_combobox.get().strip()  # Retrieve the selected property type
-        client_name = self.client_name_var.get().strip()  # Get the text from the combobox
+        property_type = self.property_type_combobox.get().strip()
+        client_name = self.client_name_var.get().strip()
         telephone_number = self.entry_telephone.get().strip()
         email = self.entry_email.get().strip()
         title_deed = self.entry_title_deed.get().strip()
@@ -626,9 +607,25 @@ class AddPropertyForm(tk.Toplevel):
         price_str = self.entry_price.get().strip()
         status = self.status_combobox.get().strip()
 
+        # Get the selected project and find its ID
+        selected_project_name = self.project_var.get().strip()
+        project_id = None
+        if selected_project_name:
+            selected_project = next(
+                (p for p in self.all_projects_data if p['name'] == selected_project_name),
+                None
+            )
+            if selected_project:
+                project_id = selected_project['project_id']
+
         # Input validation
-        if not client_name or not title_deed or not location or not size_str or not price_str:
-            messagebox.showerror("Input Error", "Client Name, Title Deed Number, Location, Size, and Asking Price are required.")
+        if not client_name or not title_deed or not location or not size_str or not price_str or email == "" or telephone_number == "":
+            messagebox.showerror("Input Error", "Client Name, Title Deed Number, Location, Size, Email, Telephone Number and Asking Price are required.")
+            return
+
+        # New validation to ensure client name exists in the list
+        if client_name and client_name not in self.all_clients:
+            messagebox.showerror("Input Error", "The client name entered does not exist. Please select a client from the dropdown or add a new one first.")
             return
 
         try:
@@ -648,15 +645,27 @@ class AddPropertyForm(tk.Toplevel):
         except ValueError:
             messagebox.showerror("Input Error", "Invalid value for Asking Price. Please enter a number.")
             return
+        
+        # New validation for read-only fields
+        # Regex for phone number validation (allowing optional '+' and spaces)
+        tel_regex = r'^\+?[0-9\s-]{7,15}$'
+        if telephone_number and not re.match(tel_regex, telephone_number):
+            messagebox.showerror("Validation Error", "Please enter a valid telephone number.")
+            return
+            
+        # Regex for email validation
+        email_regex = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        if email and not re.match(email_regex, email):
+            messagebox.showerror("Validation Error", "Please enter a valid email address.")
+            return
 
         # Save images and get their paths
         saved_title_image_paths_str = self._save_images(self.selected_title_images, TITLE_DEEDS_DIR)
         saved_property_image_paths_str = self._save_images(self.selected_property_images, PROPERTY_IMAGES_DIR)
 
         try:
-            # Call the add_property method with the correct parameters, including the property_type
             property_id_or_status = self.db_manager.add_property(
-                property_type=property_type, # Pass the new parameter
+                property_type=property_type,
                 title_deed_number=title_deed, 
                 location=location, 
                 size=size, 
@@ -668,20 +677,20 @@ class AddPropertyForm(tk.Toplevel):
                 image_paths=saved_property_image_paths_str, 
                 title_image_paths=saved_title_image_paths_str, 
                 status=status, 
-                added_by_user_id=self.user_id
+                added_by_user_id=self.user_id,
+                project_id=project_id  # Pass the new project ID here
             )
 
             if property_id_or_status is not None:
-                if isinstance(property_id_or_status, int):
-                    messagebox.showinfo("Success", f"Property '{title_deed}' added successfully!")
-                else:
-                    messagebox.showinfo("Success", f"Property '{title_deed}' processed successfully.")
+                messagebox.showinfo("Success", f"Property '{title_deed}' added successfully!")
                 self.refresh_callback()
                 self.destroy()
             else:
                 messagebox.showerror("Duplicate Error", "A property with this Title Deed Number is already available in the database. Cannot add duplicate active property.")
         except Exception as e:
             messagebox.showerror("Error", f"An unexpected error occurred: {e}")
+
+
 
 
 class AddPropertyForTransferForm(tk.Toplevel):
