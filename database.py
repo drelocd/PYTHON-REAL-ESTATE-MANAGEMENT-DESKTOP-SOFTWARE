@@ -161,6 +161,7 @@ class DatabaseManager:
                     title_image_paths TEXT,
                     status VARCHAR(255) NOT NULL DEFAULT 'Available',
                     added_by_user_id INT,
+                    project_id INT NOT NULL,
                     FOREIGN KEY (added_by_user_id) REFERENCES users(user_id)
                 )
                 ''',
@@ -188,6 +189,16 @@ class DatabaseManager:
                     email VARCHAR(255) NOT NULL,
                     status VARCHAR(255) NOT NULL DEFAULT 'active',
                     added_by_user_id INT,
+                    FOREIGN KEY (added_by_user_id) REFERENCES users(user_id)
+                )
+                ''',
+                '''
+                CREATE TABLE IF NOT EXISTS projects (
+                    project_id INT PRIMARY KEY AUTO_INCREMENT,
+                    name VARCHAR(255) NOT NULL,
+                    added_by_user_id INT,
+                    status VARCHAR(255) NOT NULL DEFAULT 'active',
+                    sale_status VARCHAR(50) DEFAULT 'Available',
                     FOREIGN KEY (added_by_user_id) REFERENCES users(user_id)
                 )
                 ''',
@@ -508,7 +519,7 @@ class DatabaseManager:
         query = "SELECT * FROM properties WHERE title_deed_number = %s;"
         return self._execute_query(query, (title_deed_number,), fetch_all=True)
 
-    def add_property(self, property_type, title_deed_number, location, size, description, owner, telephone_number, email, price, image_paths=None, title_image_paths=None, status='Available', added_by_user_id=None):
+    def add_property(self, property_type, project_id, title_deed_number, location, size, description, owner, telephone_number, email, price, image_paths=None, title_image_paths=None, status='Available', added_by_user_id=None):
         """
         Adds a new property to the database and ensures the owner is in the clients table.
         """
@@ -525,9 +536,9 @@ class DatabaseManager:
         if not client_exists:
             self.add_client(name=owner, telephone_number=telephone_number, email=email, status=client_status, added_by_user_id=added_by_user_id)
 
-        query = '''INSERT INTO properties (property_type, title_deed_number, location, size, description, owner, telephone_number, email, price, image_paths, title_image_paths, status, added_by_user_id)
-                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)'''
-        return self._execute_query(query, (property_type, title_deed_number, location, size, description, owner, telephone_number, email, price, image_paths, title_image_paths, status, added_by_user_id))
+        query = '''INSERT INTO properties (property_type,project_id, title_deed_number, location, size, description, owner, telephone_number, email, price, image_paths, title_image_paths, status, added_by_user_id)
+                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s,%s, %s, %s, %s, %s, %s)'''
+        return self._execute_query(query, (property_type,project_id, title_deed_number, location, size, description, owner, telephone_number, email, price, image_paths, title_image_paths, status, added_by_user_id))
 
     def get_propertiesfortransfer_by_title_deed(self, title_deed_number):
         """
@@ -2218,19 +2229,22 @@ class DatabaseManager:
     
     def get_filtered_cancelled_jobs(self, filters):
         base_query = """
-            SELECT 
+            SELECT
                 cj.cancellation_id,
                 cj.reason,
                 cj.refund_amount,
                 cj.cancellation_date,
                 sj.title_number,
+                sj.task_type,
                 sc.name AS client_name,
-                cf.file_name
+                cf.file_name,
+                u.username AS cancelled_by_username
                 
             FROM cancelled_jobs AS cj
             JOIN service_jobs sj ON cj.job_id = sj.job_id
             JOIN client_files cf ON sj.file_id = cf.file_id
             JOIN service_clients AS sc ON cf.client_id = sc.client_id
+            JOIN users AS u ON cj.cancelled_by = u.user_id
         """
         conditions = []
         params = []
@@ -2245,6 +2259,9 @@ class DatabaseManager:
         where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
         query = f"{base_query}{where_clause} ORDER BY cj.cancellation_date DESC"
         return self._execute_query(query, tuple(params), fetch_all=True)
+
+
+
     def delete_daily_client(self, visit_id):
         try:
             query = "DELETE FROM daily_clients WHERE visit_id = %s"
@@ -2252,3 +2269,111 @@ class DatabaseManager:
         except Exception as e:
             print(f"Error deleting daily client visit ID {visit_id}: {e}", file=sys.stderr)
             return False
+        
+    def add_project(self, name, added_by_user_id):
+        """
+        Adds a new project to the database.
+        """
+        query = "INSERT INTO projects (name, added_by_user_id, sale_status) VALUES (%s, %s, %s)"
+        params = (name, added_by_user_id, 'Available') # 'Available' is the default for new projects
+        return self._execute_query(query, params)
+
+    def update_project(self, project_id, name, sale_status):
+        """
+        Updates the name and sale status of an existing project.
+        """
+        query = "UPDATE projects SET name = %s, sale_status = %s WHERE project_id = %s"
+        params = (name, sale_status, project_id)
+        return self._execute_query(query, params)
+
+    def delete_project(self, project_id):
+        """
+        Deletes a project by setting its status to 'inactive'.
+        This is a soft delete to preserve historical data.
+        """
+        query = "UPDATE projects SET status = 'inactive' WHERE project_id = %s"
+        params = (project_id,)
+        return self._execute_query(query, params)
+    
+    def get_projects_data(self):
+        """
+        Fetches all active projects, their property count, and dynamic sale status.
+        """
+        # Step 1: Get all active projects with the number of properties
+        query = """
+            SELECT
+                p.project_id,
+                p.name AS project_name,
+                u.username AS added_by_username,
+                COUNT(prop.property_id) AS num_properties
+            FROM projects AS p
+            JOIN users AS u ON p.added_by_user_id = u.user_id
+            LEFT JOIN properties AS prop ON p.project_id = prop.project_id
+            WHERE p.status = 'active'
+            GROUP BY p.project_id
+            ORDER BY p.name
+        """
+        projects = self._execute_query(query, fetch_all=True)
+
+        if not projects:
+            return []
+
+        # Step 2: Loop through each project to determine the dynamic sale status
+        final_projects = []
+        for project in projects:
+            project['sale_status'] = self._get_sale_status_for_project(project['project_id'])
+            final_projects.append(project)
+
+        return final_projects
+
+    def _get_sale_status_for_project(self, project_id):
+        """
+        Dynamically calculates the sale status for a project based on properties.
+        """
+        query = """
+            SELECT COUNT(*) AS total_properties,
+                   SUM(CASE WHEN status = 'sold' THEN 1 ELSE 0 END) AS sold_properties
+            FROM properties
+            WHERE project_id = %s
+        """
+        result = self._execute_query(query, (project_id,), fetch_one=True)
+
+        if not result or result['total_properties'] == 0:
+            return 'Available'
+
+        total_properties = result['total_properties']
+        sold_properties = result['sold_properties']
+
+        if sold_properties == total_properties:
+            return 'Sold Out'
+        elif sold_properties == 0:
+            return 'Available'
+        else:
+            sold_percentage = (sold_properties / total_properties) * 100
+            if sold_percentage <= 25:
+                return 'Available'
+            elif sold_percentage <= 50:
+                return 'Half Sold'
+            elif sold_percentage <= 75:
+                return 'Almost Sold Out'
+            else:
+                return 'Almost Sold Out'
+
+    def get_all_projects(self):
+        """
+        Retrieves all active projects from the database.
+        
+        Returns:
+            list: A list of dictionaries, each representing a project.
+        """
+        query = "SELECT project_id, name, added_by_user_id, status FROM projects WHERE status = 'active' ORDER BY name"
+        return self._execute_query(query, fetch_all=True) or []
+                
+    def close(self):
+        """
+        Closes the database connection.
+        """
+        if self.conn and self.conn.is_connected():
+            self.cursor.close()
+            self.conn.close()
+            print("Database connection closed.")

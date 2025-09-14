@@ -667,7 +667,7 @@ class BaseForm(tk.Toplevel):
 class AddClientForm(BaseForm):
     def __init__(self, parent, db_manager, user_id, refresh_callback, icon_loader):
         # FIX: Correct the order of arguments to match BaseForm's constructor
-        super().__init__(parent, 400, 300, "Add New Client", "client.png", icon_loader)
+        super().__init__(parent, 400, 200, "Add New Client", "client.png", icon_loader)
         
         self.db_manager = db_manager
         self.refresh_callback = refresh_callback
@@ -728,6 +728,14 @@ class AddClientForm(BaseForm):
         if not name or not tel or not email:
             messagebox.showerror("Error", "All fields are required.")
             return
+        
+        if not tel.isdigit():
+                messagebox.showerror("Validation Error", "Telephone number must be numeric.")
+                return
+
+        if "@" not in email or "." not in email:
+                messagebox.showerror("Validation Error", "Please enter a valid email address.")
+                return
 
         try:
             client_id = self.db_manager.add_client(name, tel, email, status)
@@ -743,7 +751,7 @@ class AddClientForm(BaseForm):
 class AddDailyClientForm(BaseForm):
     def __init__(self, parent, db_manager, client_id, refresh_callback, user_id, icon_loader):
         # FIX: Correct the order of arguments to match BaseForm's constructor
-        super().__init__(parent, 400, 250, "Add Daily Client Details", "client.png", icon_loader)
+        super().__init__(parent, 400, 200, "Add Daily Client Details", "client.png", icon_loader)
         
         self.db_manager = db_manager
         self.client_id = client_id
@@ -828,15 +836,25 @@ class UpdateClientForm(BaseForm):
     def __init__(self, parent, db_manager, user_id, client_data, refresh_callback, icon_loader):
         # FIX: Corrected the order of arguments passed to the parent class constructor.
         # It should be width, height, title.
-        super().__init__(parent, 400, 250, "Update Client", "client.png", icon_loader)
+        super().__init__(parent, 400, 200, "Update Client", "client.png", icon_loader)
 
         self.db_manager = db_manager
         self.user_id = user_id
         self.client_data = client_data
         self.refresh_callback = refresh_callback
 
+        self.save_icon = None
+        self.cancel_icon = None
+        self._load_button_icons()
         self._create_widgets()
         self._load_data()
+
+    def _load_button_icons(self):
+        try:
+            self.save_icon = self.icon_loader("save.png", size=(16, 16))
+            self.cancel_icon = self.icon_loader("cancel.png", size=(16, 16))
+        except Exception as e:
+            print(f"Failed to load button icons: {e}")
 
     def _create_widgets(self):
         frame = ttk.Frame(self, padding="15")
@@ -857,10 +875,10 @@ class UpdateClientForm(BaseForm):
         button_frame = ttk.Frame(frame)
         button_frame.grid(row=4, column=0, columnspan=2, pady=10)
 
-        self.save_button = ttk.Button(button_frame, text="Save Changes", command=self._save_changes)
+        self.save_button = ttk.Button(button_frame, text="Save Changes",compound=tk.LEFT,image=self.save_icon, command=self._save_changes)
         self.save_button.pack(side=tk.LEFT, padx=5)
 
-        self.cancel_button = ttk.Button(button_frame, text="Cancel", command=self.destroy)
+        self.cancel_button = ttk.Button(button_frame, text="Cancel",compound=tk.LEFT,image=self.cancel_icon, command=self.destroy)
         self.cancel_button.pack(side=tk.LEFT, padx=5)
 
     def _load_data(self):
@@ -877,6 +895,15 @@ class UpdateClientForm(BaseForm):
         if not new_name or not new_tel or not new_email:
             messagebox.showerror("Input Error", "All fields are required.")
             return
+        
+
+        if not new_tel.isdigit():
+                messagebox.showerror("Validation Error", "Telephone number must be numeric.")
+                return
+
+        if "@" not in new_email or "." not in new_email:
+                messagebox.showerror("Validation Error", "Please enter a valid email address.")
+                return
 
         try:
             current_client = self.db_manager.get_client(client_id)
@@ -939,17 +966,20 @@ class ReceptionSectionView(ttk.Frame):
 
         search_frame = ttk.Frame(top_controls_frame)
         search_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Label(search_frame, text="Search:").pack(side=tk.LEFT, padx=(0, 5))
+        ty=ttk.Label(search_frame, text="Search:",font="SegoeUI,10,bold")
+        ty.pack(side=tk.LEFT, padx=(0, 5))
         self.search_var = tk.StringVar()
         self.search_entry = ttk.Entry(search_frame, textvariable=self.search_var)
         self.search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
         self.search_entry.bind("<KeyRelease>", self._filter_clients)
+        ToolTip(self.search_entry, "Search For Clients Using Name or Phone Number.")
 
         self.add_client_button = ttk.Button(top_controls_frame, text="Add New Client",
                                              compound=tk.LEFT,
                                              image=self.add_icon_img,
                                              command=self._open_add_client_form)
         self.add_client_button.pack(side=tk.RIGHT, padx=(10, 0))
+        ToolTip(self.add_client_button, "Add a New Client with Basic Details.")
 
         paned_window = ttk.PanedWindow(main_frame, orient=tk.VERTICAL)
         paned_window.pack(fill="both", expand=True, pady=1)
@@ -961,7 +991,7 @@ class ReceptionSectionView(ttk.Frame):
         tree_and_buttons_frame = ttk.Frame(client_list_pane, padding="10")
         tree_and_buttons_frame.pack(fill="both", expand=True)
 
-        list_frame = ttk.LabelFrame(tree_and_buttons_frame, text="Existing Clients")
+        list_frame = ttk.LabelFrame(tree_and_buttons_frame, text="Existing Clients",)
         list_frame.pack(fill="both", expand=True, pady=(0, 5))
 
         self.tree = ttk.Treeview(list_frame, columns=("Name", "Telephone No", "Email"), show="headings")
@@ -972,19 +1002,22 @@ class ReceptionSectionView(ttk.Frame):
         self.tree.column("Telephone No", width=100)
         self.tree.column("Email", width=150)
         self.tree.pack(side="left", fill="both", expand=True)
+        ToolTip(self.tree, "Double Click a Client to Add Daily Visit.")
 
         scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
 
+
         # New bindings for tooltip
         self.tree.bind("<Double-1>", self._on_client_double_click)
         self.tree.bind("<<TreeviewSelect>>", self._on_client_select)
-        self.tree.bind("<Leave>", self._hide_tooltip)
-        # --- FIX START ---
-        # Changed this binding to call a new function to show/hide the tooltip based on mouse motion
-        self.tree.bind("<Motion>", self._on_tree_motion)
-        # --- FIX END ---
+        # Bind the Escape key to deselect all items in the treeview
+        self.tree.bind("<Escape>", self._deselect_all)
+        self.bind("<Escape>", self._deselect_all)  # Also bind to the frame itself
+        self.bind("<Button-1>", self._handle_click_to_deselect)
+        
+        
 
         button_frame = ttk.Frame(tree_and_buttons_frame)
         button_frame.pack(fill=tk.X, pady=(5, 0))
@@ -994,12 +1027,24 @@ class ReceptionSectionView(ttk.Frame):
                                          image=self.update_icon_img,
                                          command=self._open_update_client_form, state="disabled")
         self.update_button.pack(side=tk.LEFT, padx=(0, 5))
+        ToolTip(self.update_button, "Update Selected Client Details.")
 
         self.delete_button = ttk.Button(button_frame, text="Delete Selected Client",
                                          compound=tk.LEFT,
                                          image=self.delete_icon_img,
                                          command=self._delete_client, state="disabled")
         self.delete_button.pack(side=tk.RIGHT, padx=(5, 0))
+        ToolTip(self.delete_button, "Delete Selected Client.")
+
+    def _deselect_all(self, event=None):
+        """Deselects all items in the client Treeview when the Escape key is pressed."""
+        self.tree.selection_remove(self.tree.selection())
+
+    def _handle_click_to_deselect(self, event):
+        """Deselects all items in the treeview if the click was not on the treeview itself."""
+        if event.widget != self.tree:
+            self.tree.selection_remove(self.tree.selection())
+
 
     def _load_clients(self):
         """Clears and re-populates the client Treeview with basic client info."""
@@ -1035,6 +1080,7 @@ class ReceptionSectionView(ttk.Frame):
         # Get the client_id from the tag
         client_id = self.tree.item(selected_item, "tags")[0]
         AddDailyClientForm(self, self.db_manager, client_id, self.refresh_view, self.user_id, self.parent_icon_loader)
+        self.tree.selection_remove(selected_item)
 
     def _open_add_client_form(self):
         """Opens a new modal window for adding a basic client."""
@@ -1062,7 +1108,7 @@ class ReceptionSectionView(ttk.Frame):
         self.tree.selection_remove(self.tree.focus())
         self.update_button.config(state="disabled")
         self.delete_button.config(state="disabled")
-        self._hide_tooltip()
+        
 
     def populate_client_table(self):
         self.refresh_view()
@@ -1102,42 +1148,7 @@ class ReceptionSectionView(ttk.Frame):
             self.update_button.config(state="disabled")
             self.delete_button.config(state="disabled")
 
-    def _on_tree_motion(self, event):
-        """Hides the tooltip when the mouse moves within the Treeview."""
-        item = self.tree.identify_row(event.y)
-        selected_items = self.tree.selection()
-        
-        # Only show the tooltip if an item is under the cursor AND it is selected
-        if item in selected_items:
-            self._show_tooltip(event)
-        else:
-            self._hide_tooltip()
-            
-    def _show_tooltip(self, event):
-        if self._tooltip_window:
-            self._tooltip_window.destroy()
-
-        item = self.tree.identify_row(event.y)
-        if item:
-            x, y, w, h = self.tree.bbox(item)
-            x_root = self.winfo_rootx() + x + w + 1
-            y_root = self.winfo_rooty() + y + h // 2
-
-            self._tooltip_window = tk.Toplevel(self)
-            self._tooltip_window.wm_overrideredirect(True)
-            self._tooltip_window.wm_geometry(f"+{x_root}+{y_root}")
-
-            label = tk.Label(self._tooltip_window, text="Double click a client to continue",
-                             background="#ffffe0", relief="solid", borderwidth=1,
-                             font=("TkDefaultFont", 8))
-            label.pack(ipady=2)
-        else:
-            self._hide_tooltip()
-
-    def _hide_tooltip(self, event=None):
-        if self._tooltip_window:
-            self._tooltip_window.destroy()
-            self._tooltip_window = None
+    
 
 
 
