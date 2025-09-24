@@ -9,6 +9,10 @@ import sys
 from PIL import Image, ImageTk
 import shutil
 import io
+from pdf2image import convert_from_bytes
+import fitz
+import io
+from io import BytesIO
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from reportlab.lib import colors
@@ -1218,8 +1222,8 @@ class CancelledJobsView(FormBase):
 
     def _clear_filters(self):
         """Clears the date filters and repopulates the table."""
-        self.from_date_entry.set_date('')
-        self.to_date_entry.set_date('')
+        self.from_date_entry.set_date(date.today())
+        self.to_date_entry.set_date(date.today())
         self._populate_cancelled_jobs_table()
 
     def _populate_cancelled_jobs_table(self):
@@ -1930,20 +1934,21 @@ class JobReportsView(FormBase):
     def __init__(self, master, db_manager, parent_icon_loader=None):
         super().__init__(master, 750, 600, "Job Reports", "survey_reports.png", parent_icon_loader)
         self.db_manager = db_manager
-        self.parent_icon_loader_ref = parent_icon_loader  # Store for icon loading
+        self.parent_icon_loader_ref = parent_icon_loader
 
         self.report_type_var = tk.StringVar(self, value="daily")
         self.job_status_var = tk.StringVar(self, value="All")
         self.from_date_var = tk.StringVar(self, value=datetime.now().strftime("%Y-%m-%d"))
         self.to_date_var = tk.StringVar(self, value=datetime.now().strftime("%Y-%m-%d"))
 
-        # Icon references for internal buttons
+        # Internal references
         self._calendar_icon = None
         self._generate_report_icon = None
+        self._last_preview_pdf = None
+        self._pdf_preview_img = None
 
         self._create_widgets()
-        self._toggle_date_entries()  # Initialize date entry states
-        # self._generate_report() # Optional: generate a default report on open
+        self._toggle_date_entries()
 
     def _create_widgets(self):
         main_frame = ttk.Frame(self, padding="15")
@@ -1955,24 +1960,22 @@ class JobReportsView(FormBase):
         options_frame = ttk.LabelFrame(main_frame, text="Report Options", padding="10")
         options_frame.pack(fill="x", pady=10)
 
-        # Report Type Radio Buttons
+        # Report Period
         ttk.Label(options_frame, text="Report Period:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        ttk.Radiobutton(options_frame, text="Daily", variable=self.report_type_var, value="daily",
-                        command=self._toggle_date_entries).grid(row=0, column=1, padx=2, pady=5, sticky="w")
-        ttk.Radiobutton(options_frame, text="Monthly", variable=self.report_type_var, value="monthly",
-                        command=self._toggle_date_entries).grid(row=0, column=2, padx=2, pady=5, sticky="w")
-        ttk.Radiobutton(options_frame, text="Yearly", variable=self.report_type_var, value="yearly",
-                        command=self._toggle_date_entries).grid(row=0, column=3, padx=2, pady=5, sticky="w")
-        ttk.Radiobutton(options_frame, text="Custom Range", variable=self.report_type_var, value="custom",
-                        command=self._toggle_date_entries).grid(row=0, column=4, padx=2, pady=5, sticky="w")
+        for idx, (label, value) in enumerate(
+            [("Daily", "daily"), ("Monthly", "monthly"), ("Yearly", "yearly"), ("Custom Range", "custom")],
+            start=1
+        ):
+            ttk.Radiobutton(options_frame, text=label, variable=self.report_type_var, value=value,
+                            command=self._toggle_date_entries).grid(row=0, column=idx, padx=2, pady=5, sticky="w")
 
-        # Job Status Dropdown
+        # Job Status
         ttk.Label(options_frame, text="Job Status:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
         self.status_combobox = ttk.Combobox(options_frame, textvariable=self.job_status_var,
                                             values=["All", "Ongoing", "Completed", "Cancelled"], state="readonly")
         self.status_combobox.grid(row=1, column=1, columnspan=4, padx=5, pady=5, sticky="ew")
 
-        # Custom Date Range Inputs
+        # Custom Date Range
         date_range_frame = ttk.Frame(options_frame)
         date_range_frame.grid(row=2, column=0, columnspan=5, pady=5, sticky="ew")
 
@@ -1985,29 +1988,31 @@ class JobReportsView(FormBase):
 
         self.from_cal_btn = ttk.Button(date_range_frame, image=self._calendar_icon,
                                        command=lambda: self._open_datepicker(self.from_date_var))
-        self.from_cal_btn.image = self._calendar_icon  # Keep reference
+        self.from_cal_btn.image = self._calendar_icon
         self.from_cal_btn.pack(side="left", padx=2)
 
         ttk.Label(date_range_frame, text="To Date:").pack(side="left", padx=(15, 5))
         self.to_date_entry = ttk.Entry(date_range_frame, textvariable=self.to_date_var, state="readonly", width=12)
         self.to_date_entry.pack(side="left", padx=2)
+
         self.to_cal_btn = ttk.Button(date_range_frame, image=self._calendar_icon,
                                      command=lambda: self._open_datepicker(self.to_date_var))
-        self.to_cal_btn.image = self._calendar_icon  # Keep reference
+        self.to_cal_btn.image = self._calendar_icon
         self.to_cal_btn.pack(side="left", padx=2)
 
-        # Configure columns to expand
-        options_frame.grid_columnconfigure(1, weight=1)
-        options_frame.grid_columnconfigure(2, weight=1)
-        options_frame.grid_columnconfigure(3, weight=1)
-        options_frame.grid_columnconfigure(4, weight=1)
+        # Expandable columns
+        for col in range(1, 5):
+            options_frame.grid_columnconfigure(col, weight=1)
 
-        # Generate Report Button
+        # Action buttons
         if self.parent_icon_loader:
             self._generate_report_icon = self.parent_icon_loader("report.png", size=(20, 20))
 
-        ttk.Button(main_frame, text="Generate PDF Report", image=self._generate_report_icon, compound=tk.LEFT,
-                   command=self._generate_report).pack(pady=15)
+        ttk.Button(main_frame, text="Generate PDF Report", image=self._generate_report_icon,
+                   compound=tk.LEFT, command=self._generate_report).pack(pady=10)
+
+        ttk.Button(main_frame, text="Save PDF Report", image=self._generate_report_icon,
+                   compound=tk.LEFT, command=self._save_report).pack(pady=5)
 
         # --- Report Preview Area ---
         report_preview_frame = ttk.LabelFrame(main_frame, text="Report Preview", padding="10")
@@ -2015,52 +2020,47 @@ class JobReportsView(FormBase):
         report_preview_frame.grid_columnconfigure(0, weight=1)
         report_preview_frame.grid_rowconfigure(0, weight=1)
 
-        self.report_text_widget = tk.Text(report_preview_frame, wrap=tk.WORD, height=10, font=('Helvetica', 9))
+        # Text preview
+        self.report_text_widget = tk.Text(report_preview_frame, wrap=tk.WORD, height=8, font=('Helvetica', 9))
         self.report_text_widget.grid(row=0, column=0, sticky="nsew")
 
-        report_scroll_y = ttk.Scrollbar(report_preview_frame, orient="vertical", command=self.report_text_widget.yview)
+        report_scroll_y = ttk.Scrollbar(report_preview_frame, orient="vertical",
+                                        command=self.report_text_widget.yview)
         report_scroll_y.grid(row=0, column=1, sticky="ns")
         self.report_text_widget.config(yscrollcommand=report_scroll_y.set)
 
-        report_scroll_x = ttk.Scrollbar(report_preview_frame, orient="horizontal",
-                                        command=self.report_text_widget.xview)
-        report_scroll_x.grid(row=1, column=0, sticky="ew")
-        self.report_text_widget.config(xscrollcommand=report_scroll_x.set)
+        # Image preview
+        self.image_preview_label = ttk.Label(report_preview_frame)
+        self.image_preview_label.grid(row=1, column=0, columnspan=2, pady=10)
 
     def _toggle_date_entries(self):
-        """Enables/disables custom date entry fields based on report type selection."""
         report_type = self.report_type_var.get()
         is_custom = (report_type == "custom")
         state = "normal" if is_custom else "readonly"
-        button_state = "normal" if is_custom else "disabled"
+        btn_state = "normal" if is_custom else "disabled"
 
         self.from_date_entry.config(state=state)
         self.to_date_entry.config(state=state)
-        self.from_cal_btn.config(state=button_state)
-        self.to_cal_btn.config(state=button_state)
+        self.from_cal_btn.config(state=btn_state)
+        self.to_cal_btn.config(state=btn_state)
 
-        # Set default dates based on report type if not custom
         today = datetime.now()
         if report_type == "daily":
             self.from_date_var.set(today.strftime("%Y-%m-%d"))
             self.to_date_var.set(today.strftime("%Y-%m-%d"))
         elif report_type == "monthly":
-            first_day_of_month = today.replace(day=1)
-            # Calculate last day of the current month
+            first_day = today.replace(day=1)
             if today.month == 12:
-                last_day_of_month = today.replace(year=today.year + 1, month=1, day=1) - timedelta(days=1)
+                last_day = today.replace(year=today.year + 1, month=1, day=1) - timedelta(days=1)
             else:
-                last_day_of_month = today.replace(month=today.month + 1, day=1) - timedelta(days=1)
-            self.from_date_var.set(first_day_of_month.strftime("%Y-%m-%d"))
-            self.to_date_var.set(last_day_of_month.strftime("%Y-%m-%d"))
+                last_day = today.replace(month=today.month + 1, day=1) - timedelta(days=1)
+            self.from_date_var.set(first_day.strftime("%Y-%m-%d"))
+            self.to_date_var.set(last_day.strftime("%Y-%m-%d"))
         elif report_type == "yearly":
-            first_day_of_year = today.replace(month=1, day=1)
-            last_day_of_year = today.replace(month=12, day=31)
-            self.from_date_var.set(first_day_of_year.strftime("%Y-%m-%d"))
-            self.to_date_var.set(last_day_of_year.strftime("%Y-%m-%d"))
+            self.from_date_var.set(today.replace(month=1, day=1).strftime("%Y-%m-%d"))
+            self.to_date_var.set(today.replace(month=12, day=31).strftime("%Y-%m-%d"))
 
     def _open_datepicker(self, target_var):
-        """Opens date picker for a specific StringVar."""
         current_date_str = target_var.get()
         try:
             current_date_obj = datetime.strptime(current_date_str, "%Y-%m-%d")
@@ -2072,23 +2072,19 @@ class JobReportsView(FormBase):
                    window_icon_name="calendar_icon.png")
 
     def _get_report_dates(self):
-        """Determines start and end dates based on selected report type."""
         report_type = self.report_type_var.get()
-        start_date_str = self.from_date_var.get()
-        end_date_str = self.to_date_var.get()
+        start, end = self.from_date_var.get(), self.to_date_var.get()
 
         if report_type == "custom":
-            if not self._is_valid_date(start_date_str) or not self._is_valid_date(end_date_str):
-                messagebox.showerror("Date Error", "Invalid custom date range. Please use YYYY-MM-DD format.")
+            if not self._is_valid_date(start) or not self._is_valid_date(end):
+                messagebox.showerror("Date Error", "Invalid date format. Use YYYY-MM-DD.")
                 return None, None
-            if start_date_str > end_date_str:
+            if start > end:
                 messagebox.showerror("Date Error", "Start date cannot be after end date.")
                 return None, None
-
-        return start_date_str, end_date_str
+        return start, end
 
     def _is_valid_date(self, date_string):
-        """Validates date format."""
         try:
             datetime.strptime(date_string, "%Y-%m-%d")
             return True
@@ -2096,234 +2092,194 @@ class JobReportsView(FormBase):
             return False
 
     def _generate_report(self):
-        """
-        Fetches job data based on filters and generates a PDF report.
-        """
-        if not _REPORTLAB_AVAILABLE:
-            messagebox.showerror("PDF Error",
-                                 "ReportLab library is not installed. PDF generation is not available. Please install it using 'pip install reportlab'.")
-            self.report_text_widget.delete("1.0", tk.END)
-            self.report_text_widget.insert("1.0", "Error: ReportLab not installed for PDF generation.")
-            return
-
-        self.report_text_widget.delete("1.0", tk.END)  # Clear previous content
-        self.report_text_widget.insert("1.0", "Generating report, please wait...")  # Show status
+        self.report_text_widget.delete("1.0", tk.END)
+        self.report_text_widget.insert("1.0", "Generating preview...")
 
         start_date, end_date = self._get_report_dates()
-        if start_date is None:
-            self.report_text_widget.delete("1.0", tk.END)  # Clear "generating" message
-            return  # Date validation failed
+        if not start_date:
+            return
 
         selected_status = self.job_status_var.get()
         db_status = selected_status if selected_status != "All" else None
 
-        try:
-            # Call the database manager method to get job data
-            jobs_for_report = self.db_manager.get_service_jobs_for_report(
-                start_date=start_date,
-                end_date=end_date,
-                status=db_status
-            )
+        jobs = self.db_manager.get_service_jobs_for_report(
+            start_date=start_date, end_date=end_date, status=db_status
+        )
 
-            report_name = f"Service Jobs Report ({selected_status})"
-            pdf_path = self._generate_pdf_report(
-                report_name,
-                {'data': jobs_for_report},
-                self.report_type_var.get(),
-                start_date,
-                end_date
-            )
+        report_name = f"Service Jobs Report ({selected_status})"
+        pdf_bytes = self._generate_pdf_preview_bytes(
+            report_name, {'data': jobs}, self.report_type_var.get(), start_date, end_date
+        )
 
-            if pdf_path:
-                SuccessMessage(
-                    self,
-                    success=True,
-                    message="Service Jobs Report PDF generated successfully!",
-                    pdf_path=pdf_path,
-                    parent_icon_loader=self.parent_icon_loader_ref
-                )
-                self._show_pdf_preview(pdf_path, self.report_text_widget)
-            else:
-                SuccessMessage(
-                    self,
-                    success=False,
-                    message="Service Jobs Report PDF generation failed!",
-                    parent_icon_loader=self.parent_icon_loader_ref
-                )
-                self._show_pdf_preview(None, self.report_text_widget)
-        except Exception as e:
-            messagebox.showerror("Report Generation Error", f"An error occurred while generating Job Report: {e}")
-            self.report_text_widget.delete("1.0", tk.END)
-            self.report_text_widget.insert("1.0", f"Error: {e}")
-
-    def _generate_pdf_report(self, report_name, content, report_type, start_date, end_date):
-            """Generates PDF report using ReportLab (with logo, word wrap, footer) 
-            and prompts user to choose where to save it."""
-            if not _REPORTLAB_AVAILABLE:
-                return None
-
-            from datetime import datetime  # ensure correct import
-
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            period_suffix = ""
-
-            if report_type == "daily":
-                period_suffix = f"_{start_date}"
-            elif report_type == "monthly":
-                period_suffix = f"_{datetime.strptime(start_date, '%Y-%m-%d').strftime('%Y-%m')}"
-            elif report_type == "yearly":
-                period_suffix = f"_{datetime.strptime(start_date, '%Y-%m-%d').strftime('%Y')}"
-            elif report_type == "custom":
-                period_suffix = f"_{start_date}_to_{end_date}"
-
-            file_name = f"{report_name.replace(' ', '_')}{period_suffix}_{timestamp}.pdf"
-
-            # --- Default starting folder: Documents (fallback to Desktop if missing) ---
-            default_dir = os.path.join(os.path.expanduser("~"), "Documents")
-            if not os.path.exists(default_dir):
-                default_dir = os.path.join(os.path.expanduser("~"), "Desktop")
-
-            file_path = filedialog.asksaveasfilename(
-                title="Save Report As",
-                defaultextension=".pdf",
-                initialfile=file_name,
-                initialdir=default_dir,
-                filetypes=[("PDF files", "*.pdf")]
-            )
-
-            if not file_path:  # user cancelled
-                return None
-
-            try:
-                doc = SimpleDocTemplate(file_path, pagesize=letter)
-                styles = getSampleStyleSheet()
-                story = []
-
-                # --- Business Header with Logo ---
-                logo_path = os.path.join(ICONS_DIR, "survey.png")
-
-                if os.path.exists(logo_path):
-                    logo = RLImage(logo_path)
-                    logo._restrictSize(1.2 * inch, 1.2 * inch)
-                else:
-                    logo = Paragraph("", styles['Normal'])
-
-                header_table = Table([
-                    [logo, "NDIRITU MATHENGE & ASSOCIATES", datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
-                ], colWidths=[1.2 * inch, 3.5 * inch, 2 * inch])
-
-                header_table.setStyle(TableStyle([
-                    ('FONTNAME', (1, 0), (1, 0), 'Helvetica-Bold'),
-                    ('FONTSIZE', (1, 0), (1, 0), 14),
-                    ('ALIGN', (2, 0), (2, 0), 'RIGHT'),
-                    ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
-                ]))
-                story.append(header_table)
-                story.append(Spacer(1, 12))
-
-                # --- Report Title & Period ---
-                story.append(Paragraph(f"<b>{report_name.upper()}</b>", styles['Heading2']))
-                story.append(Paragraph(f"Period: {start_date} to {end_date}", styles['Normal']))
-                story.append(Spacer(1, 12))
-
-                # --- Table Content ---
-                if content.get('data'):
-                    headers = [
-                        "Job ID", "Payment ID", "Title Name", "Title Number", "Description",
-                        "Created", "Payment Date", "Job Status", "Payment Status", "Job Fee",
-                        "Amount Paid", "Balance",
-                    ]
-
-                    # wrapping styles
-                    wrap_style_header = ParagraphStyle('wrap_header', fontSize=8, leading=10, alignment=1)  # centered
-                    wrap_style_body = ParagraphStyle('wrap_body', fontSize=7, leading=9, alignment=0)      # left
-
-                    # wrap headers
-                    table_data = [[Paragraph(h, wrap_style_header) for h in headers]]
-
-                    # helper for safe date conversion
-                    def fmt_date(val):
-                        if not val:
-                            return ""
-                        if isinstance(val, datetime):
-                            return val.strftime("%Y-%m-%d")
-                        return str(val).split(" ")[0]
-
-                    for job in content['data']:
-                        created_val = fmt_date(job.get('job_created'))
-                        payment_date_val = fmt_date(job.get('payment_date'))
-
-                        row = [
-                            Paragraph(str(job.get('job_id', '') or ""), wrap_style_body),
-                            Paragraph(str(job.get('payment_id', '') or ""), wrap_style_body),
-                            Paragraph(str(job.get('title_name', '') or ""), wrap_style_body),
-                            Paragraph(str(job.get('title_number', '') or ""), wrap_style_body),
-                            Paragraph(str(job.get('job_description', '') or ""), wrap_style_body),
-                            Paragraph(created_val, wrap_style_body),
-                            Paragraph(payment_date_val, wrap_style_body),
-                            Paragraph(str(job.get('job_status', '') or ""), wrap_style_body),
-                            Paragraph(str(job.get('payment_status', '') or ""), wrap_style_body),
-                            Paragraph(str(job.get('job_fee', '') or ""), wrap_style_body),
-                            Paragraph(str(job.get('amount_paid', '') or ""), wrap_style_body),
-                            Paragraph(str(job.get('balance', '') or ""), wrap_style_body),
-                        ]
-                        table_data.append(row)
-
-                    t = Table(table_data, repeatRows=1)
-                    t.setStyle(TableStyle([
-                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                        ('FONTSIZE', (0, 0), (-1, 0), 8),
-                        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
-                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-
-                        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                        ('FONTSIZE', (0, 1), (-1, -1), 7),
-                        ('ALIGN', (0, 1), (-1, -1), 'LEFT'),
-                        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-
-                        ('BOX', (0, 0), (-1, -1), 0.75, colors.black),
-                        ('INNERGRID', (0, 0), (-1, -1), 0.25, colors.black),
-
-                        ('LEFTPADDING', (0, 0), (-1, -1), 3),
-                        ('RIGHTPADDING', (0, 0), (-1, -1), 3),
-                        ('TOPPADDING', (0, 0), (-1, -1), 2),
-                        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
-                    ]))
-
-                    story.append(t)
-                else:
-                    story.append(Paragraph("No jobs found for this period and status.", styles['Normal']))
-
-                # --- Footer with Page Number ---
-                def add_page_number(canvas, doc):
-                    page_num = canvas.getPageNumber()
-                    canvas.setFont("Helvetica", 8)
-                    canvas.drawRightString(7.5 * inch, 0.5 * inch, f"Page {page_num}")
-
-                doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
-                return file_path
-
-            except Exception as e:
-                print(f"PDF generation failed: {e}")
-                return None
-
-    def _show_pdf_preview(self, pdf_path, report_text_widget):
-        """Displays PDF generation status in the preview area."""
-        if pdf_path and os.path.exists(pdf_path):
-            preview_text = f"PDF successfully generated and saved to:\n{pdf_path}\n\n"
-            preview_text += "Note: A full PDF preview is not available directly within Tkinter. You can open the file from the saved location.\n\n"
-
-            # Add a basic file info
-            preview_text += f"File size: {os.path.getsize(pdf_path) / 1024:.1f} KB"
-
-            report_text_widget.delete(1.0, tk.END)
-            report_text_widget.insert(tk.END, preview_text)
+        if pdf_bytes:
+            self._last_preview_pdf = pdf_bytes
+            self._show_pdf_preview(pdf_bytes, report_name, start_date, end_date, len(jobs))
         else:
-            report_text_widget.delete(1.0, tk.END)
-            report_text_widget.insert(tk.END,
-                                      "PDF generation failed. Please check the error logs or ensure ReportLab is installed and data is available.")
-            
+            self.report_text_widget.delete("1.0", tk.END)
+            self.report_text_widget.insert("1.0", "Error: Could not generate PDF preview.")
+
+    def _generate_pdf_preview_bytes(self, report_name, content, report_type, start_date, end_date):
+        if not _REPORTLAB_AVAILABLE:
+            return None
+
+        buffer = BytesIO()
+        try:
+            doc = SimpleDocTemplate(buffer, pagesize=letter)
+            styles = getSampleStyleSheet()
+            story = []
+
+            # Header
+            logo_path = os.path.join(ICONS_DIR, "survey.png")
+            if os.path.exists(logo_path):
+                logo = RLImage(logo_path)
+                logo._restrictSize(1.2 * inch, 1.2 * inch)
+            else:
+                logo = Paragraph("", styles['Normal'])
+
+            header = Table([[logo, "NDIRITU MATHENGE & ASSOCIATES", datetime.now().strftime("%Y-%m-%d %H:%M:%S")]],
+                           colWidths=[1.2 * inch, 3.5 * inch, 2 * inch])
+            header.setStyle(TableStyle([('FONTNAME', (1, 0), (1, 0), 'Helvetica-Bold'),
+                                        ('FONTSIZE', (1, 0), (1, 0), 14),
+                                        ('ALIGN', (2, 0), (2, 0), 'RIGHT'),
+                                        ('BOTTOMPADDING', (0, 0), (-1, -1), 12)]))
+            story.append(header)
+            story.append(Spacer(1, 12))
+
+            # Title
+            story.append(Paragraph(f"<b>{report_name.upper()}</b>", styles['Heading2']))
+            story.append(Paragraph(f"Period: {start_date} to {end_date}", styles['Normal']))
+            story.append(Spacer(1, 12))
+
+            # Data table
+            if content.get('data'):
+                headers = ["Job ID", "Payment ID", "Title Name", "Title Number", "Description",
+                           "Created", "Payment Date", "Job Status", "Payment Status", "Job Fee",
+                           "Amount Paid", "Balance"]
+
+                wrap_header = ParagraphStyle('wrap_header', fontSize=8, leading=10, alignment=1)
+                wrap_body = ParagraphStyle('wrap_body', fontSize=7, leading=9, alignment=0)
+
+                table_data = [[Paragraph(h, wrap_header) for h in headers]]
+
+                def fmt_date(val):
+                    if not val:
+                        return ""
+                    if isinstance(val, datetime):
+                        return val.strftime("%Y-%m-%d")
+                    return str(val).split(" ")[0]
+
+                for job in content['data']:
+                    row = [
+                        Paragraph(str(job.get('job_id', '') or ""), wrap_body),
+                        Paragraph(str(job.get('payment_id', '') or ""), wrap_body),
+                        Paragraph(str(job.get('title_name', '') or ""), wrap_body),
+                        Paragraph(str(job.get('title_number', '') or ""), wrap_body),
+                        Paragraph(str(job.get('job_description', '') or ""), wrap_body),
+                        Paragraph(fmt_date(job.get('job_created')), wrap_body),
+                        Paragraph(fmt_date(job.get('payment_date')), wrap_body),
+                        Paragraph(str(job.get('job_status', '') or ""), wrap_body),
+                        Paragraph(str(job.get('payment_status', '') or ""), wrap_body),
+                        Paragraph(str(job.get('job_fee', '') or ""), wrap_body),
+                        Paragraph(str(job.get('amount_paid', '') or ""), wrap_body),
+                        Paragraph(str(job.get('balance', '') or ""), wrap_body),
+                    ]
+                    table_data.append(row)
+
+                t = Table(table_data, repeatRows=1)
+                t.setStyle(TableStyle([
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, 0), 8),
+                    ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                    ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                    ('FONTSIZE', (0, 1), (-1, -1), 7),
+                    ('ALIGN', (0, 1), (-1, -1), 'LEFT'),
+                    ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                    ('BOX', (0, 0), (-1, -1), 0.75, colors.black),
+                    ('INNERGRID', (0, 0), (-1, -1), 0.25, colors.black),
+                    ('LEFTPADDING', (0, 0), (-1, -1), 3),
+                    ('RIGHTPADDING', (0, 0), (-1, -1), 3),
+                    ('TOPPADDING', (0, 0), (-1, -1), 2),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+                ]))
+                story.append(t)
+            else:
+                story.append(Paragraph("No jobs found for this period and status.", styles['Normal']))
+
+            # Footer
+            def add_page_number(canvas, doc):
+                page_num = canvas.getPageNumber()
+                canvas.setFont("Helvetica", 8)
+                canvas.drawRightString(7.5 * inch, 0.5 * inch, f"Page {page_num}")
+
+            doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
+            buffer.seek(0)
+            return buffer.getvalue()
+        except Exception as e:
+            print(f"PDF generation failed: {e}")
+            return None
+
+    def _show_pdf_preview(self, pdf_bytes, report_name, start_date, end_date, job_count):
+        """Show text + first page image of the generated PDF using PyMuPDF (fitz)."""
+        # --- Text summary ---
+        preview_text = f"Preview for: {report_name}\n"
+        preview_text += f"Period: {start_date} → {end_date}\n"
+        preview_text += f"Jobs found: {job_count}\n"
+        preview_text += f"PDF size: {len(pdf_bytes) / 1024:.1f} KB\n\n"
+        preview_text += "Click 'Save PDF Report' to export."
+
+        self.report_text_widget.delete("1.0", tk.END)
+        self.report_text_widget.insert("1.0", preview_text)
+
+        # --- Image preview ---
+        try:
+            # Open PDF from bytes
+            pdf_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+
+            if pdf_doc.page_count > 0:
+                page = pdf_doc[0]  # first page
+                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # scale=2 for better quality
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+
+                img.thumbnail((500, 500))  # resize for preview
+                self._pdf_preview_img = ImageTk.PhotoImage(img)
+                self.image_preview_label.config(image=self._pdf_preview_img, text="")
+            else:
+                self.image_preview_label.config(text="⚠ PDF has no pages to preview.")
+
+        except Exception as e:
+            self.image_preview_label.config(
+                text=f"⚠ PDF preview unavailable (PyMuPDF error).\n\nError: {e}"
+            )
+
+
+
+    def _save_report(self):
+        if not self._last_preview_pdf:
+            messagebox.showwarning("No Preview", "Generate a preview first.")
+            return
+
+        default_dir = os.path.join(os.path.expanduser("~"), "Documents")
+        if not os.path.exists(default_dir):
+            default_dir = os.path.join(os.path.expanduser("~"), "Desktop")
+
+        file_path = filedialog.asksaveasfilename(
+            title="Save Report As",
+            defaultextension=".pdf",
+            initialfile="job_report.pdf",
+            initialdir=default_dir,
+            filetypes=[("PDF files", "*.pdf")]
+        )
+        if not file_path:
+            return
+
+        with open(file_path, "wb") as f:
+            f.write(self._last_preview_pdf)
+
+        SuccessMessage(self, success=True,
+                       message=f"Report saved to:\n{file_path}",
+                       parent_icon_loader=self.parent_icon_loader_ref)           
                         
 class PaymentReportsView(FormBase):
     """

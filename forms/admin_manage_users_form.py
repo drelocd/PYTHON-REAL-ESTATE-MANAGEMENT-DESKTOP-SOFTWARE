@@ -257,12 +257,51 @@ class AdminManageUsersPanel(tk.Toplevel):
         self.password_entry.grid(row=2, column=1, sticky=tk.W, pady=2, padx=5)
 
         ttk.Label(details_frame, text="Role:").grid(row=3, column=0, sticky=tk.W, pady=2, padx=5)
-        self.role_combobox = ttk.Combobox(details_frame, values=["user", "admin"], state="readonly", width=27)
+        # Assuming the roles from the image are possible values
+        self.role_combobox = ttk.Combobox(details_frame, values=["Super Admin", "Admin", "Property Manager", "Sales Agent", "Accountant", "Reception"], state="readonly", width=27)
         self.role_combobox.grid(row=3, column=1, sticky=tk.W, pady=2, padx=5)
+
+        # --- Access Control (New Section) ---
+        access_control_frame = ttk.LabelFrame(right_frame, text="Access Control", padding="10")
+        access_control_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Land Services Section
+        land_services_frame = ttk.LabelFrame(access_control_frame, text="Land Services", padding="10")
+        land_services_frame.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
+
+        # Create checkbuttons for each Land Service permission
+        self.land_services_vars = {}
+        land_permissions = ["Add New Property", "Sell Property", "Track Payments", "Sold Property", "View Property", "Reports & Receipts", "Manage Projects", "Dispatch/all Deals", "Book Land"]
+        for i, permission in enumerate(land_permissions):
+            var = tk.BooleanVar()
+            self.land_services_vars[permission] = var
+            ttk.Checkbutton(land_services_frame, text=permission, variable=var).grid(row=i, column=0, sticky=tk.W)
+
+        # Survey Services Section
+        survey_services_frame = ttk.LabelFrame(access_control_frame, text="Survey Services", padding="10")
+        survey_services_frame.grid(row=0, column=1, padx=5, pady=5, sticky="nsew")
+
+        # Create checkbuttons for each Survey Service permission
+        self.survey_services_vars = {}
+        survey_permissions = ["Track Jobs", "Manage Payment", "Job Reports", "Dispatch Jobs"]
+        for i, permission in enumerate(survey_permissions):
+            var = tk.BooleanVar()
+            self.survey_services_vars[permission] = var
+            ttk.Checkbutton(survey_services_frame, text=permission, variable=var).grid(row=i, column=0, sticky=tk.W)
+
+        # Configure column weights for the access control frame
+        access_control_frame.grid_columnconfigure(0, weight=1)
+        access_control_frame.grid_columnconfigure(1, weight=1)
+        access_control_frame.grid_rowconfigure(0, weight=1)
 
         # Action Buttons
         button_frame = ttk.Frame(right_frame)
         button_frame.pack(pady=20)
+
+        self.save_button = ttk.Button(button_frame, text="Save Changes",
+                                      command=self._save_user_changes)
+        self.save_button.pack(side=tk.LEFT, padx=5)
+
 
         # Store button icons as attributes of the instance to prevent garbage collection
         self.add_icon = self._load_icon_for_button("add_user.png")
@@ -309,26 +348,49 @@ class AdminManageUsersPanel(tk.Toplevel):
         selected_item = self.user_tree.selection()
         if selected_item:
             values = self.user_tree.item(selected_item, 'values')
+
+            # User ID
             self.user_id_entry.config(state='normal')
             self.user_id_entry.delete(0, tk.END)
             self.user_id_entry.insert(0, values[0])
             self.user_id_entry.config(state='readonly')
 
+            # Username
             self.username_entry.delete(0, tk.END)
             self.username_entry.insert(0, values[1])
 
+            # Clear password field
             self.password_entry.delete(0, tk.END)
 
+            # Role
             self.role_combobox.set(values[2])
+
+            # Permissions from DB
+            perms = self.db_manager.get_user_permissions(values[0])
+            for perm, var in self.land_services_vars.items():
+                var.set(perms.get(perm, False))
+            for perm, var in self.survey_services_vars.items():
+                var.set(perms.get(perm, False))
+
         else:
+            # Clear everything if no selection
             self.user_id_entry.config(state='normal')
             self.user_id_entry.delete(0, tk.END)
             self.user_id_entry.config(state='readonly')
             self.username_entry.delete(0, tk.END)
             self.password_entry.delete(0, tk.END)
             self.role_combobox.set('')
+            for var in list(self.land_services_vars.values()) + list(self.survey_services_vars.values()):
+                var.set(False)
 
-    
+    def _save_user_changes(self):
+        """Save role + password + permissions."""
+        user_id = self.user_id_entry.get()
+        if not user_id:
+            return
+        permissions = {p: v.get() for p, v in {**self.land_services_vars, **self.survey_services_vars}.items()}
+        self.db_manager.set_user_permissions(user_id, permissions)
+        messagebox.showinfo("Success", "User updated with new permissions.")
 
     def _update_user(self):
         user_id_str = self.user_id_entry.get()
@@ -390,3 +452,5 @@ class AdminManageUsersPanel(tk.Toplevel):
         self.username_entry.delete(0, tk.END)
         self.password_entry.delete(0, tk.END)
         self.role_combobox.set('')
+
+        
