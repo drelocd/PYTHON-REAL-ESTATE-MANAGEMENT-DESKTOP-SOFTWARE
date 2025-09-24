@@ -5,6 +5,7 @@ from tkinter import messagebox
 import bcrypt
 import sys
 
+
 # Define the path for the database file
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 REPORTS_DIR = os.path.join(BASE_DIR, 'reports')
@@ -12,8 +13,8 @@ REPORTS_DIR = os.path.join(BASE_DIR, 'reports')
 # MySQL database configuration
 db_config = {
     'host': 'localhost',
-    'user': 'REMS',
-    'password': '123',
+    'user': 'local_user',
+    'password': 'admin6769@!',
     'database': 'real_estate_db'
 }
 
@@ -24,6 +25,7 @@ class DatabaseManager:
     def __init__(self, db_config=db_config):
         self.db_config = db_config
         self._create_reports_directory()
+        self._ensure_database_and_user() 
         self._create_tables() 
         self.load_settings()
 
@@ -33,6 +35,53 @@ class DatabaseManager:
             os.makedirs(REPORTS_DIR)
             print(f"Created reports directory: {REPORTS_DIR}")
 
+    def _ensure_database_and_user(self):
+        """
+        Ensures that the database and user exist.
+        If not, creates them automatically using root credentials.
+        """
+        try:
+            # First, try connecting to the database directly
+            conn = mysql.connector.connect(**self.db_config)
+            conn.close()
+            return True
+        except mysql.connector.Error as err:
+            print(f"Database/user missing or inaccessible: {err}")
+
+            # Try connecting as root to create them
+            try:
+                admin_conn = mysql.connector.connect(
+                    host=self.db_config['host'],
+                    user="local_user",                     # 👈 requires root access
+                    password="admin6769@!"    # 🔑 CHANGE THIS
+                )
+                admin_cursor = admin_conn.cursor()
+
+                # Create database if not exists
+                admin_cursor.execute("CREATE DATABASE IF NOT EXISTS real_estate_db")
+
+                # Create user if not exists
+                admin_cursor.execute("""
+                    CREATE USER IF NOT EXISTS 'local_user'@'localhost'
+                    IDENTIFIED BY 'admin6769@!';
+                """)
+
+                # Grant privileges
+                admin_cursor.execute("""
+                    GRANT ALL PRIVILEGES ON real_estate_db.* TO 'local_user'@'localhost';
+                """)
+                admin_cursor.execute("FLUSH PRIVILEGES;")
+
+                admin_conn.commit()
+                admin_cursor.close()
+                admin_conn.close()
+
+                print("Database and user created/ensured successfully.")
+                return True
+
+            except mysql.connector.Error as admin_err:
+                print(f"Admin connection or creation error: {admin_err}")
+                return False
     def _get_connection(self):
         """
         Returns a connection object to the database.
@@ -55,7 +104,7 @@ class DatabaseManager:
             return None
 
         try:
-            with conn.cursor(dictionary=True) as cursor:
+            with conn.cursor(buffered=True, dictionary=True) as cursor:
                 cursor.execute(query, params)
                 
                 # Check if the query is a SELECT statement and fetch results
@@ -143,6 +192,17 @@ class DatabaseManager:
                     password_hash VARCHAR(255) NOT NULL,
                     is_agent VARCHAR(255) DEFAULT 'no',
                     role VARCHAR(255) DEFAULT 'user'
+                    
+                )
+                ''',
+                '''
+                CREATE TABLE IF NOT EXISTS user_permissions (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id INT NOT NULL,
+                    permission_name VARCHAR(255) NOT NULL,
+                    is_granted BOOLEAN DEFAULT FALSE,
+                    UNIQUE (user_id, permission_name),
+                    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
                 )
                 ''',
                 '''
@@ -157,6 +217,7 @@ class DatabaseManager:
                     telephone_number VARCHAR(255) NOT NULL,
                     email VARCHAR(255) NOT NULL,
                     price FLOAT NOT NULL,
+                    project_no VARCHAR(255) NOT NULL,
                     image_paths TEXT,
                     title_image_paths TEXT,
                     status VARCHAR(255) NOT NULL DEFAULT 'Available',
@@ -231,6 +292,7 @@ class DatabaseManager:
                     FOREIGN KEY (added_by_user_id) REFERENCES users(user_id)
                 )
                 ''',
+                
                 '''
                 CREATE TABLE IF NOT EXISTS proposed_lots (
                     lot_id INT PRIMARY KEY AUTO_INCREMENT,
@@ -281,6 +343,43 @@ class DatabaseManager:
                     duration_months INT NOT NULL,
                     interest_rate FLOAT NOT NULL,
                     created_by VARCHAR(255) NOT NULL
+                )
+                ''',
+                '''
+                CREATE TABLE IF NOT EXISTS installment_plans (
+                plan_instance_id INT PRIMARY KEY AUTO_INCREMENT,
+                transaction_id INT NOT NULL,
+                payment_plan_id INT NOT NULL,
+                total_balance FLOAT NOT NULL,
+                monthly_installment_amount FLOAT NOT NULL,
+                start_date DATE NOT NULL,
+                FOREIGN KEY (transaction_id) REFERENCES transactions(transaction_id),
+                FOREIGN KEY (payment_plan_id) REFERENCES payment_plans(plan_id)
+                )
+                ''',
+                '''
+                CREATE TABLE IF NOT EXISTS installment_payments (
+                installment_id INT PRIMARY KEY AUTO_INCREMENT,
+                plan_instance_id INT NOT NULL,
+                due_date DATE NOT NULL,
+                due_amount FLOAT NOT NULL,
+                paid_date DATETIME,
+                paid_amount FLOAT,
+                payment_status VARCHAR(50) NOT NULL DEFAULT 'Scheduled',
+                FOREIGN KEY (plan_instance_id) REFERENCES installment_plans(plan_instance_id)
+                )
+                ''',
+                '''
+                CREATE TABLE IF NOT EXISTS transactions_history (
+                    history_id INT PRIMARY KEY AUTO_INCREMENT,
+                    transaction_id INT NOT NULL,
+                    installment_id INT NULL,
+                    payment_amount FLOAT NOT NULL,
+                    payment_mode VARCHAR(255),
+                    payment_reason VARCHAR(255),
+                    payment_date DATETIME NOT NULL,
+                    FOREIGN KEY (transaction_id) REFERENCES transactions(transaction_id),
+                    FOREIGN KEY (installment_id) REFERENCES installment_payments(installment_id)
                 )
                 ''',
                 '''
@@ -375,6 +474,18 @@ class DatabaseManager:
                     action_type VARCHAR(255) NOT NULL,
                     details TEXT,
                     FOREIGN KEY (user_id) REFERENCES users(user_id)
+                )
+                ''',
+                '''
+                CREATE TABLE IF NOT EXISTS dispatch_titles (
+                    dispatch_id INT AUTO_INCREMENT PRIMARY KEY,
+                    property_id INT NOT NULL,
+                    dispatch_date DATETIME NOT NULL,
+                    reason_for_dispatch VARCHAR(255),
+                    collected_by VARCHAR(255),
+                    collector_phone VARCHAR(50),
+                    sign LONGBLOB,
+                    FOREIGN KEY (property_id) REFERENCES properties(property_id)
                 )
                 '''
             ]
@@ -519,7 +630,7 @@ class DatabaseManager:
         query = "SELECT * FROM properties WHERE title_deed_number = %s;"
         return self._execute_query(query, (title_deed_number,), fetch_all=True)
 
-    def add_property(self, property_type, project_id, title_deed_number, location, size, description, owner, telephone_number, email, price, image_paths=None, title_image_paths=None, status='Available', added_by_user_id=None):
+    def add_property(self, property_type, project_id, title_deed_number, location, size, description, owner, telephone_number, email, price, project_no, image_paths=None, title_image_paths=None, status='Available', added_by_user_id=None):
         """
         Adds a new property to the database and ensures the owner is in the clients table.
         """
@@ -536,9 +647,9 @@ class DatabaseManager:
         if not client_exists:
             self.add_client(name=owner, telephone_number=telephone_number, email=email, status=client_status, added_by_user_id=added_by_user_id)
 
-        query = '''INSERT INTO properties (property_type,project_id, title_deed_number, location, size, description, owner, telephone_number, email, price, image_paths, title_image_paths, status, added_by_user_id)
-                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s,%s, %s, %s, %s, %s, %s)'''
-        return self._execute_query(query, (property_type,project_id, title_deed_number, location, size, description, owner, telephone_number, email, price, image_paths, title_image_paths, status, added_by_user_id))
+        query = '''INSERT INTO properties (property_type,project_id, title_deed_number, location, size, description, owner, telephone_number, email, price, project_no, image_paths, title_image_paths, status, added_by_user_id)
+                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s,%s, %s, %s, %s, %s, %s, %s)'''
+        return self._execute_query(query, (property_type,project_id, title_deed_number, location, size, description, owner, telephone_number, email, price, project_no, image_paths, title_image_paths, status, added_by_user_id))
 
     def get_propertiesfortransfer_by_title_deed(self, title_deed_number):
         """
@@ -591,18 +702,21 @@ class DatabaseManager:
         return self._execute_query(query, params, fetch_all=True)
     
     def get_all_properties_lots(self, status=None, property_type=None):
-        """
-        Retrieves all properties, optionally filtered by status and property type.
-        Returns: A list of dictionaries representing properties.
-        """
-        query = "SELECT * FROM properties"
+    
+        query = "SELECT p.*, pr.name AS project_name, pr.project_id AS project_number FROM properties p JOIN projects pr ON p.project_id = pr.project_id"
         params = []
+        conditions = []
+
         if status:
-            query += " WHERE status = %s"
+            conditions.append("p.status = %s")
             params.append(status)
         if property_type:
-            query += " AND property_type = %s"
+            conditions.append("p.property_type = %s")
             params.append(property_type)
+    
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+
         return self._execute_query(query, params, fetch_all=True)
     
     def get_all_properties_blocks(self, status=None, property_type=None):
@@ -662,12 +776,14 @@ class DatabaseManager:
         Fetches properties with optional search, size filters, status, and pagination,
         including the username of the user who added the property.
         Returns properties ordered by property_id DESC (newest first).
-        
+
         Returns: A list of dictionaries, each representing a property, including 'added_by_username'.
         """
         query = """
         SELECT
             p.property_id,
+            p.project_no,
+            p.project_id,
             p.property_type,
             p.title_deed_number,
             p.location,
@@ -683,16 +799,40 @@ class DatabaseManager:
             u.username AS added_by_username
         FROM
             properties p
+            
         LEFT JOIN
             users u ON p.added_by_user_id = u.user_id
         WHERE 1=1
         """
         params = []
 
+        # 🔎 Multi-field search filter
         if search_query:
-            query += " AND (p.title_deed_number LIKE %s OR p.location LIKE %s OR p.description LIKE %s)"
-            params.extend([f"%{search_query}%", f"%{search_query}%", f"%{search_query}%"])
-        
+            if search_query.isdigit():
+            # If numeric, check exact project_id match OR fuzzy search on others
+                query += """
+                    AND (
+                        p.project_id = %s OR
+                        p.location LIKE %s OR
+                        p.title_deed_number LIKE %s OR
+                        p.project_no LIKE %s
+                    )
+                """
+                params.append(int(search_query))  # exact project_id match
+                params.extend([f"%{search_query}%"] * 3)
+            else:
+                # Regular multi-field LIKE search
+                query += """
+                    AND (
+                        p.location LIKE %s OR
+                        p.title_deed_number LIKE %s OR
+                        CAST(p.project_id AS CHAR) LIKE %s OR
+                        p.project_no LIKE %s
+                    )
+                """
+                params.extend([f"%{search_query}%"] * 4)
+
+        # 📏 Size filters
         if min_size is not None:
             query += " AND p.size >= %s"
             params.append(min_size)
@@ -701,12 +841,12 @@ class DatabaseManager:
             query += " AND p.size <= %s"
             params.append(max_size)
 
-        if status: 
+        # ✅ Status filter
+        if status:
             query += " AND p.status = %s"
             params.append(status)
 
-        query += " ORDER BY p.property_id DESC"
-
+        # 📄 Pagination
         if limit is not None:
             query += " LIMIT %s"
             params.append(limit)
@@ -716,7 +856,8 @@ class DatabaseManager:
             params.append(offset)
 
         return self._execute_query(query, tuple(params), fetch_all=True)
-    
+
+
     def add_buyer(self, name, contact, added_by_user_id=None):
         query = "INSERT INTO buyers (name, contact, added_by_user_id) VALUES (%s, %s, %s)"
         return self._execute_query(query, (name, contact, added_by_user_id))
@@ -940,6 +1081,44 @@ class DatabaseManager:
         params.append(transaction_id)
         query = f"UPDATE transactions SET {', '.join(set_clauses)} WHERE transaction_id = %s"
         return self._execute_query(query, params)
+    
+    def add_transaction_history(self, transaction_id,installment_id, payment_amount, payment_mode, payment_reason, payment_date):
+        """
+        Records a single payment into the transactions_history table.
+        """
+        try:
+            query = """
+                INSERT INTO transactions_history (transaction_id, installment_id, payment_amount, payment_mode, payment_reason, payment_date)
+                VALUES (%s, %s,%s, %s, %s, %s)
+            """
+            params = (transaction_id,installment_id, payment_amount, payment_mode, payment_reason, payment_date)
+            
+            return  self._execute_query(query, params)
+        except Exception as e:
+            print(f"Error recording payment history for transaction {transaction_id}: {e}", file=sys.stderr)
+            return False
+
+
+    def get_oldest_outstanding_installment(self, transaction_id):
+        query = """
+            SELECT
+                ip.installment_id,
+                ip.due_amount,
+                ip.due_date,
+                COALESCE(SUM(th.payment_amount), 0) AS total_paid_for_installment
+            FROM installment_plans AS ipl
+            JOIN installment_payments AS ip ON ipl.plan_instance_id = ip.plan_instance_id
+            LEFT JOIN transactions_history AS th ON ip.installment_id = th.installment_id
+            WHERE
+                ipl.transaction_id = %s
+            GROUP BY ip.installment_id, ip.due_amount, ip.due_date
+            HAVING ip.due_amount > COALESCE(SUM(th.payment_amount), 0)
+            ORDER BY ip.due_date ASC
+            LIMIT 1
+        """
+        params = (transaction_id,)
+        return self._execute_query(query, params, fetch_one=True)
+
 
     def get_transactions_with_details(self, status=None, start_date=None, end_date=None, payment_mode=None, client_name_search=None, property_search=None, client_contact_search=None):
         """ Retrieves transactions with details from linked properties and clients, allowing for various filtering options, including client contact info. """
@@ -994,6 +1173,55 @@ class DatabaseManager:
             params.append(f"%{client_contact_search}%")
         query += " ORDER BY t.transaction_date DESC"
         return self._execute_query(query, params, fetch_all=True)
+    
+    def get_transaction_history(self, user_id):
+        """
+        Retrieves the complete transaction history for a given user.
+        
+        This function retrieves all transactions from the `transactions_history` table
+        that are associated with a user's original transactions.
+
+        Args:
+            user_id (int): The ID of the user whose transaction history to retrieve.
+
+        Returns:
+            list of dicts: A list of dictionaries where each dictionary represents a transaction record.
+                          Returns None if no transactions are found or an error occurs.
+        """
+        query = """
+        SELECT transaction_id, payment_date, payment_amount, payment_mode, payment_reason
+        FROM transactions_history
+        WHERE transaction_id IN (SELECT transaction_id FROM transactions WHERE added_by_user_id = %s)
+        ORDER BY payment_date DESC
+        """
+        
+        transactions = self._execute_query(query, params=(user_id,), fetch_all=True)
+
+        return transactions
+
+    def get_payment_history_for_transaction(self, transaction_id):
+        """
+        Retrieves all payment history records for a single transaction.
+
+        This is the correct function to call when the user double-clicks on a specific
+        transaction in the UI to see its payment history.
+
+        Args:
+            transaction_id (int): The ID of the transaction to get the history for.
+
+        Returns:
+            list of dicts: A list of dictionaries with payment history data.
+                          Returns None if no records are found or an error occurs.
+        """
+        query = """
+        SELECT payment_date, payment_amount, payment_mode, payment_reason
+        FROM transactions_history
+        WHERE transaction_id = %s
+        ORDER BY payment_date DESC
+        """
+        
+        history = self._execute_query(query, params=(transaction_id,), fetch_all=True)
+        return history
 
     ## NEW METHODS FOR SOLD PROPERTIES UI
     def get_total_sold_properties_count(self, start_date=None, end_date=None):
@@ -1876,6 +2104,47 @@ class DatabaseManager:
     def delete_payment_plan(self, plan_id):
         sql = "DELETE FROM payment_plans WHERE plan_id = %s"
         return self._execute_query(sql, (plan_id,))
+    
+    def add_installment_plan(self, transaction_id, payment_plan_id, total_balance, monthly_installment_amount, start_date):
+    
+        query = """
+        INSERT INTO installment_plans 
+        (transaction_id, payment_plan_id, total_balance, monthly_installment_amount, start_date) 
+        VALUES (%s, %s, %s, %s, %s)
+        """
+        params = (transaction_id, payment_plan_id, total_balance, monthly_installment_amount, start_date)
+        return self._execute_query(query, params, fetch_all=False)
+
+    def schedule_installment_payment(self, plan_instance_id, due_date, due_amount):
+    
+        query = """
+        INSERT INTO installment_payments 
+        (plan_instance_id, due_date, due_amount) 
+        VALUES (%s, %s, %s)
+        """
+        params = (plan_instance_id, due_date, due_amount)
+    # This might not return an ID, so just check for success
+        return self._execute_query(query, params, fetch_all=False) is not None
+    
+    def get_installment_payments(self, transaction_id):
+    
+        query = """
+            SELECT
+                ip.installment_id,
+                ip.due_date,
+                ip.due_amount,
+                ip.payment_status,
+                COALESCE(SUM(th.payment_amount), 0) AS total_paid_amount
+            FROM installment_plans AS ipl
+            LEFT JOIN installment_payments AS ip ON ipl.plan_instance_id = ip.plan_instance_id
+            LEFT JOIN transactions_history AS th ON ip.installment_id = th.installment_id # <-- NEW JOIN
+            WHERE ipl.transaction_id = %s
+            GROUP BY ip.installment_id
+            ORDER BY ip.due_date ASC
+        """
+        params = (transaction_id,)
+        return self._execute_query(query, params, fetch_all=True)
+    
     def add_daily_client(self, client_id, purpose, brought_by, user_id):
         """Adds a new daily client entry for an existing client."""
         query = "INSERT INTO daily_clients (client_id, purpose, brought_by, added_by_user_id) VALUES (%s, %s, %s, %s)"
@@ -1943,6 +2212,7 @@ class DatabaseManager:
         """
         today = datetime.now().date()
         return self.get_daily_clients(start_date=today, end_date=today, purpose='land sales')
+    
     def get_total_activity_logs_count(self, user_id=None, action_type=None, start_date=None, end_date=None):
             """
             Returns the total count of activity logs, with optional filters.
@@ -2278,12 +2548,12 @@ class DatabaseManager:
         params = (name, added_by_user_id, 'Available') # 'Available' is the default for new projects
         return self._execute_query(query, params)
 
-    def update_project(self, project_id, name, sale_status):
+    def update_project(self, project_id, name):
         """
         Updates the name and sale status of an existing project.
         """
-        query = "UPDATE projects SET name = %s, sale_status = %s WHERE project_id = %s"
-        params = (name, sale_status, project_id)
+        query = "UPDATE projects SET name = %s WHERE project_id = %s"
+        params = (name,  project_id)
         return self._execute_query(query, params)
 
     def delete_project(self, project_id):
@@ -2368,7 +2638,162 @@ class DatabaseManager:
         """
         query = "SELECT project_id, name, added_by_user_id, status FROM projects WHERE status = 'active' ORDER BY name"
         return self._execute_query(query, fetch_all=True) or []
-                
+    
+    def get_sold_properties(self):
+        """
+        Retrieves all sold properties (balance = 0) with buyer and dispatch status.
+        Ensures column names align with DispatchTitleView and DispatchTitleForm.
+        """
+        query = """
+            SELECT
+                p.property_id,
+                p.title_deed_number AS title_number,
+                p.location,
+                pr.name AS project_name,         
+                c.name AS buyer_name,            
+                t.transaction_date AS date_sold,
+                CASE 
+                    WHEN d.dispatch_id IS NOT NULL THEN 'DISPATCHED'
+                    ELSE 'NOT DISPATCHED'
+                END AS status
+            FROM properties p
+            JOIN projects pr ON p.project_id = pr.project_id
+            JOIN transactions t ON p.property_id = t.property_id
+            JOIN clients c ON t.client_id = c.client_id
+            LEFT JOIN dispatch_titles d ON p.property_id = d.property_id
+            WHERE t.balance = 0
+            ORDER BY t.transaction_date DESC
+        """
+        return self._execute_query(query, fetch_all=True)
+
+
+    
+    def get_title_details(self, title_number):
+        """
+        Retrieves details of a property based on its title deed number,
+        including the associated client's name.
+        """
+        query = """
+        SELECT
+            p.property_id,
+            p.title_deed_number AS title_number,
+            p.location,
+            p.size,
+            p.price,
+            c.name AS buyer_name,
+            c.telephone_number AS client_contact
+        FROM
+            properties p
+        JOIN
+            transactions t ON p.property_id = t.property_id
+        JOIN
+            clients c ON t.client_id = c.client_id
+        WHERE
+            p.title_deed_number = %s
+        """
+        params = (title_number,)
+        return self._execute_query(query, params, fetch_one=True)
+    
+    def save_dispatch_details_for_title(self, title_number, dispatch_date, reason, collected_by, phone, signature_data):
+        """
+        Saves all dispatch details to the dispatch_titles table for a given title deed number.
+        Returns: True on success, False on failure.
+        """
+        # Get property_id instead of job_id (fits your schema better)
+        property_id = self._get_property_id_by_title_number(title_number)
+        if not property_id:
+            print(f"Error: No property found for title number {title_number}")
+            return False
+
+        query = """
+            INSERT INTO dispatch_titles
+                (property_id, dispatch_date, reason_for_dispatch, collected_by, collector_phone, sign)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """
+        params = (property_id, dispatch_date, reason, collected_by, phone, signature_data)
+
+        return bool(self._execute_query(query, params))
+    
+    def _get_property_id_by_title_number(self, title_number):
+        """
+        Retrieves the property_id based on the given title deed number.
+        """
+        query = """
+            SELECT property_id
+            FROM properties
+            WHERE title_deed_number = %s
+        """
+        params = (title_number,)
+        result = self._execute_query(query, params, fetch_one=True)
+        return result["property_id"] if result else None
+
+        
+    def get_signature_by_dispatch_id(self, dispatch_id):
+        """
+        Retrieves the digital signature file data from dispatch_titles.
+        Returns: A dictionary containing the signature data, or None if not found.
+        """
+        query = "SELECT sign FROM dispatch_titles WHERE dispatch_id = %s"
+        params = (dispatch_id,)
+        return self._execute_query(query, params, fetch_one=True)
+
+    
+    # === BOOKING HELPERS ===
+
+
+    def get_property_status(self, property_id):
+        """
+        Returns the current status of a property (e.g., Available, Unavailable).
+        """
+        query = "SELECT status FROM properties WHERE property_id=%s"
+        return self._execute_query(query, (property_id,), fetch_one=True)
+
+
+    def mark_property_unavailable(self, property_id):
+        """
+        Marks a property as Unavailable after booking.
+        """
+        query = "UPDATE properties SET status='Unavailable' WHERE property_id=%s"
+        return self._execute_query(query, (property_id,))
+
+
+    def create_booking_transaction(self, property_id, client_id, payment_mode, added_by_user_id):
+        """
+        Creates a new booking transaction and returns its ID.
+        """
+        query = """
+            INSERT INTO transactions 
+            (property_id, client_id, payment_mode, total_amount_paid, transaction_date, added_by_user_id)
+            VALUES (%s, %s, %s, %s, NOW(), %s)
+        """
+        return self._execute_query(
+            query, (property_id, client_id, payment_mode, 0, added_by_user_id)
+        )
+    
+        # ---------------- Permissions ----------------
+    def get_user_permissions(self, user_id):
+        """Fetch all permissions for a given user."""
+        query = "SELECT permission_name, is_granted FROM user_permissions WHERE user_id = %s"
+        rows = self._execute_query(query, (user_id,), fetch_all=True)
+        return {row['permission_name']: bool(row['is_granted']) for row in rows} if rows else {}
+
+    def set_user_permissions(self, user_id, permissions_dict):
+        """
+        Store user permissions. permissions_dict = {"Add New Property": True, "Sell Property": False, ...}
+        """
+        queries = []
+        for perm, granted in permissions_dict.items():
+            queries.append((
+                """
+                INSERT INTO user_permissions (user_id, permission_name, is_granted)
+                VALUES (%s, %s, %s)
+                ON DUPLICATE KEY UPDATE is_granted = VALUES(is_granted)
+                """,
+                (user_id, perm, int(granted))
+            ))
+        return self._execute_transaction(*queries)
+
+
     def close(self):
         """
         Closes the database connection.
@@ -2377,3 +2802,6 @@ class DatabaseManager:
             self.cursor.close()
             self.conn.close()
             print("Database connection closed.")
+
+
+    

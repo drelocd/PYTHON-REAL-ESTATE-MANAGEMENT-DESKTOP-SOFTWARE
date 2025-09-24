@@ -15,12 +15,12 @@ import sys  # Used to get the executable path
 import logging  # For structured logging
 import os, shutil, zipfile, subprocess
 import platform
+
 # from packaging.version import parse as parse_version # REMOVED: Causing import issues
 
 from utils.tooltips import ToolTip
 # Import your DatabaseManager
 from database import DatabaseManager
-from forms.transfer_form import PropertyTransferForm  # Import the transfer form
 from forms.main_menu_form import MainMenuForm
 from forms.admin_manage_users_form import AdminManageUsersPanel  # Import the admin panel for user management
 # NEW IMPORTS from your file
@@ -30,10 +30,12 @@ from forms.survey_forms import ClientFileDashboard, AddClientAndFileForm, TrackJ
 from forms.signup_form import SignupForm
 from forms.dashboard_form import DashboardForm
 #from forms.client_form import ClientForm, AddClientForm, UpdateClientForm
-from forms.dispatch_form import DispatchJobsView
+from forms.dispatch_form import DispatchJobsView, DispatchTitleView
+from forms.projects_form import ProjectsPanel  # NEW: Import the ProjectsPanel
 from forms.system_settings_form import SystemSettingsForm  # NEW
 from forms.activity_log_viewer_form import ActivityLogViewerForm
 from forms.subdivide_lands_form import subdividelandForm  # NEW: Import the subdivide land form
+from forms.booking_form import bookLandForm
 # Assuming this is the correct import for ViewPropertiesToTransferForm
 #from forms.view_properties_to_transfer_form import ViewPropertiesToTransferForm
 
@@ -109,6 +111,20 @@ else:
 
 print("--- Default User Setup Complete ---")
 
+# Add 'reception' user if they don't exist
+reception_username = "reception"
+reception_password = "reception"
+reception_is_agent = "no"  # This is a flag to indicate the user is a reception
+if not db_manager.authenticate_user(reception_username, reception_password):
+    print(f"'{reception_username}' user not found or password incorrect. Attempting to add...")
+    reception_id = db_manager.add_user(reception_username, reception_password, reception_is_agent, "reception")
+    if reception_id:
+        print(f"Reception user '{reception_username}' added successfully with ID: {reception_id}")
+    else:
+        print(f"Failed to add reception user '{reception_username}'. It might already exist with a different password.")
+else:
+    print(f"Reception user '{reception_username}' already exists.")
+
 # --- Global Constants ---
 # Define the current application version
 APP_VERSION = "1.0.2"  # IMPORTANT: Increment this version number for new releases!
@@ -132,18 +148,53 @@ for d in [PROPERTY_IMAGES_DIR, TITLE_DEEDS_DIR, RECEIPTS_DIR, SURVEY_ATTACHMENTS
 # --- Section View Classes ---
 
 class SalesSectionView(ttk.Frame):
-    def __init__(self, master, db_manager, load_icon_callback, user_id, user_type):
+    def __init__(self, master, db_manager, load_icon_callback, user_id, user_type,parent_icon_loader=None):
         super().__init__(master, padding="10 10 10 10")
         self.db_manager = db_manager
         self.load_icon_callback = load_icon_callback  # Callback to main app's _load_icon
         self.user_id = user_id
         self.user_type = user_type  # Store user type here
 
+
+        self.user_permissions = self.db_manager.get_user_permissions(self.user_id)
+
         # Initialize a list to hold references to PhotoImage objects for SalesSection buttons
         self.sales_button_icons = []
+        self.icons = {}
+        self.parent_icon_loader = parent_icon_loader
 
         self._create_widgets()
         self.populate_system_overview()
+        
+
+
+
+    def _load_icon_for_button(self, icon_name, size=(24, 24)):
+        """
+        Loads an icon for a button. Caches the PhotoImage to prevent garbage collection.
+        Uses parent's loader if available, otherwise falls back to local loading.
+        """
+        if self.parent_icon_loader:
+            img = self.parent_icon_loader(icon_name, size=size)
+        else:
+            path = os.path.join(ICONS_DIR, icon_name)
+            try:
+                if not os.path.exists(path):
+                    raise FileNotFoundError(f"Icon not found at {path}")
+                original_img = Image.open(path)
+                img = original_img.resize(size, Image.Resampling.LANCZOS)
+                tk_img = ImageTk.PhotoImage(img)
+                if path not in self.icons:
+                    self.icons[path] = tk_img
+                return tk_img
+            except Exception as e:
+                print(f"MainMenuForm: Fallback Error loading icon {icon_name}: {e}")
+                img = Image.new('RGB', size, color='red')
+                tk_img = ImageTk.PhotoImage(img)
+                if path not in self.icons:
+                    self.icons[path] = tk_img
+                return tk_img
+        return img
 
     def _create_widgets(self):
         button_grid_container = ttk.Frame(self, padding="20")
@@ -159,29 +210,52 @@ class SalesSectionView(ttk.Frame):
         buttons_data = [
             {"text": "Add New Property", "icon": "add_property.png", "command": self._open_add_property_form,
              "roles": ['admin', 'property_manager'],
-             "tooltip_text" : "Click to add property in terms of blocks and lots."},
+               "permission": "Add New Property",
+             "tooltip_text" : "Click to add property in terms of blocks and lots and assign them to Projects."},
             {"text": "Sell Property", "icon": "manage_sales.png", "command": self._open_sell_property_form,
              "roles": ['admin', 'property_manager', 'sales_agent'],
+               "permission": "Sell Property",
              "tooltip_text" : "Click to Sell property in terms of blocks and Lots."},
             {"text": "Track Payments", "icon": "track_payments.png", "command": self._open_track_payments_view,
              "roles": ['admin', 'sales_agent', 'accountant'],
-             "tooltip_text" : "Click to Track payment and Manage payment of property."},
+               "permission": "Track Payments",
+             "tooltip_text" : "Click to Track payment and Manage payments of properties Sold."},
             {"text": "Sold Properties", "icon": "sold_properties.png", "command": self._open_sold_properties_view,
              "roles": ['admin', 'property_manager', 'sales_agent', 'accountant'],
-             "tooltip_text" : "Click to view Record listing of Sold Properties."},
+               "permission": "Sold Property",
+             "tooltip_text" : "Click to view Records of Sold Properties."},
             {"text": "View All Properties", "icon": "view_all_properties.png",
-             "command": self._open_view_all_properties, "roles": ['admin', 'property_manager', 'sales_agent'],
-             "tooltip_text" : "Click to view Record listing of All properties."},
+             "command": self._open_view_all_properties, "roles": ['admin', 'property_manager', 'sales_agent'], 
+             "permission": "View Property",
+             "tooltip_text" : "Click to view and Manage All properties."},
             {"text": "Reports & Receipts", "icon": "reports_receipts.png",
              "command": self._open_sales_reports_receipts_view,
-             "roles": ['admin', 'property_manager', 'sales_agent', 'accountant'],
-             "tooltip_text":"Click to generate a PDF report of sales within the specified date range."}
+             "roles": ['admin', 'property_manager', 'sales_agent', 'accountant'], 
+             "permission": "Reports & Receipts",
+             "tooltip_text":"Click to generate a PDF report of sales within the specified date range."},
+             {"text": "Manage Projects", "icon": "project.png",
+             "command": self._open_projects_panel,
+             "roles": ['admin', 'property_manager', 'sales_agent', 'accountant'], 
+             "permission": "Manage Projects",
+             "tooltip_text":"Click to Manage and View Projects."},
+             {"text": "Dispatch Title Deed", "icon": "dispatch.png",
+             "command": self._open_dispatch_title_form,
+             "roles": ['admin', 'property_manager'], 
+             "permission": "Dispatch/all Deals",
+             "tooltip_text":"Click to Dispatch a Title Deed and record the dispatch details."},
+             {"text": "Book land", "icon": "book_land.png",
+             "command": self.open_book_land_form,
+             "roles": ['admin', 'property_manager'],
+             "permission": "Book Land",
+             "tooltip_text":"Click to book land."}
             
         ]
 
         row, col = 0, 0
         for data in buttons_data:
-            state = 'normal' if self.user_type in data["roles"] else 'disabled'
+            # state = 'normal' if self.user_type in data["roles"] else 'disabled'
+            allowed = self.user_permissions.get(data["permission"], False)
+            state = 'normal' if allowed else 'disabled'
             # Check if button should be created at all to avoid empty slots for strict roles
             # For simplicity and to maintain grid, we will create and disable.
 
@@ -231,8 +305,16 @@ class SalesSectionView(ttk.Frame):
                                 parent_icon_loader=self.load_icon_callback, window_icon_name="manage_sales.png")
 
     def _open_track_payments_view(self):
-        TrackPaymentsForm(self.master, self.db_manager, self.populate_system_overview,
-                          parent_icon_loader=self.load_icon_callback, window_icon_name="track_payments.png")
+        """Opens the view for tracking property sale payments."""
+        # Corrected the order of user_id and populate_system_overview
+        TrackPaymentsForm(
+            self.master,
+            self.db_manager,
+            self.user_id,
+            self.populate_system_overview,
+            parent_icon_loader=self.load_icon_callback,
+            window_icon_name="track_payments.png"
+        )
 
     def _open_sold_properties_view(self):
         SoldPropertiesView(self.master, self.db_manager, self.populate_system_overview,
@@ -247,27 +329,6 @@ class SalesSectionView(ttk.Frame):
         SalesReportsForm(self.master, self.db_manager, parent_icon_loader=self.load_icon_callback,
                          window_icon_name="reports.png")
 
-    # NEW METHOD to open the PropertyTransferForm
-    def _open_property_transfer_form(self):
-        PropertyTransferForm(
-            self.master,
-            self.db_manager,
-            self.populate_system_overview,
-            user_id=self.user_id,
-            # No dummy_property_data is passed now
-            parent_icon_loader=self.load_icon_callback,
-            window_icon_name="transfer.png"
-        )
-
-    def _open_land_division_form(self):
-        subdividelandForm(
-            master=self.master,
-            db_manager=self.db_manager,
-            user_id=self.user_id,
-            refresh_callback=self.populate_system_overview,
-            parent_icon_loader=self.load_icon_callback,
-            window_icon_name="subdivide.png"
-        )
 
     def generate_report_type(self, action):
         # self.notebook.select(self.sales_section)
@@ -277,6 +338,33 @@ class SalesSectionView(ttk.Frame):
             self._open_sales_reports_receipts_view()  # Corrected from self.sales_section
         elif action == "Pending Instalments":
             self._open_sales_reports_receipts_view()
+
+    def _open_projects_panel(self):
+        """Opens the ProjectsPanel window."""
+        # Pass the user_id to the new panel
+        ProjectsPanel(self, self.db_manager, parent_icon_loader=self._load_icon_for_button, user_id=self.user_id)
+
+    def _open_dispatch_title_form(self):
+        """Opens the form to dispatch a title deed."""
+        DispatchTitleView(
+            master=self.master,
+            db_manager=self.db_manager,
+            refresh_callback=self.populate_system_overview,
+            user_id=self.user_id,
+            parent_icon_loader=self.load_icon_callback
+        )
+    
+    def open_book_land_form(self):
+        from forms.property_forms import InstallmentPaymentWindow
+        bookLandForm(
+            self.master, 
+            self.db_manager, 
+            self.populate_system_overview,
+            self.user_id,
+            # This is the corrected line: it adds on_close_callback
+            on_close_callback=self.populate_system_overview, 
+            parent_icon_loader=self.load_icon_callback
+    )
 
 
 class SurveySectionView(ttk.Frame):
@@ -290,9 +378,13 @@ class SurveySectionView(ttk.Frame):
         self.load_icon_callback = load_icon_callback
         self.user_id = user_id
         self.user_type = user_type
+
+        self.user_permissions = self.db_manager.get_user_permissions(self.user_id)
+
         self.button_icons = []
         self._create_widgets()
         self.populate_survey_overview()
+        
 
     def _create_widgets(self):
         """Creates the grid of buttons for the main dashboard."""
@@ -356,22 +448,24 @@ class SurveySectionView(ttk.Frame):
 
         buttons_data = [
             {"text": "Track Jobs", "icon": "track_jobs.png", "command": self._open_track_jobs_view,
-             "roles": ['admin', 'field_worker'],
-             "tooltip_text" : "Click to Track all the Survey Jobs."},
-            {"text": "Manage Payments", "icon": "manage_payments.png",
+             "roles": ['admin', 'field_worker'],"permission": "Track Jobs",
+             "tooltip_text" : "Click to Track all the Survey Services Jobs."},
+            {"text": "Manage Payments", "icon": "manage_payments.png", "permission": "Manage Payment",
              "command": self._open_manage_payments_view, "roles": ['admin', 'accountant'],
-             "tooltip_text" : "Click to Manage payment fo all Survey Jobs."},
+             "tooltip_text" : "Click to Manage payments fo all Survey Services Jobs."},
             {"text": "Job Reports", "icon": "survey_reports.png", "command": self._open_job_reports_view,
-             "roles": ['admin', 'accountant'],
-             "tooltip_text" : "Click to generate a PDF report of jobs based on the selected period."},
-             {"text": "Dispatch Completed Jobs", "icon": "dispatch.png", "command": self._open_job_dispatch_view,
-             "roles": ['admin', 'accountant'],
-             "tooltip_text" : "Click to show Survey jobs available for Dispatch and their records."}
+             "roles": ['admin', 'accountant'],  "permission": "Job Reports",
+             "tooltip_text" : "Click to generate a PDF report of Survey Service jobs based on the selected period."},
+             {"text": "Dispatch Survey Jobs", "icon": "dispatch.png", "command": self._open_job_dispatch_view,
+             "roles": ['admin', 'accountant'], "permission": "Dispatch Jobs",
+             "tooltip_text" : "Click to Dispatch Survey Services Jobs Completed or Cancelled and View their records."}
         ]
 
         row, col = 0, 0
         for data in buttons_data:
-            state = 'normal' if self.user_type in data["roles"] else 'disabled'
+            # state = 'normal' if self.user_type in data["roles"] else 'disabled'
+            allowed = self.user_permissions.get(data["permission"], False)
+            state = 'normal' if allowed else 'disabled'
 
             icon_img = self.load_icon_callback(data["icon"], size=(64, 64))
             self.button_icons.append(icon_img)
@@ -749,12 +843,13 @@ class AddClientForm(BaseForm):
             messagebox.showerror("Database Error", f"An error occurred: {e}")
 
 class AddDailyClientForm(BaseForm):
-    def __init__(self, parent, db_manager, client_id, refresh_callback, user_id, icon_loader):
+    def __init__(self, parent, db_manager, client_id, client_name, refresh_callback, user_id, icon_loader):
         # FIX: Correct the order of arguments to match BaseForm's constructor
         super().__init__(parent, 400, 200, "Add Daily Client Details", "client.png", icon_loader)
         
         self.db_manager = db_manager
         self.client_id = client_id
+        self.client_name = client_name
         self.refresh_callback = refresh_callback
         self.user_id = user_id
         
@@ -779,7 +874,7 @@ class AddDailyClientForm(BaseForm):
         frame.pack(fill="both", expand=True)
 
         # Display the client's name
-        ttk.Label(frame, text=f"Adding daily visit for: {self.client_id}", 
+        ttk.Label(frame, text=f"Adding daily visit for: {self.client_name}", 
                   font=('Helvetica', 12, 'bold')).grid(row=0, column=0, columnspan=2, pady=(0, 10))
         
           
@@ -1056,7 +1151,7 @@ class ReceptionSectionView(ttk.Frame):
                 # Store the client_id as a tag for easy retrieval
                 self.tree.insert("", "end", values=(client['name'].upper(),
                                                      client['telephone_number'].upper(),
-                                                     client['email'].upper()), tags=(client['client_id'],))
+                                                     client['email'].upper()), tags=(client['client_id'], client['name']))
     
     def _filter_clients(self, event):
         """Filters the client list in real-time based on search input."""
@@ -1069,7 +1164,7 @@ class ReceptionSectionView(ttk.Frame):
                 client_id, name, telephone, email = client['client_id'], client['name'], client[
                     'telephone_number'], client['email']
                 if search_term in str(client_id).lower() or search_term in name.lower() or search_term in telephone.lower() or search_term in email.lower():
-                    self.tree.insert("", "end", values=(name.upper(), telephone.upper(), email.upper()), tags=(client_id,))
+                    self.tree.insert("", "end", values=(name.upper(), telephone.upper(), email.upper()), tags=(client_id, name))
 
     def _on_client_double_click(self, event):
         """Opens a new form to add daily visit details for a selected client."""
@@ -1079,7 +1174,8 @@ class ReceptionSectionView(ttk.Frame):
         
         # Get the client_id from the tag
         client_id = self.tree.item(selected_item, "tags")[0]
-        AddDailyClientForm(self, self.db_manager, client_id, self.refresh_view, self.user_id, self.parent_icon_loader)
+        client_name = self.tree.item(selected_item, "tags")[1]
+        AddDailyClientForm(self, self.db_manager, client_id, client_name, self.refresh_view, self.user_id, self.parent_icon_loader)
         self.tree.selection_remove(selected_item)
 
     def _open_add_client_form(self):
@@ -1844,6 +1940,7 @@ class RealEstateApp(tk.Tk):
             self.survey_section._open_track_jobs_view()
 
     def _create_main_frames(self):
+        
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(expand=True, fill="both", padx=10, pady=10)
 
