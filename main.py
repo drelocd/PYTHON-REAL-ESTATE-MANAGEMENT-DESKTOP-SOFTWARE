@@ -35,7 +35,7 @@ from forms.projects_form import ProjectsPanel  # NEW: Import the ProjectsPanel
 from forms.system_settings_form import SystemSettingsForm  # NEW
 from forms.activity_log_viewer_form import ActivityLogViewerForm
 from forms.subdivide_lands_form import subdividelandForm  # NEW: Import the subdivide land form
-from forms.booking_form import bookLandForm
+from forms.booking_form import BookingManagementApp
 # Assuming this is the correct import for ViewPropertiesToTransferForm
 #from forms.view_properties_to_transfer_form import ViewPropertiesToTransferForm
 
@@ -195,6 +195,15 @@ class SalesSectionView(ttk.Frame):
                     self.icons[path] = tk_img
                 return tk_img
         return img
+    
+    def refresh_permissions_and_ui(self):
+        """Re-fetches permissions from the database and updates the UI."""
+        self.user_permissions = self.db_manager.get_user_permissions(self.user_id)
+        # Clear existing widgets
+        for widget in self.winfo_children():
+            widget.destroy()
+        # Re-create widgets with new permissions
+        self._create_widgets()
 
     def _create_widgets(self):
         button_grid_container = ttk.Frame(self, padding="20")
@@ -354,12 +363,10 @@ class SalesSectionView(ttk.Frame):
             parent_icon_loader=self.load_icon_callback
         )
     
-    def open_book_land_form(self):
-        from forms.property_forms import InstallmentPaymentWindow
-        bookLandForm(
+    def open_book_land_form(self): 
+        BookingManagementApp(
             self.master, 
             self.db_manager, 
-            self.populate_system_overview,
             self.user_id,
             # This is the corrected line: it adds on_close_callback
             on_close_callback=self.populate_system_overview, 
@@ -384,6 +391,15 @@ class SurveySectionView(ttk.Frame):
         self.button_icons = []
         self._create_widgets()
         self.populate_survey_overview()
+
+    def refresh_permissions_and_ui(self):
+        """Re-fetches permissions from the database and updates the UI."""
+        self.user_permissions = self.db_manager.get_user_permissions(self.user_id)
+        # Clear existing widgets
+        for widget in self.winfo_children():
+            widget.destroy()
+        # Re-create widgets with new permissions
+        self._create_widgets()
         
 
     def _create_widgets(self):
@@ -1364,7 +1380,20 @@ class RealEstateApp(tk.Tk):
 
         # Track last update check time to implement rate limiting
         self.last_update_check_time = None
-        self.update_check_interval = timedelta(hours=24)  # Check once every 24 hours
+        self.update_check_interval = timedelta(days=1)  # Check once every 24 hours
+
+        # --- Setup backup root before loading last backup ---
+        custom_backup_root = None
+        if getattr(sys, 'frozen', False):
+            exe_dir = os.path.dirname(sys.executable)
+        else:
+            exe_dir = os.path.dirname(os.path.abspath(__file__))
+
+        self.backup_root = custom_backup_root or os.path.join(exe_dir, "backups")
+        os.makedirs(self.backup_root, exist_ok=True)
+
+        # Load last backup time (after backup_root exists)
+        self.last_backup_time = self._load_last_backup_time()
 
         # --- Apply Dark Theme ---
         self.style = ttk.Style(self)
@@ -1374,49 +1403,27 @@ class RealEstateApp(tk.Tk):
         self.style.configure('TNotebook', background="#FFFFFF", borderwidth=0)
         self.style.configure('TNotebook.Tab', foreground='black', padding=[5, 2])
         self.style.map('TNotebook.Tab',
-                       background=[('selected', '#007ACC'), ('active', "#2F8043")],
-                       foreground=[('selected', 'white')])
+                    background=[('selected', '#007ACC'), ('active', "#2F8043")],
+                    foreground=[('selected', 'white')])
 
         # Treeview (for tables) styling
         self.style.configure("Treeview",
-                             background="#8F8F8F",
-                             foreground="black",
-                             fieldbackground="#818181",
-                             rowheight=25)
+                            background="#8F8F8F",
+                            foreground="black",
+                            fieldbackground="#818181",
+                            rowheight=25)
         self.style.configure("Treeview.Heading",
-                             background="#6BBCF1",
-                             foreground="black",
-                             font=('Arial', 10, 'bold'))
+                            background="#6BBCF1",
+                            foreground="black",
+                            font=('Arial', 10, 'bold'))
         self.style.map("Treeview",
-                       background=[('selected', "#F5F5F5")],
-                       foreground=[('selected', 'black')],
-                       font=[('selected', ('Arial', 10, 'bold'))])  # Added font style
+                    background=[('selected', "#F5F5F5")],
+                    foreground=[('selected', 'black')],
+                    font=[('selected', ('Arial', 10, 'bold'))])  # Added font style
 
         self.login_successful = False
         self.user_type = None
         self.show_login_page()  # Start with the login page
-
-        custom_backup_root=None
-
-        """
-        custom_backup_root: optional path chosen by the user.
-        If None, backups will be saved beside the exe.
-        """
-        if getattr(sys, 'frozen', False):
-            exe_dir = os.path.dirname(sys.executable)
-        else:
-            exe_dir = os.path.dirname(os.path.abspath(__file__))
-
-        self.backup_root = custom_backup_root or os.path.join(exe_dir, "backups")
-        os.makedirs(self.backup_root, exist_ok=True)
-
-
-        # Removed the status label at the bottom for update messages
-        # self.update_status_label = ttk.Label(self, text="")
-        # self.update_status_label.pack(side=tk.BOTTOM, pady=5) # Example packing
-
-        # Removed the initial update check here. It will now run after login.
-        # self.after(5000, self.check_for_updates)
 
     def backup_app_data(self, backup_root, db_filename="rems_database.db"):
         """
@@ -1454,30 +1461,79 @@ class RealEstateApp(tk.Tk):
                 return
 
             backup_path = self.backup_app_data(folder)  # pass chosen folder
+
+            # Update last backup timestamp (persistent)
+            now = datetime.now()
+            self.last_backup_time = now
+            self._save_last_backup_time(now)
+
             messagebox.showinfo("Backup Complete", f"Backup created at:\n{backup_path}")
         except Exception as e:
             self.logger.error(f"Manual backup failed: {e}")
             messagebox.showerror("Backup Failed", f"An error occurred while creating the backup:\n{e}")
 
+
+    def _get_last_backup_file(self):
+        """Returns the path to the file where last backup time is stored."""
+        return os.path.join(self.backup_root, "last_backup.txt")
+
+    def _load_last_backup_time(self):
+        """Loads the last backup timestamp from file (if it exists)."""
+        try:
+            path = self._get_last_backup_file()
+            if os.path.exists(path):
+                with open(path, "r") as f:
+                    ts_str = f.read().strip()
+                    return datetime.fromisoformat(ts_str)
+        except Exception as e:
+            self.logger.error(f"Failed to load last backup timestamp: {e}")
+        return None
+
+    def _save_last_backup_time(self, dt):
+        """Saves the last backup timestamp to file."""
+        try:
+            path = self._get_last_backup_file()
+            with open(path, "w") as f:
+                f.write(dt.isoformat())
+        except Exception as e:
+            self.logger.error(f"Failed to save last backup timestamp: {e}")
+
+
     def check_for_updates(self):
         """
         Initiates a version update check in a separate thread to avoid freezing the UI.
         Implements rate limiting to avoid excessive API calls.
+        Also triggers an automatic backup, but only once every 7 days (persistent).
         """
-        try:
-            backup_path = self.backup_app_data(self.backup_root)
-            self.logger.info(f"Automatic backup completed at {backup_path}")
-        except Exception as e:
-            self.logger.error(f"Backup failed before update check: {e}")
-
         now = datetime.now()
+
+        # --- Backup every 7 days (persistent) ---
+        if not hasattr(self, "backup_interval"):
+            self.backup_interval = timedelta(days=7)
+
+        if not hasattr(self, "last_backup_time") or self.last_backup_time is None:
+            # Try loading from file if not already loaded
+            self.last_backup_time = self._load_last_backup_time()
+
+        if not self.last_backup_time or (now - self.last_backup_time) >= self.backup_interval:
+            try:
+                backup_path = self.backup_app_data(self.backup_root)
+                self.last_backup_time = now
+                self._save_last_backup_time(now)  # persist timestamp
+                self.logger.info(f"Automatic backup completed at {backup_path}")
+            except Exception as e:
+                self.logger.error(f"Backup failed before update check: {e}")
+        else:
+            self.logger.info("Skipping backup: last backup was within 7 days.")
+
+        # --- Update check every 24 hours ---
         if self.last_update_check_time and (now - self.last_update_check_time) < self.update_check_interval:
             self.logger.info("Skipping update check: last check was too recent.")
-            # No pop-up for skipping, as it's a silent background check interval.
             return
 
         self.logger.info("Starting update check thread.")
         threading.Thread(target=self._run_update_check, daemon=True).start()
+
 
     def _run_update_check(self):
         """
@@ -1901,7 +1957,17 @@ class RealEstateApp(tk.Tk):
 
     def _open_admin_Users_panel(self):
         # Open the AdminManageusersPanel window
-        AdminManageUsersPanel(self, self.db_manager, self.user_id, parent_icon_loader=self._load_icon)
+        selected_tab_id = self.notebook.select()
+        selected_tab_widget = self.notebook.nametowidget(selected_tab_id)
+        refresh_callback = None
+        if isinstance(selected_tab_widget, SalesSectionView):
+            # We assume you've added this method to SalesSectionView
+            refresh_callback = selected_tab_widget.refresh_permissions_and_ui
+        elif isinstance(selected_tab_widget, SurveySectionView):
+            # We assume you've added this method to SurveySectionView
+            refresh_callback = selected_tab_widget.refresh_permissions_and_ui
+
+        AdminManageUsersPanel(self, self.db_manager, self.user_id, parent_icon_loader=self._load_icon, refresh_callback=refresh_callback)
 
     def _open_admin_menu(self):
 
