@@ -13,7 +13,7 @@ REPORTS_DIR = os.path.join(BASE_DIR, 'reports')
 # MySQL database configuration
 db_config = {
     'host': 'localhost',
-    'user': 'local_user',
+    'user': 'rems',
     'password': 'admin6769@!',
     'database': 'real_estate_db'
 }
@@ -92,6 +92,8 @@ class DatabaseManager:
         except mysql.connector.Error as err:
             print(f"Error connecting to MySQL database: {err}")
             return None
+        
+    
     
     def _execute_query(self, query, params=(), fetch_one=False, fetch_all=False):
         """
@@ -2792,6 +2794,177 @@ class DatabaseManager:
                 (user_id, perm, int(granted))
             ))
         return self._execute_transaction(*queries)
+
+
+    def get_booked_property_details(self, title_deed):
+        """Retrieves full details for a single property based on title deed."""
+        # Re-use the all properties logic, but filter for a single title deed
+        query = """
+        SELECT 
+            p.property_id, 
+            p.title_deed_number, 
+            p.location, 
+            p.price, 
+            p.status,
+            t.transaction_id, 
+            t.payment_mode,
+            t.balance,
+            c.name, 
+            c.telephone_number AS client_contact,
+            (SELECT SUM(payment_amount) FROM transactions_history WHERE transaction_id = t.transaction_id) AS total_paid
+        FROM 
+            properties p
+        LEFT JOIN 
+            transactions t ON p.property_id = t.property_id
+        LEFT JOIN
+            clients c ON t.client_id = c.client_id
+        WHERE p.title_deed_number = %s
+        """
+        result = self._execute_query(query, (title_deed,), fetch_one=True)
+        
+        if result:
+            total_paid = result['total_paid'] if result['total_paid'] is not None else 0.0
+            
+            # Format output to match the expected dictionary structure
+            return {
+                'property_id': result['property_id'],
+                'transaction_id': result['transaction_id'],
+                'title_deed_number': result['title_deed_number'],
+                'location': result['location'],
+                'price': result['price'],
+                'status': result['status'],
+                'name': result['name'] if result['name'] else 'N/A',
+                'client_contact': result['client_contact'] if result['client_contact'] else 'N/A',
+                'payment_mode': result['payment_mode'] if result['payment_mode'] else 'N/A',
+                'initial_payment': total_paid, # Total amount paid to date
+                'balance': result['balance'] if result['balance'] is not None else 0.0
+            }
+        return None
+
+    def process_refund_and_reset(self, title_deed):
+        """
+        Executes a full transactional rollback for a sales transaction.
+        
+        This process ensures all child records (installment_payments, transactions_history, 
+        installment_plans) are deleted before the parent record (transactions) is deleted, 
+        and finally the property status is updated, all within an atomic transaction.
+        """
+        
+        # --- Step 1: Get necessary IDs and check status ---
+        info_query = """
+        SELECT t.transaction_id, p.property_id 
+        FROM properties p
+        JOIN transactions t ON p.property_id = t.property_id
+        WHERE p.title_deed_number = %s AND p.status = 'unvailable'
+        """
+        property_info = self._execute_query(info_query, (title_deed,), fetch_one=True)
+
+        if not property_info:
+            return False 
+
+        transaction_id = property_info['transaction_id']
+        property_id = property_info['property_id']
+        
+        # --- Step 2: Get plan_ids (READ operation, required for cascade deletion) ---
+        # This read must happen outside the transaction, as DML is not mixed with DQL efficiently.
+        plan_query = "SELECT plan_instance_id FROM installment_plans WHERE transaction_id = %s"
+        plan_results = self._execute_query(plan_query, (transaction_id,), fetch_all=True)
+        plan_ids = [row['plan_instance_id'] for row in plan_results] if plan_results else []
+        
+        queries_to_execute = []
+        
+        # 1. DELETE installment_payments (Child of installment_plans)
+        if plan_ids:
+            placeholders = ', '.join(['%s'] * len(plan_ids))
+            delete_installments = f"DELETE FROM installment_payments WHERE plan_instance_id IN ({placeholders})"
+            queries_to_execute.append((delete_installments, tuple(plan_ids)))
+        
+        # 2. DELETE transactions_history (Child of transactions)
+        delete_history = "DELETE FROM transactions_history WHERE transaction_id = %s"
+        queries_to_execute.append((delete_history, (transaction_id,)))
+        
+        # 3. DELETE installment_plans (Child of transactions)
+        delete_plans = "DELETE FROM installment_plans WHERE transaction_id = %s"
+        queries_to_execute.append((delete_plans, (transaction_id,)))
+        
+        # 4. DELETE the main transactions record (Parent)
+        delete_transaction = "DELETE FROM transactions WHERE transaction_id = %s"
+        queries_to_execute.append((delete_transaction, (transaction_id,)))
+        
+        # 5. Update the property record status
+        update_property = "UPDATE properties SET status = 'available' WHERE property_id = %s"
+        queries_to_execute.append((update_property, (property_id,)))
+        
+        # --- Step 3: Execute all steps atomically using the transaction helper ---
+        return self._execute_transaction(*queries_to_execute)
+
+
+    def get_all_booked_properties(self, status=None):
+        """
+        Fetches properties, joining with transaction and client data for the view.
+        
+        Note: The client name is returned under the key 'name' (from c.name).
+        """
+        
+        query = """
+        SELECT 
+            p.property_id, 
+            p.title_deed_number, 
+            p.location, 
+            p.price, 
+            p.status,
+            t.transaction_id, 
+            t.payment_mode,
+            t.balance,
+            c.client_id,
+            c.name,                 -- Fetch client name as 'name'
+            c.telephone_number AS client_contact, -- Fetch client contact
+            (SELECT SUM(payment_amount) FROM transactions_history WHERE transaction_id = t.transaction_id) AS total_paid
+        FROM 
+            properties p
+        LEFT JOIN 
+            transactions t ON p.property_id = t.property_id
+        LEFT JOIN
+            clients c ON t.client_id = c.client_id
+        """
+        params = []
+        if status:
+            query += " WHERE p.status = %s"
+            params.append(status)
+
+        # Use the new _execute_query method
+        results = self._execute_query(query, params, fetch_all=True)
+        
+        # Process results to format data for the Tkinter treeview
+        if results:
+            processed_data = []
+            for row in results:
+                total_paid = row['total_paid'] if row['total_paid'] is not None else 0.0
+                
+                if row['status'] == 'available':
+                    row['name'] = 'N/A'             # Use 'name' key
+                    row['client_contact'] = 'N/A'
+                    row['payment_mode'] = 'N/A'
+                    initial_payment = 0.0
+                else:
+                    initial_payment = total_paid
+                
+                processed_data.append({
+                    'property_id': row['property_id'],
+                    'transaction_id': row['transaction_id'],
+                    'title_deed_number': row['title_deed_number'],
+                    'location': row['location'],
+                    'price': row['price'],
+                    'status': row['status'],
+                    'name': row['name'],            # Use 'name' key
+                    'client_contact': row['client_contact'],
+                    'payment_mode': row['payment_mode'],
+                    'initial_payment': initial_payment, 
+                    'balance': row['balance'] if row['balance'] is not None else 0.0
+                })
+            return processed_data
+        
+        return []
 
 
     def close(self):
