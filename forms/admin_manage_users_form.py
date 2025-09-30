@@ -17,7 +17,7 @@ class AdminManageUsersPanel(tk.Toplevel):
     and system settings.
     """
 
-    def __init__(self, parent, db_manager, user_id, parent_icon_loader=None, window_icon_name="add_survey.png", refresh_callback=None):
+    def __init__(self, parent, db_manager, user_id, parent_icon_loader=None, window_icon_name="add_survey.png"):
         """
         Initializes the AdminPanel window.
         """
@@ -26,7 +26,6 @@ class AdminManageUsersPanel(tk.Toplevel):
         self.db_manager = db_manager
         self.user_id = user_id
         self.parent_icon_loader = parent_icon_loader
-        self.refresh_callback = refresh_callback
 
         # Set initial window properties
         self.title("Admin Panel- Manage Users")
@@ -299,6 +298,9 @@ class AdminManageUsersPanel(tk.Toplevel):
         button_frame = ttk.Frame(right_frame)
         button_frame.pack(pady=20)
 
+        self.save_button = ttk.Button(button_frame, text="Save Changes",
+                                      command=self._save_user_changes)
+        self.save_button.pack(side=tk.LEFT, padx=5)
 
 
         # Store button icons as attributes of the instance to prevent garbage collection
@@ -406,26 +408,19 @@ class AdminManageUsersPanel(tk.Toplevel):
             return
 
         if user_id == self.user_id and new_role and new_role != 'admin':
-            if not messagebox.askyesno(
-                "Warning",
-                "You are attempting to change your own role from admin. This might lock you out. Continue?"
-            ):
+            if messagebox.askyesno("Warning",
+                                   "You are attempting to change your own role from admin. This might lock you out. Are you sure?"):
+                pass
+            else:
                 return
 
         if self.db_manager.update_user(user_id, new_username, new_password if new_password else None, new_role):
-            # Save permissions at the same time
-            permissions = {p: v.get() for p, v in {**self.land_services_vars, **self.survey_services_vars}.items()}
-            self.db_manager.set_user_permissions(user_id, permissions)
-
-            messagebox.showinfo("Success", f"User ID {user_id} updated successfully with new permissions.")
+            messagebox.showinfo("Success", f"User ID {user_id} updated successfully.")
             self.populate_user_list()
             self._clear_fields()
-
-            # Refresh main UI if callback is provided
-            if self.refresh_callback:
-                self.refresh_callback()
         else:
-            messagebox.showerror("Error", "Failed to update user. Username might already exist or no changes were made.")
+            messagebox.showerror("Error",
+                                 "Failed to update user. Username might already exist or no changes were made.")
 
     def _delete_user(self):
         user_id_str = self.user_id_entry.get()

@@ -585,22 +585,27 @@ class ViewBookedLandsFrame(ttk.Frame):
         super().__init__(master, padding="10")
         self.db_manager = db_manager
         self.parent_icon_loader = parent_icon_loader
+        self.booked_lands_data = [] # Store raw data for filtering
 
         self._create_widgets()
+        self._populate_booked_lands_treeview() # Initial population
         
     def _create_widgets(self):
         main_frame = self
 
+        # Search Frame
         search_frame = ttk.Frame(main_frame, padding=(0, 0, 0, 5))
         search_frame.pack(fill=tk.X)
         
         self.search_var = tk.StringVar()
+        # Note: self._filter_booked_lands now filters based on self.booked_lands_data
         self.search_var.trace_add("write", self._filter_booked_lands)
 
         ttk.Label(search_frame, text="Search Booked Lands:").pack(side=tk.LEFT, padx=(0, 5))
         self.entry_search = ttk.Entry(search_frame, textvariable=self.search_var)
         self.entry_search.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
+        # Treeview
         self.tree = ttk.Treeview(main_frame, columns=("client_name", "title_deed", "location", "price", "status", "payment_mode"), show="headings")
         self.tree.pack(fill="both", expand=True)
 
@@ -618,57 +623,149 @@ class ViewBookedLandsFrame(ttk.Frame):
         self.tree.column("status", width=80, minwidth=60)
         self.tree.column("payment_mode", width=100, minwidth=80)
 
+        # Scrollbar
         scrollbar = ttk.Scrollbar(main_frame, orient=tk.VERTICAL, command=self.tree.yview)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.tree.configure(yscrollcommand=scrollbar.set)
         
+        # Bindings
         self.tree.bind("<Double-1>", self._on_double_click)
+        # NEW: Bind selection event to toggle button state
+        self.tree.bind("<<TreeviewSelect>>", self._toggle_refund_button) 
+        
+        # Button Frame (NEW)
+        button_frame = ttk.Frame(main_frame, padding=(0, 5, 0, 0))
+        button_frame.pack(fill=tk.X)
+        
+        # Refund Button (NEW)
+        self.btn_refund = ttk.Button(
+            button_frame, 
+            text="Refund & Mark Available", 
+            command=self._process_refund,
+            state=tk.DISABLED # Start disabled
+        )
+        self.btn_refund.pack(side=tk.RIGHT, padx=5) # Added padx for spacing
 
     def _on_double_click(self, event):
         item_id = self.tree.identify_row(event.y)
         if item_id:
+            # We need the title deed from the treeview item to fetch full details
             item = self.tree.item(item_id, 'values')
-            title_deed = item[1]
+            # Title deed is at index 1 in the values tuple
+            title_deed = item[1] 
+            
             # Assuming you have a method in your DBManager to get full transaction details
             booked_property = self.db_manager.get_booked_property_details(title_deed)
+            
             if booked_property:
-                # You can create a new Toplevel window to display more details
-                messagebox.showinfo("Booked Property Details", f"Title Deed: {booked_property['title_deed_number']}\n"
-                                                               f"Location: {booked_property['location']}\n"
-                                                               f"Price: KES {booked_property['price']:,.2f}\n"
-                                                               f"Status: {booked_property['status']}\n"
-                                                               f"Client Name: {booked_property['client_name']}\n"
-                                                               f"Client Contact: {booked_property['client_contact']}\n"
-                                                               f"Payment Mode: {booked_property['payment_mode']}\n"
-                                                               f"Initial Payment: KES {booked_property['initial_payment']:,.2f}\n"
-                                                               f"Balance: KES {booked_property['balance']:,.2f}", parent=self)
+                # Use a cleaner way to format the currency
+                def format_currency(value):
+                    return f"KES {value:,.2f}" if isinstance(value, (int, float)) else str(value)
+
+                messagebox.showinfo(
+                    "Booked Property Details", 
+                    f"Title Deed: {booked_property['title_deed_number']}\n"
+                    f"Location: {booked_property['location']}\n"
+                    f"Price: {format_currency(booked_property['price'])}\n"
+                    f"Status: {booked_property['status']}\n"
+                    f"Client Name: {booked_property['name']}\n"
+                    f"Client Contact: {booked_property['client_contact']}\n"
+                    f"Payment Mode: {booked_property['payment_mode']}\n"
+                    f"Initial Payment: {format_currency(booked_property['initial_payment'])}\n"
+                    f"Balance: {format_currency(booked_property['balance'])}", 
+                    parent=self
+                )
             else:
                 messagebox.showerror("Error", "Could not retrieve property details.", parent=self)
 
+    def _toggle_refund_button(self, event=None):
+        """Enables/disables the Refund button based on Treeview selection."""
+        selected_items = self.tree.selection()
+        if selected_items:
+            self.btn_refund.config(state=tk.NORMAL)
+        else:
+            self.btn_refund.config(state=tk.DISABLED)
+
+    def _process_refund(self):
+        """Processes the refund, updates DB status, and clears client info."""
+        selected_items = self.tree.selection()
+        if not selected_items:
+            # This should technically not happen if the button is disabled correctly
+            messagebox.showwarning("Selection Required", "Please select a booked property to process a refund.", parent=self)
+            return
+
+        # Get the values of the first selected item
+        selected_item = selected_items[0]
+        item_values = self.tree.item(selected_item, 'values')
+        
+        # Title deed is at index 1, Client Name is at index 0
+        title_deed = item_values[1]
+        client_name = item_values[0]
+
+        confirm = messagebox.askyesno(
+            "Confirm Refund",
+            f"Are you sure you want to process a refund for property with Title Deed: {title_deed} (Client: {client_name})?\n\n"
+            "This action will clear all client/payment details and set the property status back to 'available'.",
+            parent=self
+        )
+
+        if confirm:
+            try:
+                # Call the DB manager method to handle the reset logic
+                success = self.db_manager.process_refund_and_reset(title_deed)
+                
+                if success:
+                    messagebox.showinfo("Success", f"Refund processed successfully. Property {title_deed} is now marked as 'available'.", parent=self)
+                    # Clear selection and refresh treeview
+                    self.tree.selection_remove(selected_items)
+                    self._populate_booked_lands_treeview()
+                    self._toggle_refund_button() # Ensure button is disabled
+                else:
+                    messagebox.showerror("Error", f"Failed to find or update property {title_deed}.", parent=self)
+            except Exception as e:
+                # Catch actual database exceptions if the MockDBManager were replaced
+                messagebox.showerror("Database Error", f"An error occurred during refund processing: {e}", parent=self)
+
     def _populate_booked_lands_treeview(self, *args):
+        # Clear existing treeview items
         for item in self.tree.get_children():
             self.tree.delete(item)
-        booked_lands = self.db_manager.get_all_properties(status='unvailable')
+            
+        # Fetch the current list of booked lands ('unvailable' status)
+        self.booked_lands_data = self.db_manager.get_all_booked_properties(status='unvailable')
         
-        for land in booked_lands:
+        # Insert data into the treeview
+        for land in self.booked_lands_data:
+            # Prepare formatted price string
+            price_str = f"KES {land.get('price', 0):,.2f}"
+            
             self.tree.insert("", tk.END, values=(
-                land.get('client_name', 'N/A'),
+                land.get('name', 'N/A'),
                 land.get('title_deed_number', 'N/A'),
                 land.get('location', 'N/A'),
-                f"KES {land.get('price', 0):,.2f}",
+                price_str, # Use formatted price string
                 land.get('status', 'N/A'),
                 land.get('payment_mode', 'N/A')
             ))
             
+        # Ensure the refund button state is correct after populating
+        self._toggle_refund_button()
+            
     def _filter_booked_lands(self, *args):
         search_query = self.search_var.get().strip().lower()
         
+        # Optimization: Detach and reattach based on the full data list (self.booked_lands_data)
+        # However, for simplicity and working with the current Treeview item values:
+        
         for item in self.tree.get_children():
+            # Get the current displayed values for filtering
             values = [str(v).lower() for v in self.tree.item(item, 'values')]
             
             if not search_query or any(search_query in v for v in values):
+                # Reattach if it matches or if search is empty
                 self.tree.reattach(item, '', 'end')
             else:
+                # Detach if it doesn't match
                 self.tree.detach(item)
                 
 
@@ -954,8 +1051,8 @@ class InstallmentPaymentWindow(tk.Toplevel):
 
             messagebox.showinfo("Success", "Installment sale recorded successfully!", parent=self)
             self.refresh_callback()
-            self.master._clear_property_details_ui()
-            self.master._load_daily_clients()
+            self.master.book_land_frame._clear_property_details_ui()
+            self.master.book_land_frame._load_daily_clients()
             self.destroy()
         else:
             messagebox.showerror("Error", "Failed to record installment transaction.", parent=self)
