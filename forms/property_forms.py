@@ -23,9 +23,10 @@ from reportlab.lib.enums import TA_CENTER
 from utils.tooltips import ToolTip
 from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
+from decimal import Decimal, InvalidOperation, getcontext
 
 
-
+getcontext().prec = 28 
 
 try:
     test_date = datetime.now().date()
@@ -490,7 +491,7 @@ class AddPropertyForm(tk.Toplevel):
         row += 1
 
         # Email
-        ttk.Label(main_frame, text="Email Address:").grid(row=row, column=0, sticky="w", pady=2, padx=5)
+        ttk.Label(main_frame, text="ID Number:").grid(row=row, column=0, sticky="w", pady=2, padx=5)
         self.entry_email = ttk.Entry(main_frame, width=40, state="readonly")
         self.entry_email.grid(row=row, column=1, sticky="ew", pady=2, padx=5)
         row += 1
@@ -671,10 +672,8 @@ class AddPropertyForm(tk.Toplevel):
             return
             
         # Regex for email validation
-        email_regex = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-        if email and not re.match(email_regex, email):
-            messagebox.showerror("Validation Error", "Please enter a valid email address.")
-            return
+        
+        
 
         # Save images and get their paths
         saved_title_image_paths_str = self._save_images(self.selected_title_images, TITLE_DEEDS_DIR)
@@ -1346,6 +1345,15 @@ class InstallmentPaymentWindow(tk.Toplevel):
         self.grab_set()
         self.transient(master)
 
+
+        try:
+            # Assuming 'price' might come from DB as float or str
+            self._property_price = Decimal(str(self.selected_property.get('price', 0.0))) 
+        except InvalidOperation:
+            self._property_price = Decimal('0.00')
+            messagebox.showerror("Error", "Invalid property price found. Defaulting to 0.00.")
+
+
         self._all_payment_plans = {}
         self._required_deposit_var = tk.StringVar(value="0.00")
         self._amount_paid_var = tk.StringVar(value="")
@@ -1469,7 +1477,7 @@ class InstallmentPaymentWindow(tk.Toplevel):
         ttk.Label(prop_info_frame, text="Property Title Deed:").grid(row=0, column=0, sticky="w", pady=2, padx=5)
         ttk.Label(prop_info_frame, text=self.selected_property['title_deed_number'], font=("Arial", 10, "bold")).grid(row=0, column=1, sticky="w", pady=2, padx=5)
         ttk.Label(prop_info_frame, text="Property Price (KES):").grid(row=1, column=0, sticky="w", pady=2, padx=5)
-        ttk.Label(prop_info_frame, text=f"{self.selected_property['price']:,.2f}", font=("Arial", 10, "bold")).grid(row=1, column=1, sticky="w", pady=2, padx=5)
+        ttk.Label(prop_info_frame, text=f"{self._property_price:,.2f}", font=("Arial", 10, "bold")).grid(row=1, column=1, sticky="w", pady=2, padx=5)
 
         # Payment details
         payment_frame = ttk.LabelFrame(main_frame, text="Payment Details", padding=5)
@@ -1517,16 +1525,23 @@ class InstallmentPaymentWindow(tk.Toplevel):
         if not selected_plan:
             return
 
-        property_price = self.selected_property.get('price', 0)
-        deposit_percent = selected_plan.get('deposit_percentage', 0)
-        required_deposit = property_price * (deposit_percent / 100)
+        try:
+            property_price_float_or_int = self.selected_property.get('price', 0)
+        # Convert to Decimal for all financial calculations
+            property_price = Decimal(str(property_price_float_or_int)) 
+        except InvalidOperation:
+            messagebox.showerror("Error", "Property price data is invalid.", parent=self)
+            return
+
+        deposit_percent = Decimal(str(selected_plan.get('deposit_percentage', 0)))
+        required_deposit = property_price * (deposit_percent / Decimal('100'))
         self._required_deposit_var.set(f"{required_deposit:,.2f}")
         
         principal = property_price
-        interest_rate = selected_plan.get('interest_rate', 0) / 100
+        interest_rate = Decimal(str(selected_plan.get('interest_rate', 0))) / Decimal('100')
         duration = selected_plan.get('duration_months', 0)
-        time_in_years = duration / 12
-        total_payable_amount = principal * (1 + (interest_rate * time_in_years))
+        time_in_years = Decimal(duration) / Decimal('12')
+        total_payable_amount = principal * (Decimal('1') + (interest_rate * time_in_years))
         self._total_amount_paid_var.set(f"{total_payable_amount:,.2f}")
         self._amount_paid_var.set(f"{required_deposit:.2f}")
 
@@ -1552,10 +1567,10 @@ class InstallmentPaymentWindow(tk.Toplevel):
         
         # 3. Numeric input validation
         try:
-            amount_paid = float(amount_paid_str)
-            required_deposit = float(self._required_deposit_var.get().strip().replace(',', ''))
+            amount_paid = Decimal(amount_paid_str)
+            required_deposit = Decimal(self._required_deposit_var.get().strip().replace(',', ''))
             
-            if amount_paid < 0:
+            if amount_paid < Decimal('0'):
                 messagebox.showerror("Input Error", "Initial payment cannot be negative.", parent=self)
                 return
         except ValueError:
@@ -1580,7 +1595,7 @@ class InstallmentPaymentWindow(tk.Toplevel):
                 return
         
         # 6. Prepare sale details for database transaction
-        total_payable = float(self._total_amount_paid_var.get().strip().replace(',', ''))
+        total_payable = Decimal(self._total_amount_paid_var.get().strip().replace(',', ''))
         balance = total_payable - amount_paid
         
         # 7. Record the sale in the database
@@ -1590,7 +1605,7 @@ class InstallmentPaymentWindow(tk.Toplevel):
             payment_mode,
             amount_paid,
             self.brought_by,  # Assuming no discount for installments
-            0.0,
+            Decimal('0.0'),
             balance # Pass the brought_by data to the add_transaction method
         )
 
@@ -1619,7 +1634,7 @@ class InstallmentPaymentWindow(tk.Toplevel):
             if duration_months > 0:
                 monthly_installment_amount = total_balance / duration_months
             else:
-                monthly_installment_amount = 0.0
+                monthly_installment_amount = Decimal('0.0')
 
 
             # Add the installment plan instance to the database
@@ -1663,7 +1678,7 @@ class InstallmentPaymentWindow(tk.Toplevel):
                     buyer_contact=buyer_contact,
                     payment_mode=payment_mode,
                     amount_paid=amount_paid,
-                    discount=0.0,
+                    discount=Decimal('0.0'),
                     balance=balance,
                     brought_by=self.brought_by
                 )
@@ -2388,7 +2403,7 @@ class SellPropertyFormLot(tk.Toplevel):
         self.entry_buyer_contact = ttk.Entry(buyer_info_frame, textvariable=self.buyer_contact_var, state='readonly')
         self.entry_buyer_contact.grid(row=1, column=1, sticky="ew", pady=2, padx=5)
 
-        ttk.Label(buyer_info_frame, text="Buyer Email:").grid(row=2, column=0, sticky="w", pady=2, padx=5)
+        ttk.Label(buyer_info_frame, text="Buyer ID Number:").grid(row=2, column=0, sticky="w", pady=2, padx=5)
         self.buyer_email_var = tk.StringVar()
         self.entry_buyer_email = ttk.Entry(buyer_info_frame, textvariable=self.buyer_email_var, state='readonly')
         self.entry_buyer_email.grid(row=2, column=1, sticky="ew", pady=2, padx=5)
@@ -3034,7 +3049,7 @@ class SellPropertyFormBlock(tk.Toplevel):
         self.entry_buyer_contact = ttk.Entry(buyer_info_frame, textvariable=self.buyer_contact_var, state='readonly')
         self.entry_buyer_contact.grid(row=1, column=1, sticky="ew", pady=2, padx=5)
 
-        ttk.Label(buyer_info_frame, text="Buyer Email:").grid(row=2, column=0, sticky="w", pady=2, padx=5)
+        ttk.Label(buyer_info_frame, text="Buyer ID Number:").grid(row=2, column=0, sticky="w", pady=2, padx=5)
         self.buyer_email_var = tk.StringVar()
         self.entry_buyer_email = ttk.Entry(buyer_info_frame, textvariable=self.buyer_email_var, state='readonly')
         self.entry_buyer_email.grid(row=2, column=1, sticky="ew", pady=2, padx=5)
@@ -3775,8 +3790,8 @@ class RecordSinglePaymentForm(tk.Toplevel):
             return
 
         try:
-            payment_amount = float(payment_amount_str)
-            if payment_amount <= 0:
+            payment_amount = Decimal(payment_amount_str)
+            if payment_amount <= Decimal('0'):
                 messagebox.showerror("Invalid Amount", "Payment amount must be positive.")
                 return
         except ValueError:
@@ -3787,7 +3802,7 @@ class RecordSinglePaymentForm(tk.Toplevel):
             messagebox.showerror("Error", "Transaction information could not be retrieved.")
             return
 
-        current_balance = self.transaction_info.get('balance', 0.0)
+        current_balance = Decimal(str(self.transaction_info.get('balance', 0.0)))
         
         if payment_amount > current_balance:
             messagebox.showerror(
@@ -3802,7 +3817,7 @@ class RecordSinglePaymentForm(tk.Toplevel):
         if payment_mode == "installments":
             remaining_payment_amount = payment_amount
             
-            while remaining_payment_amount > 0:
+            while remaining_payment_amount > Decimal('0'):
                 # Get the oldest outstanding installment using your existing method
                 # This method should return the installment ID, due amount, and total paid for that specific installment
                 oldest_installment = self.db_manager.get_oldest_outstanding_installment(self.job_id_to_pay)
@@ -3818,13 +3833,19 @@ class RecordSinglePaymentForm(tk.Toplevel):
                         payment_reason="Balance Overpayment",
                         payment_date=datetime.now()
                     )
-                    remaining_payment_amount = 0
+                    remaining_payment_amount = Decimal('0')
                     break
                     
                 installment_id = oldest_installment['installment_id']
-                due_amount = oldest_installment['due_amount']
-                total_paid_for_installment = oldest_installment['total_paid_for_installment']
+
+                try:
+                    due_amount = Decimal(str(oldest_installment['due_amount']))
+                    total_paid_for_installment = Decimal(str(oldest_installment['total_paid_for_installment']))
+                except InvalidOperation:
+                    messagebox.showerror("Error", "Invalid installment data from database.")
+                    return
                 
+
                 remaining_on_installment = due_amount - total_paid_for_installment
 
                 # Calculate how much to apply to the current installment
@@ -3866,7 +3887,8 @@ class RecordSinglePaymentForm(tk.Toplevel):
                 return
 
         # Update the main transactions table with the total payment amount
-        new_amount_paid = self.transaction_info.get('total_amount_paid', 0.0) + payment_amount
+        
+        new_amount_paid = Decimal(str(self.transaction_info.get('total_amount_paid', 0.0))) + payment_amount
         new_balance = current_balance - payment_amount
 
         success = self.db_manager.update_transaction(
