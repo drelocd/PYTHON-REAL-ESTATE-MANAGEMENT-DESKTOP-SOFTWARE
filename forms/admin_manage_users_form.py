@@ -265,6 +265,20 @@ class AdminManageUsersPanel(tk.Toplevel):
         access_control_frame = ttk.LabelFrame(right_frame, text="Access Control", padding="10")
         access_control_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
+        # --- Tab Access (Land, Survey, and Reception Tabs) ---
+        tab_access_frame = ttk.LabelFrame(access_control_frame, text="Tab Access", padding="10")
+        tab_access_frame.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky="nsew")
+
+        self.show_land_tab_var = tk.BooleanVar()
+        self.show_survey_tab_var = tk.BooleanVar()
+        self.show_reception_tab_var = tk.BooleanVar()
+
+        ttk.Checkbutton(tab_access_frame, text="Show Land Sales & Purchases Tab", variable=self.show_land_tab_var).pack(anchor=tk.W)
+        ttk.Checkbutton(tab_access_frame, text="Show Survey Services Tab", variable=self.show_survey_tab_var).pack(anchor=tk.W)
+        ttk.Checkbutton(tab_access_frame, text="Show Reception Tab", variable=self.show_reception_tab_var).pack(anchor=tk.W)
+
+
+
         # Land Services Section
         land_services_frame = ttk.LabelFrame(access_control_frame, text="Land Services", padding="10")
         land_services_frame.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
@@ -367,6 +381,9 @@ class AdminManageUsersPanel(tk.Toplevel):
 
             # Permissions from DB
             perms = self.db_manager.get_user_permissions(values[0])
+            self.show_land_tab_var.set(perms.get("show_land_tab", False))
+            self.show_survey_tab_var.set(perms.get("show_survey_tab", False))
+            self.show_reception_tab_var.set(perms.get("show_reception_tab", False))
             for perm, var in self.land_services_vars.items():
                 var.set(perms.get(perm, False))
             for perm, var in self.survey_services_vars.items():
@@ -389,6 +406,9 @@ class AdminManageUsersPanel(tk.Toplevel):
         if not user_id:
             return
         permissions = {p: v.get() for p, v in {**self.land_services_vars, **self.survey_services_vars}.items()}
+        permissions["show_land_tab"] = self.show_land_tab_var.get()
+        permissions["show_survey_tab"] = self.show_survey_tab_var.get()
+        permissions["show_reception_tab"] = self.show_reception_tab_var.get()
         self.db_manager.set_user_permissions(user_id, permissions)
         messagebox.showinfo("Success", "User updated with new permissions.")
 
