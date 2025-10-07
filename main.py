@@ -1453,30 +1453,79 @@ class RealEstateApp(tk.Tk):
                 return
 
             backup_path = self.backup_app_data(folder)  # pass chosen folder
+
+            # Update last backup timestamp (persistent)
+            now = datetime.now()
+            self.last_backup_time = now
+            self._save_last_backup_time(now)
+
             messagebox.showinfo("Backup Complete", f"Backup created at:\n{backup_path}")
         except Exception as e:
             self.logger.error(f"Manual backup failed: {e}")
             messagebox.showerror("Backup Failed", f"An error occurred while creating the backup:\n{e}")
 
+
+    def _get_last_backup_file(self):
+        """Returns the path to the file where last backup time is stored."""
+        return os.path.join(self.backup_root, "last_backup.txt")
+
+    def _load_last_backup_time(self):
+        """Loads the last backup timestamp from file (if it exists)."""
+        try:
+            path = self._get_last_backup_file()
+            if os.path.exists(path):
+                with open(path, "r") as f:
+                    ts_str = f.read().strip()
+                    return datetime.fromisoformat(ts_str)
+        except Exception as e:
+            self.logger.error(f"Failed to load last backup timestamp: {e}")
+        return None
+
+    def _save_last_backup_time(self, dt):
+        """Saves the last backup timestamp to file."""
+        try:
+            path = self._get_last_backup_file()
+            with open(path, "w") as f:
+                f.write(dt.isoformat())
+        except Exception as e:
+            self.logger.error(f"Failed to save last backup timestamp: {e}")
+
+
     def check_for_updates(self):
         """
         Initiates a version update check in a separate thread to avoid freezing the UI.
         Implements rate limiting to avoid excessive API calls.
+        Also triggers an automatic backup, but only once every 7 days (persistent).
         """
-        try:
-            backup_path = self.backup_app_data(self.backup_root)
-            self.logger.info(f"Automatic backup completed at {backup_path}")
-        except Exception as e:
-            self.logger.error(f"Backup failed before update check: {e}")
-
         now = datetime.now()
+
+        # --- Backup every 7 days (persistent) ---
+        if not hasattr(self, "backup_interval"):
+            self.backup_interval = timedelta(days=7)
+
+        if not hasattr(self, "last_backup_time") or self.last_backup_time is None:
+            # Try loading from file if not already loaded
+            self.last_backup_time = self._load_last_backup_time()
+
+        if not self.last_backup_time or (now - self.last_backup_time) >= self.backup_interval:
+            try:
+                backup_path = self.backup_app_data(self.backup_root)
+                self.last_backup_time = now
+                self._save_last_backup_time(now)  # persist timestamp
+                self.logger.info(f"Automatic backup completed at {backup_path}")
+            except Exception as e:
+                self.logger.error(f"Backup failed before update check: {e}")
+        else:
+            self.logger.info("Skipping backup: last backup was within 7 days.")
+
+        # --- Update check every 24 hours ---
         if self.last_update_check_time and (now - self.last_update_check_time) < self.update_check_interval:
             self.logger.info("Skipping update check: last check was too recent.")
-            # No pop-up for skipping, as it's a silent background check interval.
             return
 
         self.logger.info("Starting update check thread.")
         threading.Thread(target=self._run_update_check, daemon=True).start()
+
 
     def _run_update_check(self):
         """
@@ -1948,19 +1997,57 @@ class RealEstateApp(tk.Tk):
                                                user_type=self.user_type)
         self.notebook.add(self.dashboard_section, text="   Dashboard   ")
 
-        # NEW: Reception Tab
+        # --- Conditional Tab Visibility Based on Permissions ---
+        user_permissions = self.db_manager.get_user_permissions(self.user_id)
 
-        self.reception_section = ReceptionSectionView(self.notebook, self.db_manager, self._load_icon,
-                                                      user_id=self.user_id, user_type=self.user_type,parent_icon_loader=self._load_icon)
-        self.notebook.add(self.reception_section, text="   Reception   ")
+        # Default to False if not set
+        show_reception_tab = user_permissions.get("show_reception_tab", False)
+        show_land_tab = user_permissions.get("show_land_tab", False)
+        show_survey_tab = user_permissions.get("show_survey_tab", False)
+        
+        # --- Reception Tab ---
+        if show_reception_tab:
+            self.reception_section = ReceptionSectionView(
+                self.notebook,
+                self.db_manager,
+                self._load_icon,
+                user_id=self.user_id,
+                user_type=self.user_type
+            )
+            self.notebook.add(self.reception_section, text="   Reception   ")
+        else:
+            self.reception_section = None
+            print("Reception tab hidden for this user.")
+        
+        # --- Land Sales & Purchases Tab ---
+        if show_land_tab:
+            self.sales_section = SalesSectionView(
+                self.notebook,
+                self.db_manager,
+                self._load_icon,
+                user_id=self.user_id,
+                user_type=self.user_type
+            )
+            self.notebook.add(self.sales_section, text="   Land Sales & Purchases   ")
+        else:
+            self.sales_section = None
+            print("Land Sales tab hidden for this user.")
 
-        self.sales_section = SalesSectionView(self.notebook, self.db_manager, self._load_icon, user_id=self.user_id,
-                                              user_type=self.user_type)
-        self.notebook.add(self.sales_section, text="   Land Sales & Purchases   ")
+        # --- Survey Services Tab ---
+        if show_survey_tab:
+            self.survey_section = SurveySectionView(
+                self.notebook,
+                self.db_manager,
+                self._load_icon,
+                user_id=self.user_id,
+                user_type=self.user_type
+            )
+            self.notebook.add(self.survey_section, text="   Survey Services   ")
+        else:
+            self.survey_section = None
+            print("Survey Services tab hidden for this user.")
 
-        self.survey_section = SurveySectionView(self.notebook, self.db_manager, self._load_icon, user_id=self.user_id,
-                                                user_type=self.user_type)
-        self.notebook.add(self.survey_section, text="   Survey Services   ")
+
 
     def show_about_dialog(self):
         messagebox.showinfo(
