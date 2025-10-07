@@ -794,7 +794,7 @@ class AddClientForm(BaseForm):
         self.tel_entry = ttk.Entry(frame)
         self.tel_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
 
-        ttk.Label(frame, text="Email:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
+        ttk.Label(frame, text="ID Number:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
         self.email_entry = ttk.Entry(frame)
         self.email_entry.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
 
@@ -826,9 +826,7 @@ class AddClientForm(BaseForm):
                 messagebox.showerror("Validation Error", "Telephone number must be numeric.")
                 return
 
-        if "@" not in email or "." not in email:
-                messagebox.showerror("Validation Error", "Please enter a valid email address.")
-                return
+        
 
         try:
             client_id = self.db_manager.add_client(name, tel, email, status)
@@ -962,7 +960,7 @@ class UpdateClientForm(BaseForm):
         self.tel_entry = ttk.Entry(frame, width=30)
         self.tel_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
 
-        ttk.Label(frame, text="Email:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
+        ttk.Label(frame, text="ID Number:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
         self.email_entry = ttk.Entry(frame, width=30)
         self.email_entry.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
 
@@ -995,8 +993,8 @@ class UpdateClientForm(BaseForm):
                 messagebox.showerror("Validation Error", "Telephone number must be numeric.")
                 return
 
-        if "@" not in new_email or "." not in new_email:
-                messagebox.showerror("Validation Error", "Please enter a valid email address.")
+        if not new_email.isdigit():
+                messagebox.showerror("Validation Error", "Please enter a valid ID Number.")
                 return
 
         try:
@@ -1091,7 +1089,7 @@ class ReceptionSectionView(ttk.Frame):
         self.tree = ttk.Treeview(list_frame, columns=("Name", "Telephone No", "Email"), show="headings")
         self.tree.heading("Name", text="CLIENT NAME")
         self.tree.heading("Telephone No", text="TELEPHONE NO")
-        self.tree.heading("Email", text="EMAIL")
+        self.tree.heading("Email", text="ID NUMBER")
         self.tree.column("Name", width=150)
         self.tree.column("Telephone No", width=100)
         self.tree.column("Email", width=150)
@@ -2012,7 +2010,8 @@ class RealEstateApp(tk.Tk):
                 self.db_manager,
                 self._load_icon,
                 user_id=self.user_id,
-                user_type=self.user_type
+                user_type=self.user_type,
+                parent_icon_loader=self._load_icon
             )
             self.notebook.add(self.reception_section, text="   Reception   ")
         else:
