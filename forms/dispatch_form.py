@@ -502,7 +502,8 @@ class DispatchJobsView(FormBase):
 
     def populate_completed_jobs_table(self):
         """Populates the 'Dispatch Jobs' table with completed jobs."""
-        self.all_completed_jobs = self.db_manager.get_completed_jobs()
+        #self.all_completed_jobs = self.db_manager.get_completed_jobs()
+        self.all_completed_jobs = self.db_manager.get_dispatchable_jobs()
         self._filter_and_populate_table()
 
     def _filter_and_populate_table(self, search_text=""):

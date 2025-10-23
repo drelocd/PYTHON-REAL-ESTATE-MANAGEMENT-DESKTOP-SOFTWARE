@@ -10,9 +10,10 @@ import webbrowser
 from pdf2image import convert_from_bytes
 import fitz
 import io
+import webbrowser
 import tempfile
 from io import BytesIO
-from reportlab.lib.pagesizes import letter
+from reportlab.lib.pagesizes import letter, A4
 from reportlab.pdfgen import canvas
 from reportlab.lib import colors
 from reportlab.platypus import Image as RLImage, SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
@@ -1264,7 +1265,7 @@ class SellPropertyLandingForm(tk.Toplevel):
 
     def _open_sell_block_form(self):
         """Hides this window and opens the Sell Block form."""
-        self.destroy()
+        self.withdraw()
         try:
             # Pass a callback to the child form so it can re-show the landing form
             SellPropertyFormBlock(
@@ -1287,7 +1288,7 @@ class SellPropertyLandingForm(tk.Toplevel):
 
     def _open_sell_lot_form(self):
         """Hides this window and opens the Sell Lot form."""
-        self.destroy()
+        self.withdraw()
         try:
             # Pass a callback to the child form
             SellPropertyFormLot(
@@ -1805,7 +1806,7 @@ class InstallmentPaymentWindow(tk.Toplevel):
             prop_table = Table([
                 ["Title Deed:", receipt_data['prop_title_deed']],
                 ["Location:", receipt_data['prop_location']],
-                ["Size:", f"{receipt_data['prop_size']} Acres"]
+                ["Size:", f"{receipt_data['prop_size']} Hectares"]
             ], colWidths=[1.2*inch, 4*inch])
             prop_table.setStyle(TableStyle([
                 ('FONTNAME', (0,0), (-1,-1), 'Helvetica'),
@@ -2045,15 +2046,42 @@ class CashPaymentWindow(tk.Toplevel):
             messagebox.showerror("Input Error", "Buyer Name, Contact Info, and Amount Paid are required.")
             return
 
-        try:
-            amount_paid_input = float(amount_paid_str)
-            discount = float(discount_str) if discount_str else 0.0
-            if amount_paid_input < 0 or discount < 0:
-                messagebox.showerror("Input Error", "Amount Paid and Discount cannot be negative.")
-                return
-        except ValueError:
-            messagebox.showerror("Input Error", "Invalid numeric input for Amount Paid or Discount.")
+        # --- Clean and validate numeric inputs safely ---
+        if not amount_paid_str or not amount_paid_str.strip():
+            messagebox.showwarning("Input Error", "Please enter the amount paid.")
             return
+
+        clean_amount_str = (
+            amount_paid_str.replace(",", "")
+                        .replace("KES", "")
+                        .replace("ksh", "")
+                        .replace("Ksh", "")
+                        .strip()
+        )
+
+        clean_discount_str = (
+            discount_str.replace(",", "")
+                        .replace("KES", "")
+                        .replace("ksh", "")
+                        .replace("Ksh", "")
+                        .strip()
+            if discount_str else "0"
+        )
+
+        try:
+            amount_paid_input = Decimal(clean_amount_str)
+            discount = Decimal(clean_discount_str)
+        except Exception:
+            messagebox.showerror(
+                "Input Error",
+                f"Invalid numeric input.\nAmount: '{amount_paid_str}'\nDiscount: '{discount_str}'."
+            )
+            return
+
+        if amount_paid_input < 0 or discount < 0:
+            messagebox.showerror("Input Error", "Amount Paid and Discount cannot be negative.")
+            return
+
 
         try:
             original_price = self.selected_property['price']
@@ -2583,7 +2611,7 @@ class SellPropertyFormLot(tk.Toplevel):
                 
                 self.val_prop_title_deed.config(text=title_deed.upper())
                 self.val_prop_location.config(text=location.upper())
-                self.val_prop_size.config(text=f"{size:.2f} HECTARES")
+                self.val_prop_size.config(text=f"{size:.4f} HECTARES")
                 self.val_prop_price.config(text=f"KES {price:,.2f}")
 
                 self._display_single_title_deed_thumbnail(title_images_str)
@@ -2751,7 +2779,7 @@ class SellPropertyFormLot(tk.Toplevel):
         # Display the project name and project number in the Listbox
             project_number = prop['project_number']
             project_no = prop['project_no']
-            formatted_entry = f"Project: {prop['project_name'].upper()} ({project_number}) - Property No: {project_no} - {prop['location'].upper()} ({prop['size']:.2f} ACRES) - KES {prop['price']:,.2f}"
+            formatted_entry = f"Project: {prop['project_name'].upper()} ({project_number}) - Property No: {project_no} - {prop['location'].upper()} ({prop['size']:.4f} HECTARES) - KES {prop['price']:,.2f}"
             self.property_listbox.insert(tk.END, formatted_entry)
             self.available_properties_data = filtered_properties
 
@@ -2801,7 +2829,7 @@ class SellPropertyFormLot(tk.Toplevel):
         has_buyer_contact = bool(self.buyer_contact_var.get().strip())
         
         try:
-            amount_paid = float(self._amount_paid_var.get())
+            amount_paid = Decimal(self._amount_paid_var.get())
             is_amount_valid = True
         except (ValueError, tk.TclError):
             is_amount_valid = False
@@ -3070,7 +3098,7 @@ class SellPropertyFormBlock(tk.Toplevel):
 
         filter_frame = ttk.Frame(property_selection_frame)
         filter_frame.grid(row=0, column=1, sticky="e", padx=5, pady=2)
-        ttk.Label(filter_frame, text="Size (Acres): Min").pack(side="left")
+        ttk.Label(filter_frame, text="Size (Hectares): Min").pack(side="left")
         self.entry_min_size = ttk.Entry(filter_frame, width=8)
         self.entry_min_size.pack(side="left", padx=1)
         ttk.Label(filter_frame, text="Max").pack(side="left")
@@ -3106,7 +3134,7 @@ class SellPropertyFormBlock(tk.Toplevel):
         self.val_prop_location = ttk.Label(details_frame, text="", font=('Arial', 10, 'bold'))
         self.val_prop_location.grid(row=1, column=1, sticky="ew", pady=1, padx=5)
 
-        self.lbl_prop_size = ttk.Label(details_frame, text="Size (Acres):")
+        self.lbl_prop_size = ttk.Label(details_frame, text="Size (Hectares):")
         self.lbl_prop_size.grid(row=2, column=0, sticky="w", pady=1, padx=5)
         self.val_prop_size = ttk.Label(details_frame, text="", font=('Arial', 10, 'bold'))
         self.val_prop_size.grid(row=2, column=1, sticky="ew", pady=1, padx=5)
@@ -3257,7 +3285,7 @@ class SellPropertyFormBlock(tk.Toplevel):
                 
                 self.val_prop_title_deed.config(text=title_deed.upper())
                 self.val_prop_location.config(text=location.upper())
-                self.val_prop_size.config(text=f"{size:.2f} ACRES")
+                self.val_prop_size.config(text=f"{size:.4f} Hectares")
                 self.val_prop_price.config(text=f"KES {price:,.2f}")
 
                 self._display_single_title_deed_thumbnail(title_images_str)
@@ -3434,7 +3462,7 @@ class SellPropertyFormBlock(tk.Toplevel):
         # Display the project name and project number in the Listbox
             project_number = prop['project_number']
             project_no = prop['project_no']
-            formatted_entry = f"Project: {prop['project_name'].upper()} ({project_number}) - Property No: {project_no} - {prop['location'].upper()} ({prop['size']:.2f} ACRES) - KES {prop['price']:,.2f}"
+            formatted_entry = f"Project: {prop['project_name'].upper()} ({project_number}) - Property No: {project_no} - {prop['location'].upper()} ({prop['size']:.4f} HECTARES) - KES {prop['price']:,.2f}"
             self.property_listbox.insert(tk.END, formatted_entry)
             self.available_properties_data = filtered_properties
 
@@ -4074,7 +4102,7 @@ class TrackPaymentsForm(tk.Toplevel):
 
         # Row 1
         ttk.Label(filter_frame, text="Payment Mode:").grid(row=1, column=0, padx=5, pady=2, sticky="w")
-        self.payment_mode_filter_combobox = ttk.Combobox(filter_frame, values=["", "Cash", "Instalments"], state="readonly", width=10)
+        self.payment_mode_filter_combobox = ttk.Combobox(filter_frame, values=["All", "Cash", "Installments"], state="readonly", width=10)
         self.payment_mode_filter_combobox.set("")
         self.payment_mode_filter_combobox.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
 
@@ -4114,11 +4142,13 @@ class TrackPaymentsForm(tk.Toplevel):
 
 
         # Updated columns to include "Client Contact"
-        columns = ("Date", "Time", "Client Name", "Client Contact", "Property Title Deed", "Location", "Size", "Payment Mode", "Paid", "Discount", "Balance")
+        columns = ("Date", "Time", "Project No", "Project Name", "Client Name", "Client Contact", "Property Title Deed", "Location", "Size", "Payment Mode", "Paid", "Discount", "Balance")
         self.payments_tree = ttk.Treeview(main_frame, columns=columns, show="headings")
         
         self.payments_tree.heading("Date", text="Date")
         self.payments_tree.heading("Time", text="Time")
+        self.payments_tree.heading("Project No", text="Plot No")
+        self.payments_tree.heading("Project Name", text="Project Name")
         self.payments_tree.heading("Client Name", text="Client Name")
         self.payments_tree.heading("Client Contact", text="Client Contact") # New Heading
         self.payments_tree.heading("Property Title Deed", text="Property Title Deed")
@@ -4131,6 +4161,8 @@ class TrackPaymentsForm(tk.Toplevel):
 
         self.payments_tree.column("Date", width=100, anchor="center")
         self.payments_tree.column("Time", width=80, anchor="center")
+        self.payments_tree.column("Project No", width=50, anchor="center")
+        self.payments_tree.column("Project Name", width=150, anchor="w")
         self.payments_tree.column("Client Name", width=150, anchor="w")
         self.payments_tree.column("Client Contact", width=120, anchor="w") # New Column Width
         self.payments_tree.column("Property Title Deed", width=120, anchor="w")
@@ -4331,6 +4363,8 @@ class TrackPaymentsForm(tk.Toplevel):
             self.payments_tree.insert("", "end", values=(
                 date_part,
                 time_part,
+                row_data.get('project_no', 'N/A'),
+                row_data.get('project_name', 'N/A'),
                 row_data['client_name'],
                 row_data['client_contact_info'], # Display client contact info
                 row_data['title_deed_number'],
@@ -4452,6 +4486,7 @@ class TrackPaymentsForm(tk.Toplevel):
 
 
 
+
 class CustomTitleBarMixin:
     """A mixin to add a custom title bar to a Tkinter Toplevel window."""
     def _customize_title_bar(self):
@@ -4561,7 +4596,7 @@ class CustomTitleBarMixin:
             self.callback_on_close()
 
 class TrackInstallmentsWindow(tk.Toplevel, CustomTitleBarMixin):
-    def __init__(self, master, db_manager, transaction_id, parent_icon_loader=None, window_icon_name="track_payments.png"):
+    def __init__(self, master, db_manager, transaction_id, parent_icon_loader=None, window_icon_name="track_payments.png", callback_on_close=None):
         # The corrected inheritance: inherit from Toplevel first.
         # This super() call will now correctly initialize tk.Toplevel.
         super().__init__(master)
@@ -4574,6 +4609,7 @@ class TrackInstallmentsWindow(tk.Toplevel, CustomTitleBarMixin):
         self.db_manager = db_manager
         self.transaction_id = transaction_id
         self.parent_icon_loader = parent_icon_loader
+        self.callback_on_close = callback_on_close
 
         # Call mixin methods to set up the window's look and feel
         self._customize_title_bar()
@@ -4653,49 +4689,284 @@ class PaymentHistoryForm(tk.Toplevel, CustomTitleBarMixin):
         self.parent_icon_loader = parent_icon_loader
         self.callback_on_close = None
 
-        self._set_window_properties(800, 450, window_icon_name, parent_icon_loader)
+        self._set_window_properties(850, 500, window_icon_name, parent_icon_loader)
         self._customize_title_bar()
 
         self._create_widgets()
         self._load_payment_history()
-    
+
+    # ----------------------------------------------------------------------
+
     def _create_widgets(self):
         main_frame = ttk.Frame(self, padding="10")
         main_frame.pack(fill="both", expand=True)
 
-        columns = ("Date", "Payment Amount", "Payment Mode", "Payment Reason")
+        columns = ("Date", "Payment Amount", "Balance (KES)", "Payment Mode", "Payment Reason")
         self.history_tree = ttk.Treeview(main_frame, columns=columns, show="headings")
-        
+
         self.history_tree.heading("Date", text="Date")
         self.history_tree.heading("Payment Amount", text="Amount (KES)")
+        self.history_tree.heading("Balance (KES)", text="Balance (KES)")
         self.history_tree.heading("Payment Mode", text="Payment Mode")
         self.history_tree.heading("Payment Reason", text="Reason")
 
-        self.history_tree.column("Date", width=180, anchor="center")
-        self.history_tree.column("Payment Amount", width=150, anchor="e")
+        self.history_tree.column("Date", width=160, anchor="center")
+        self.history_tree.column("Payment Amount", width=130, anchor="e")
+        self.history_tree.column("Balance (KES)", width=130, anchor="e")
         self.history_tree.column("Payment Mode", width=120, anchor="center")
-        self.history_tree.column("Payment Reason", width=250, anchor="w")
+        self.history_tree.column("Payment Reason", width=230, anchor="w")
 
         self.history_tree.pack(fill="both", expand=True, pady=10)
 
+        # Scrollbar
         tree_scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=self.history_tree.yview)
         tree_scrollbar.pack(side="right", fill="y")
         self.history_tree.config(yscrollcommand=tree_scrollbar.set)
 
+        # --- Buttons ---
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill="x", pady=(5, 0))
+
+        statements_btn = ttk.Button(
+            btn_frame,
+            text="Generate Statements",
+            command=self._generate_statements_pdf
+        )
+        statements_btn.pack(side="right", padx=5, pady=10)
+
+    # ----------------------------------------------------------------------
+
+    def _safe_decimal(self, value, default="0.00"):
+        """Convert value to Decimal safely."""
+        try:
+            return Decimal(str(value)) if value is not None else Decimal(default)
+        except (InvalidOperation, ValueError):
+            return Decimal(default)
+
     def _load_payment_history(self):
+        """Loads and displays payment history with running balances (shown as negatives)."""
         history_data = self.db_manager.get_payment_history_for_transaction(self.transaction_id)
-        
-        if not history_data:
-            self.history_tree.insert("", "end", values=("No payment history found.", "", "", ""), tags=('no_data',))
+        details = self.db_manager.get_transaction_details_full(self.transaction_id)
+
+        for iid in self.history_tree.get_children():
+            self.history_tree.delete(iid)
+
+        if not details:
+            self.history_tree.insert("", "end", values=("Transaction not found.", "", "", "", ""), tags=("no_data",))
+            self.history_tree.tag_configure("no_data", foreground="gray")
             return
-            
-        for row_data in history_data:
+
+        history_data = history_data or []
+        history_data.sort(key=lambda x: x.get("payment_date") or datetime.min)
+
+        total_price = self._safe_decimal(details.get("total_price") or details.get("price") or 0)
+        total_amount_paid_on_tx = self._safe_decimal(details.get("total_amount_paid", 0))
+        discount = self._safe_decimal(details.get("discount", 0))
+
+        # Total from payment history
+        history_sum = sum(self._safe_decimal(r.get("payment_amount", 0)) for r in history_data)
+
+        # Handle possible initial/down payment missing from history
+        missing_from_history = Decimal("0.00")
+        if total_amount_paid_on_tx > history_sum:
+            missing_from_history = total_amount_paid_on_tx - history_sum
+
+        running_balance = total_price - missing_from_history - discount
+
+        if not history_data and missing_from_history > 0:
             self.history_tree.insert("", "end", values=(
-                row_data['payment_date'].strftime("%Y-%m-%d %H:%M:%S"),
-                f"{row_data['payment_amount']:,.2f}",
-                row_data['payment_mode'],
-                row_data['payment_reason'].upper()
+                "",
+                f"{missing_from_history:,.2f}",
+                f"{(running_balance - missing_from_history):,.2f}",
+                details.get("payment_mode", ""),
+                "Initial Payment"
             ))
+            return
+
+        if missing_from_history > 0:
+            self.history_tree.insert("", "end", values=(
+                "",
+                f"{missing_from_history:,.2f}",
+                f"{(running_balance):,.2f}",
+                details.get("payment_mode", ""),
+                "Initial Payment (from transactions.total_amount_paid)"
+            ))
+
+        for row_data in history_data:
+            payment_amount = self._safe_decimal(row_data.get("payment_amount", 0))
+            running_balance -= payment_amount
+            payment_date = row_data.get("payment_date")
+            date_str = payment_date.strftime("%Y-%m-%d %H:%M:%S") if isinstance(payment_date, datetime) else str(payment_date)
+            self.history_tree.insert("", "end", values=(
+                date_str,
+                f"{payment_amount:,.2f}",
+                f"{running_balance:,.2f}",  # show negative
+                row_data.get("payment_mode", ""),
+                (row_data.get("payment_reason") or "").upper()
+            ))
+
+    # ----------------------------------------------------------------------
+
+    def _generate_statements_pdf(self):
+        """Generates a detailed payment statement (PDF) with logo header, wrapped text, and negative balances."""
+        try:
+            details = self.db_manager.get_transaction_details_full(self.transaction_id)
+            if not details:
+                messagebox.showerror("Error", "Transaction details not found.")
+                return
+
+            history_data = self.db_manager.get_payment_history_for_transaction(self.transaction_id) or []
+            history_data.sort(key=lambda x: x.get("payment_date") or datetime.min)
+
+            default_name = f"Payment_Statement_{self.transaction_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+            file_path = filedialog.asksaveasfilename(
+                title="Save Payment Statement As",
+                defaultextension=".pdf",
+                filetypes=[("PDF files", "*.pdf")],
+                initialfile=default_name
+            )
+            if not file_path:
+                return
+
+            # --- PDF setup ---
+            doc = SimpleDocTemplate(file_path, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+            styles = getSampleStyleSheet()
+            elements = []
+
+            wrap_style = ParagraphStyle(
+                name="WrapStyle",
+                parent=styles["Normal"],
+                fontSize=9,
+                leading=11,
+                wordWrap="CJK",
+            )
+
+            # --- Logo + Header ---
+            logo_path = os.path.join(ICONS_DIR, "NEWCITY.png")
+            if os.path.exists(logo_path):
+                logo = RLImage(logo_path)
+                logo._restrictSize(1.2 * inch, 1.2 * inch)
+            else:
+                logo = Paragraph("<b>NEW CITY REAL ESTATE</b>", styles["Normal"])
+
+            header_table = Table(
+                [[logo,
+                  Paragraph("<b>NEW CITY REAL ESTATE</b>", styles["Title"]),
+                  Paragraph(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), styles["Normal"])
+                  ]],
+                colWidths=[90, 300, 100],
+            )
+            header_table.setStyle(TableStyle([
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("ALIGN", (2, 0), (2, 0), "RIGHT"),
+            ]))
+            elements.append(header_table)
+            elements.append(Spacer(1, 10))
+
+            # --- Statement Header ---
+            elements.append(Paragraph("<b>Payment Statement</b>", styles["Title"]))
+            elements.append(Spacer(1, 8))
+            elements.append(Paragraph(f"<b>Transaction ID:</b> {self.transaction_id}", styles["Normal"]))
+            elements.append(Paragraph(f"<b>Client Name:</b> {details.get('client_name','')}", styles["Normal"]))
+            elements.append(Paragraph(f"<b>Contact:</b> {details.get('client_contact','')}", styles["Normal"]))
+            if details.get("project_name"):
+                elements.append(Paragraph(f"<b>Project:</b> {details['project_name']} (ID: {details.get('project_id')})", styles["Normal"]))
+            elements.append(Paragraph(f"<b>Property:</b> {details.get('title_deed_number','')} — {details.get('location','')}", styles["Normal"]))
+            elements.append(Paragraph(f"<b>Date of Transaction:</b> {details.get('transaction_date')}", styles["Normal"]))
+            elements.append(Spacer(1, 12))
+
+            # --- Payment Table ---
+            table_data = [[
+                Paragraph("<b>Date</b>", wrap_style),
+                Paragraph("<b>Amount (KES)</b>", wrap_style),
+                Paragraph("<b>Balance (KES)</b>", wrap_style),
+                Paragraph("<b>Payment Mode</b>", wrap_style),
+                Paragraph("<b>Payment Reason</b>", wrap_style)
+            ]]
+
+            total_amount = Decimal("0.00")
+            total_price = self._safe_decimal(details.get("total_price") or details.get("price") or 0)
+            total_amount_paid_on_tx = self._safe_decimal(details.get("total_amount_paid", 0))
+            discount = self._safe_decimal(details.get("discount", 0))
+
+            history_sum = sum(self._safe_decimal(r.get("payment_amount", 0)) for r in history_data)
+            missing_from_history = Decimal("0.00")
+            if total_amount_paid_on_tx > history_sum:
+                missing_from_history = total_amount_paid_on_tx - history_sum
+
+            running_balance = total_price - missing_from_history - discount
+
+            # --- Optional initial payment row ---
+            if missing_from_history > 0:
+                table_data.append([
+                    "",
+                    f"{float(missing_from_history):,.2f}",
+                    f"{-float(running_balance - missing_from_history):,.2f}",
+                    Paragraph(details.get("payment_mode", ""), wrap_style),
+                    Paragraph("Initial Payment (from transactions.total_amount_paid)", wrap_style)
+                ])
+
+            # --- Loop payments with wrapping ---
+            for row in history_data:
+                amount = self._safe_decimal(row.get("payment_amount", 0))
+                total_amount += amount
+                running_balance -= amount
+                date_str = row.get("payment_date").strftime("%Y-%m-%d %H:%M:%S") if isinstance(row.get("payment_date"), datetime) else str(row.get("payment_date"))
+
+                payment_mode_para = Paragraph(row.get("payment_mode", ""), wrap_style)
+                payment_reason_para = Paragraph((row.get("payment_reason") or "").upper(), wrap_style)
+
+                table_data.append([
+                    date_str,
+                    f"{float(amount):,.2f}",
+                    f"{float(running_balance):,.2f}",  # negative balance
+                    payment_mode_para,
+                    payment_reason_para
+                ])
+
+            # --- Style table ---
+            table = Table(table_data, colWidths=[100, 85, 85, 100, 190])
+            table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2E86C1")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                ("ALIGN", (1, 1), (2, -1), "RIGHT"),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.whitesmoke, colors.lightgrey]),
+            ]))
+            elements.append(table)
+            elements.append(Spacer(1, 15))
+
+            # --- Summary ---
+            pending_balance = running_balance
+            summary_data = [
+                ["", "", "Total Amount Paid (history):", f"{float(total_amount):,.2f} KES"],
+                ["", "", "Outstanding Balance (Negative = Owed):", f"{float(pending_balance):,.2f} KES"],
+            ]
+            summary_table = Table(summary_data, colWidths=[120, 90, 150, 150])
+            summary_table.setStyle(TableStyle([
+                ("ALIGN", (2, 0), (3, -1), "RIGHT"),
+                ("FONTNAME", (2, 0), (3, -1), "Helvetica-Bold"),
+                ("FONTSIZE", (2, 0), (3, -1), 10),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ]))
+            elements.append(summary_table)
+            elements.append(Spacer(1, 20))
+
+            elements.append(Paragraph("<i>This is a system-generated statement. No signature required.</i>", styles["Normal"]))
+
+            doc.build(elements)
+
+            open_now = messagebox.askyesno("Statement Generated", "Statement saved successfully.\n\nWould you like to open it now?")
+            if open_now:
+                webbrowser.open_new(file_path)
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to generate statement:\n{e}")
+
+
+
 
 
 # --- NEW SoldPropertiesView CLASS with DatePicker integration ---
@@ -4861,11 +5132,14 @@ class SoldPropertiesView(tk.Toplevel):
 
         # --- Treeview for Displaying Sold Properties ---
         columns = (
-            "Date Sold", "Time Sold", "Title Deed", "Location", "Size", "Client Name",
-            "Contact Info", "Original Price", "Amount Paid", "Balance Due"
+            "Project No", "Project Name", "Date Sold", "Time Sold", "Title Deed", 
+            "Location", "Size", "Client Name", "Contact Info", 
+            "Original Price", "Amount Paid", "Balance Due"
         )
         self.sold_properties_tree = ttk.Treeview(main_frame, columns=columns, show="headings")
 
+        self.sold_properties_tree.heading("Project No", text="Plot No")
+        self.sold_properties_tree.heading("Project Name", text="Project Name")
         self.sold_properties_tree.heading("Date Sold", text="Date Sold")
         self.sold_properties_tree.heading("Time Sold", text="Time Sold")
         self.sold_properties_tree.heading("Title Deed", text="Title Deed")
@@ -4877,6 +5151,9 @@ class SoldPropertiesView(tk.Toplevel):
         self.sold_properties_tree.heading("Amount Paid", text="Amount Paid (KES)")
         self.sold_properties_tree.heading("Balance Due", text="Balance Due (KES)")
 
+
+        self.sold_properties_tree.column("Project No", width=50, anchor="center")
+        self.sold_properties_tree.column("Project Name", width=150, anchor="w")
         self.sold_properties_tree.column("Date Sold", width=100, anchor="center")
         self.sold_properties_tree.column("Time Sold", width=80, anchor="center")
         self.sold_properties_tree.column("Title Deed", width=120, anchor="w")
@@ -4887,6 +5164,12 @@ class SoldPropertiesView(tk.Toplevel):
         self.sold_properties_tree.column("Original Price", width=120, anchor="e")
         self.sold_properties_tree.column("Amount Paid", width=120, anchor="e")
         self.sold_properties_tree.column("Balance Due", width=120, anchor="e")
+
+
+        # Enable sorting by clicking on column headers
+        for col in columns:
+            self.sold_properties_tree.heading(col, text=self.sold_properties_tree.heading(col)['text'],
+                command=lambda _col=col: self._sort_treeview_by_column(_col, False))
 
         self.sold_properties_tree.pack(fill="both", expand=True, pady=10)
 
@@ -5013,17 +5296,41 @@ class SoldPropertiesView(tk.Toplevel):
             time_part = full_date_time.split(' ')[1] if ' ' in full_date_time else ""
 
             self.sold_properties_tree.insert("", "end", values=(
+                row.get('project_no', 'N/A').upper(),
+                row.get('project_name', 'N/A').upper(),
                 date_part,
                 time_part,
                 row['title_deed_number'],
                 row['location'],
-                f"{row['size']:.2f}",
-                row['name'],
+                f"{row['size']:.4f}",
+                row.get('client_name', 'N/A'),
                 row['client_contact_info'],
                 f"{row['original_price']:,.2f}",
                 f"{row['total_amount_paid']:,.2f}",
                 f"{row['balance']:,.2f}"
             ), iid=row['transaction_id'])
+
+    def _sort_treeview_by_column(self, col, reverse):
+        """Sorts the Treeview rows by the specified column."""
+        try:
+            data = [(self.sold_properties_tree.set(k, col), k) for k in self.sold_properties_tree.get_children('')]
+
+            def convert(value):
+                try:
+                    if isinstance(value, str) and value.upper().startswith("KES"):
+                        value = value.replace("KES", "").replace(",", "").strip()
+                    return float(value)
+                except (ValueError, TypeError):
+                    return value.lower() if isinstance(value, str) else value
+
+            data.sort(key=lambda t: convert(t[0]), reverse=reverse)
+
+            for index, (val, k) in enumerate(data):
+                self.sold_properties_tree.move(k, '', index)
+
+            self.sold_properties_tree.heading(col, command=lambda: self._sort_treeview_by_column(col, not reverse))
+        except Exception as e:
+            print(f"Sort error in column '{col}': {e}")
 
     def _go_previous_page(self):
         if self.current_page > 1:
@@ -5233,6 +5540,28 @@ class ViewAllPropertiesForm(tk.Toplevel):
         self.status_filter_combobox.set("All")
         self.status_filter_combobox.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
 
+        # --- Project Filter Dropdown ---
+        ttk.Label(filter_search_frame, text="Project:").grid(row=1, column=2, padx=5, pady=2, sticky="w")
+
+        # Fetch project names for dropdown
+        try:
+            project_names = ["All Projects"]
+            projects = self.db_manager.get_all_projects()
+            if projects:
+                project_names += [p.get("name") for p in projects]
+        except Exception as e:
+            print(f"Error loading project names: {e}")
+            project_names = ["All Projects"]
+
+        self.project_filter_combobox = ttk.Combobox(
+            filter_search_frame,
+            values=project_names,
+            state="readonly",
+            width=30
+        )
+        self.project_filter_combobox.set("All Projects")
+        self.project_filter_combobox.grid(row=1, column=3, padx=5, pady=2, sticky="ew")
+
 
         # Load icons for filter/search buttons
         if parent_icon_loader:
@@ -5252,9 +5581,12 @@ class ViewAllPropertiesForm(tk.Toplevel):
 
         # --- Treeview for Displaying Properties ---
         # UPDATED: Added "Added By" column
-        columns = ("Property Type", "Title Deed", "Location", "Price", "Size", "Status", "telephone_number", "Added By","Owner")
+        columns = ("Project No", "Project", "Property Type", "Title Deed", "Location", "Price", "Size", "Status", "telephone_number", "Added By", "Owner")
+
         self.properties_tree = ttk.Treeview(main_frame, columns=columns, show="headings", style='Treeview') # Default style
 
+        self.properties_tree.heading("Project No", text="Project No")
+        self.properties_tree.heading("Project", text="Project Name")
         self.properties_tree.heading("Property Type", text="Type")
         self.properties_tree.heading("Title Deed", text="Title Deed")
         self.properties_tree.heading("Location", text="Location")
@@ -5265,6 +5597,8 @@ class ViewAllPropertiesForm(tk.Toplevel):
         self.properties_tree.heading("Added By", text="Added By") # NEW HEADING
         self.properties_tree.heading("Owner", text="Owner")
 
+        self.properties_tree.column("Project No", width=100, anchor="center")
+        self.properties_tree.column("Project", width=150, anchor="w")
         self.properties_tree.column("Property Type", width=60, anchor="center")
         self.properties_tree.column("Title Deed", width=150, anchor="w")
         self.properties_tree.column("Location", width=180, anchor="w")
@@ -5274,6 +5608,11 @@ class ViewAllPropertiesForm(tk.Toplevel):
         self.properties_tree.column("telephone_number", width=80, anchor="center") # Small column for image indicator
         self.properties_tree.column("Added By", width=120, anchor="center") # NEW COLUMN WIDTH
         self.properties_tree.column("Owner", width=90, anchor="center")
+
+        # --- Enable column sorting ---
+        for col in columns:
+            self.properties_tree.heading(col, text=self.properties_tree.heading(col)['text'],
+                                        command=lambda _col=col: self._sort_treeview_by_column(_col, False))
 
         self.properties_tree.pack(fill="both", expand=True, pady=10)
         ToolTip(self.properties_tree, "Click Select a Property .")
@@ -5355,6 +5694,10 @@ class ViewAllPropertiesForm(tk.Toplevel):
         min_size_str = self.min_size_entry.get().strip()
         max_size_str = self.max_size_entry.get().strip()
         status_filter = self.status_filter_combobox.get().strip()
+        project_filter = self.project_filter_combobox.get().strip()
+        if project_filter == "All Projects":
+            project_filter = None
+
 
         min_size = None
         max_size = None
@@ -5402,7 +5745,8 @@ class ViewAllPropertiesForm(tk.Toplevel):
             search_query=search_query if search_query else None,
             min_size=min_size,
             max_size=max_size,
-            status=db_status
+            status=db_status,
+            project_name=project_filter
         )
         
         # Sort by property_id to get newest first (assuming higher ID means newer)
@@ -5472,6 +5816,8 @@ class ViewAllPropertiesForm(tk.Toplevel):
                     image_indicator = "🖼️ View"
             
             self.properties_tree.insert("", "end", values=(
+                prop.get('project_no', 'N/A').upper(),
+                prop.get('project_name', 'N/A').upper(),
                 prop['property_type'],
                 prop['title_deed_number'].upper(),
                 prop['location'].upper(),
@@ -5482,6 +5828,38 @@ class ViewAllPropertiesForm(tk.Toplevel):
                 prop.get('added_by_username', 'N/A').upper(),
                 prop['owner'].upper(),
             ), iid=prop['property_id'], tags=tags)
+
+    def _sort_treeview_by_column(self, col, reverse):
+        """Sorts the Treeview rows by the specified column."""
+        try:
+            # Build a list of (column_value, item_id)
+            data = [(self.properties_tree.set(k, col), k) for k in self.properties_tree.get_children('')]
+
+            # Function to normalize numeric / currency values for comparison
+            def convert(value):
+                try:
+                    if isinstance(value, str) and value.upper().startswith("KES"):
+                        value = value.replace("KES", "").replace(",", "").strip()
+                    return float(value)
+                except (ValueError, TypeError):
+                    return value.lower() if isinstance(value, str) else value
+
+            # Sort data
+            data.sort(key=lambda t: convert(t[0]), reverse=reverse)
+
+            # Reorder Treeview rows
+            for index, (val, k) in enumerate(data):
+                self.properties_tree.move(k, '', index)
+
+            # Update header with arrow indicator and toggle sort order
+            arrow = "▲" if reverse else "▼"
+            self.properties_tree.heading(col, text=f"{col} {arrow}",
+                command=lambda: self._sort_treeview_by_column(col, not reverse))
+
+        except Exception as e:
+            print(f"Sort error in column '{col}': {e}")
+
+
 
 
     def _on_property_select(self, event):
@@ -5709,6 +6087,7 @@ class ViewAllPropertiesForm(tk.Toplevel):
             self.callback_on_close()
 
 
+
 class SalesReportsForm(tk.Toplevel):
     def __init__(self, master, db_manager, parent_icon_loader=None, window_icon_name="reports.png"):
         super().__init__(master)
@@ -5732,11 +6111,13 @@ class SalesReportsForm(tk.Toplevel):
 
         self.sales_report_canvas = None
         self.sold_properties_canvas = None
+        self.ongoing_payments_canvas = None
         self.pending_instalments_canvas = None
         
         # New: Direct references to the export buttons
         self.sales_export_btn = None
         self.sold_properties_export_btn = None
+        self.ongoing_payments_export_btn = None
         self.pending_instalments_export_btn = None
         
         self.rendered_pdf_images = []
@@ -5791,6 +6172,7 @@ class SalesReportsForm(tk.Toplevel):
 
         self._create_sales_report_tab(notebook)
         self._create_sold_properties_tab(notebook)
+        self._create_ongoing_payments_tab(notebook)
         self._create_pending_instalments_tab(notebook)
 
         close_btn = ttk.Button(content_frame, text="Close", image=self._close_icon, compound=tk.LEFT, command=self._on_closing)
@@ -5814,6 +6196,16 @@ class SalesReportsForm(tk.Toplevel):
             self._generate_sold_properties_report,
             "sold_properties_canvas"
         )
+
+    def _create_ongoing_payments_tab(self, notebook):
+        frame = ttk.Frame(notebook, padding="10")
+        notebook.add(frame, text="Ongoing Payments")
+        self._create_report_tab(
+            frame, "ongoing_payments", "Ongoing Payments",
+            self._generate_ongoing_payments_report,
+            "ongoing_payments_canvas"
+        )
+
 
     def _create_pending_instalments_tab(self, notebook):
         frame = ttk.Frame(notebook, padding="10")
@@ -5885,6 +6277,8 @@ class SalesReportsForm(tk.Toplevel):
             self.sales_export_btn = export_btn
         elif report_prefix == "sold_properties":
             self.sold_properties_export_btn = export_btn
+        elif report_prefix == "ongoing_payments":
+            self.ongoing_payments_export_btn = export_btn
         elif report_prefix == "pending_instalments":
             self.pending_instalments_export_btn = export_btn
 
@@ -5967,11 +6361,13 @@ class SalesReportsForm(tk.Toplevel):
             return False
 
     def _generate_pdf_report(self, report_name, content, report_type, start_date, end_date, file_path=None):
-        """Generates PDF report using ReportLab. Saves to file_path if provided, else asks the user."""
+        """Generates PDF report using ReportLab, grouped by project_id (with project_name if available)."""
         if not _REPORTLAB_AVAILABLE:
             return None
 
-        # If no file path is given, prompt the user to save
+        from itertools import groupby
+
+        # --- File selection ---
         if file_path is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             period_suffix = ""
@@ -5982,7 +6378,7 @@ class SalesReportsForm(tk.Toplevel):
             elif report_type == "custom":
                 period_suffix = f"_{start_date}_to_{end_date}"
             default_filename = f"{report_name.replace(' ', '_')}{period_suffix}_{timestamp}.pdf"
-            
+
             file_path = filedialog.asksaveasfilename(
                 parent=self,
                 defaultextension=".pdf",
@@ -5992,13 +6388,22 @@ class SalesReportsForm(tk.Toplevel):
             )
             if not file_path:
                 return None
-        
-        # --- PDF generation logic (same as before) ---
+
         try:
-            doc = SimpleDocTemplate(file_path, pagesize=letter)
+            # --- Initialize PDF ---
+            doc = SimpleDocTemplate(file_path, pagesize=letter, topMargin=40, bottomMargin=40, leftMargin=40, rightMargin=40)
             styles = getSampleStyleSheet()
             story = []
 
+            wrap_style = ParagraphStyle(
+                name="Wrapped",
+                fontName="Helvetica",
+                fontSize=8,
+                leading=10,
+                alignment=0  # Left align
+            )
+
+            # --- Header ---
             logo_path = os.path.join(ICONS_DIR, "NEWCITY.png")
             if os.path.exists(logo_path):
                 logo = RLImage(logo_path)
@@ -6006,102 +6411,302 @@ class SalesReportsForm(tk.Toplevel):
             else:
                 logo = Paragraph("NEW CITY REAL ESTATE", styles['Normal'])
 
-            header_table_data = [[logo, "NEW CITY REAL ESTATE", datetime.now().strftime("%Y-%m-%d %H:%M:%S")]]
-            header_table = Table(header_table_data, colWidths=[2.5*inch, 2*inch, 2*inch])
+            header_table_data = [
+                [logo, "NEW CITY REAL ESTATE", datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
+            ]
+            header_table = Table(header_table_data, colWidths=[2.5 * inch, 2 * inch, 2 * inch])
             header_table.setStyle(TableStyle([
-                ('FONTNAME', (1,0), (1,0), 'Helvetica-Bold'), ('FONTSIZE', (1,0), (1,0), 14),
-                ('ALIGN', (1,0), (1,-1), 'CENTER'), ('FONTSIZE', (2,0), (2,0), 10),
-                ('ALIGN', (2,0), (2,0), 'RIGHT'), ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-                ('BOTTOMPADDING', (0,0), (-1,-1), 12),
+                ('FONTNAME', (1, 0), (1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (1, 0), (1, 0), 14),
+                ('ALIGN', (1, 0), (1, -1), 'CENTER'),
+                ('FONTSIZE', (2, 0), (2, 0), 10),
+                ('ALIGN', (2, 0), (2, 0), 'RIGHT'),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
             ]))
             story.append(header_table)
+            story.append(Spacer(1, 8))
 
+            # --- Report Title ---
             story.append(Paragraph(f"<b>{report_name.upper()}</b>", styles['Heading2']))
             story.append(Paragraph(f"Period: {start_date} to {end_date}", styles['Normal']))
             story.append(Spacer(1, 12))
-            
-            if "SALES REPORT" in report_name.upper():
-                table_data = [["Item", "Title Deed", "Actual Price", "Amount Paid", "Balance"]]
-                gross_sales, net_sales = 0.0, 0.0
-                for item in content.get('data', []):
-                    actual_price = float(item.get('actual_price') or 0)
-                    amount_paid = float(item.get('amount_paid') or 0)
-                    balance = float(item.get('balance') or 0)
-                    table_data.append([
-                        item.get('property_type', 'N/A'), item.get('title_deed_number', 'N/A'),
-                        f"KES {actual_price:,.2f}", f"KES {amount_paid:,.2f}", f"KES {balance:,.2f}"
-                    ])
-                    gross_sales += actual_price
-                    net_sales += amount_paid
-                total_deficit = gross_sales - net_sales
-                t = Table(table_data, colWidths=[1.2*inch, 1.5*inch, 1*inch, 1*inch, 1*inch])
-                t.setStyle(TableStyle([
-                    ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'), ('FONTNAME', (0,1), (-1,-1), 'Helvetica'),
-                    ('FONTSIZE', (0,0), (-1,-1), 9), ('ALIGN', (2,0), (-1,-1), 'RIGHT'), ('ALIGN', (0,0), (1,-1), 'LEFT'),
-                    ('VALIGN', (0,0), (-1,-1), 'MIDDLE'), ('GRID', (0,0), (-1,-1), 0.5, colors.lightgrey),
-                    ('LINEBELOW', (0,0), (-1,0), 1, colors.black), ('LINEABOVE', (0,-2), (-1,-2), 1, colors.black),
-                    ('LINEBELOW', (0,-2), (-1,-2), 1, colors.black), ('LINEBELOW', (0,-1), (-1,-1), 2, colors.black),
-                    ('BACKGROUND', (0,0), (-1,0), colors.lightgrey), ('BACKGROUND', (0,-1), (-1,-1), colors.lightgrey),
-                    ('SPAN', (0,-1), (1,-1)),
-                ]))
-                story.append(t)
-                story.append(Spacer(1, 12))
-                summary_data = [["GROSS SALES:", f"KES {gross_sales:,.2f}"], ["NET SALES:", f"KES {net_sales:,.2f}"], ["PENDING:", f"KES {total_deficit:,.2f}"]]
-                summary_table = Table(summary_data, colWidths=[1.5*inch, 1*inch])
-                summary_table.setStyle(TableStyle([
-                    ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'), ('FONTNAME', (1,0), (1,-1), 'Helvetica'),
-                    ('FONTSIZE', (0,0), (-1,-1), 10), ('ALIGN', (1,0), (1,-1), 'RIGHT'), ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-                ]))
-                story.append(summary_table)
 
-            elif "SOLD PROPERTIES" in report_name.upper():
-                if content.get('data'):
-                    headers = ["Date", "Title Deed", "Location", "Size(Hectares)", "Client", "Paid", "Balance"]
-                    table_data = [headers]
-                    for prop in content['data']:
-                        date_value = prop.get('date_sold')
-                        date_part = date_value.strftime("%Y-%m-%d") if isinstance(date_value, datetime) else (date_value.split(' ')[0] if isinstance(date_value, str) else "N/A")
+            # === SALES REPORT ===
+            if "SALES" in report_name.upper():
+                sorted_data = sorted(content.get('data', []),
+                                     key=lambda x: (x.get('project_id') or 'Unknown', x.get('project_name') or ''))
+                overall_gross, overall_net = Decimal('0.0'), Decimal('0.0')
+
+                for (project_id, project_name), group in groupby(sorted_data,
+                    key=lambda x: (x.get('project_id') or 'Unknown', x.get('project_name') or '')):
+                    project_header = f"Project ID: {project_id}"
+                    if project_name:
+                        project_header += f" — Project Name: {project_name}"
+                    story.append(Paragraph(f"<b>{project_header}</b>", styles['Heading3']))
+                    story.append(Spacer(1, 6))
+
+                    table_data = [["Item", "Title Deed", "Actual Price", "Amount Paid", "Balance"]]
+                    project_gross, project_net = Decimal('0.0'), Decimal('0.0')
+
+                    for item in group:
+                        actual_price = Decimal(item.get('actual_price') or 0)
+                        amount_paid = Decimal(item.get('amount_paid') or 0)
+                        balance = Decimal(item.get('balance') or 0)
                         table_data.append([
-                            date_part, prop.get('title_deed_number', 'N/A'), prop.get('location', 'N/A'), f"{prop.get('size', 0):.2f}",
-                            prop.get('client_name', 'N/A'), f"KES {prop.get('total_amount_paid', 0):,.2f}", f"KES {prop.get('balance', 0):,.2f}"
+                            Paragraph(item.get('property_type', 'N/A'), wrap_style),
+                            Paragraph(item.get('title_deed_number', 'N/A'), wrap_style),
+                            Paragraph(f"KES {actual_price:,.2f}", wrap_style),
+                            Paragraph(f"KES {amount_paid:,.2f}", wrap_style),
+                            Paragraph(f"KES {balance:,.2f}", wrap_style),
                         ])
-                    t = Table(table_data, colWidths=[0.8*inch, 1.2*inch, 1.2*inch, 0.7*inch, 1.2*inch, 1*inch, 1*inch])
-                    t.setStyle(TableStyle([
-                        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'), ('FONTNAME', (0,1), (-1,-1), 'Helvetica'),
-                        ('FONTSIZE', (0,0), (-1,-1), 8), ('ALIGN', (0,0), (-1,-1), 'LEFT'), ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-                        ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
-                    ]))
-                    story.append(t)
-                else:
-                    story.append(Paragraph("No properties sold in this period", styles['Normal']))
+                        project_gross += actual_price
+                        project_net += amount_paid
 
-            elif "PENDING INSTALMENTS" in report_name.upper():
+                    overall_gross += project_gross
+                    overall_net += project_net
+                    project_pending = project_gross - project_net
+
+                    table = Table(table_data, repeatRows=1, colWidths=[1.0 * inch, 1.2 * inch, 1.1 * inch, 1.1 * inch, 1.1 * inch])
+                    table.setStyle(TableStyle([
+                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                        ('FONTSIZE', (0, 0), (-1, -1), 8),
+                        ('ALIGN', (2, 0), (-1, -1), 'RIGHT'),
+                        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                        ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                    ]))
+                    story.append(table)
+                    story.append(Spacer(1, 6))
+
+                    # Per-project summary
+                    summary_data = [
+                        ["Gross Sales:", f"KES {project_gross:,.2f}"],
+                        ["Net Sales:", f"KES {project_net:,.2f}"],
+                        ["Pending:", f"KES {project_pending:,.2f}"]
+                    ]
+                    summary_table = Table(summary_data, colWidths=[1.5 * inch, 1.5 * inch])
+                    summary_table.setStyle(TableStyle([
+                        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
+                        ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+                        ('BACKGROUND', (0, 0), (-1, -1), colors.whitesmoke),
+                        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+                        ('TOPPADDING', (0, 0), (-1, -1), 4),
+                    ]))
+                    story.append(summary_table)
+                    story.append(Spacer(1, 10))
+
+                # Overall summary
+                story.append(Paragraph("<b>Overall Summary</b>", styles['Heading3']))
+                total_pending = overall_gross - overall_net
+                overall_summary = [
+                    ["Total Gross Sales:", f"KES {overall_gross:,.2f}"],
+                    ["Total Net Sales:", f"KES {overall_net:,.2f}"],
+                    ["Total Pending:", f"KES {total_pending:,.2f}"]
+                ]
+                overall_table = Table(overall_summary, colWidths=[1.8 * inch, 1.5 * inch])
+                overall_table.setStyle(TableStyle([
+                    ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
+                    ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+                    ('BACKGROUND', (0, 0), (-1, -1), colors.beige),
+                    ('TOPPADDING', (0, 0), (-1, -1), 6),
+                ]))
+                story.append(overall_table)
+
+            # === SOLD PROPERTIES REPORT ===
+            elif "SOLD" in report_name.upper():
                 if content.get('data'):
-                    headers = ["Date", "Client", "Title Deed", "Original Price", "Paid", "Balance Due"]
-                    table_data = [headers]
-                    for inst in content['data']:
-                        date_value = inst.get('transaction_date')
-                        date_part = date_value.strftime("%Y-%m-%d") if isinstance(date_value, datetime) else (date_value.split(' ')[0] if isinstance(date_value, str) else "N/A")
-                        table_data.append([
-                            date_part, inst.get('client_name', 'N/A'), inst.get('title_deed_number', 'N/A'),
-                            f"KES {inst.get('original_price', 0):,.2f}", f"KES {inst.get('total_amount_paid', 0):,.2f}", f"KES {inst.get('balance', 0):,.2f}"
-                        ])
-                    t = Table(table_data, colWidths=[0.8*inch, 1.2*inch, 1.2*inch, 1*inch, 1*inch, 1*inch])
-                    t.setStyle(TableStyle([
-                        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'), ('FONTNAME', (0,1), (-1,-1), 'Helvetica'),
-                        ('FONTSIZE', (0,0), (-1,-1), 8), ('ALIGN', (0,0), (-1,-1), 'LEFT'), ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-                        ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
-                    ]))
-                    story.append(t)
-                else:
-                    story.append(Paragraph("No pending instalments found", styles['Normal']))
+                    sorted_data = sorted(content['data'],
+                                        key=lambda x: (x.get('project_id') or 'Unknown', x.get('project_name') or ''))
 
+                    overall_total_paid = Decimal('0.0')
+
+                    for (project_id, project_name), group in groupby(sorted_data,
+                        key=lambda x: (x.get('project_id') or 'Unknown', x.get('project_name') or '')):
+                        project_header = f"Project ID: {project_id}"
+                        if project_name:
+                            project_header += f" — Project Name: {project_name}"
+                        story.append(Paragraph(f"<b>{project_header}</b>", styles['Heading3']))
+                        story.append(Spacer(1, 6))
+
+                        headers = ["Date", "Title Deed", "Location", "Size (Ha)", "Client", "Paid", "Balance"]
+                        table_data = [headers]
+
+                        project_total_paid = Decimal('0.0')
+
+                        # group is an iterator; convert to list to iterate twice safely
+                        project_items = list(group)
+
+                        for prop in project_items:
+                            date_value = prop.get('date_sold')
+                            date_part = date_value.strftime("%Y-%m-%d") if isinstance(date_value, datetime) else (
+                                date_value.split(' ')[0] if isinstance(date_value, str) else "N/A"
+                            )
+                            paid_amt = Decimal(prop.get('total_amount_paid') or 0)
+                            balance_amt = Decimal(prop.get('balance') or 0)
+                            table_data.append([
+                                Paragraph(date_part, wrap_style),
+                                Paragraph(prop.get('title_deed_number', 'N/A'), wrap_style),
+                                Paragraph(prop.get('location', 'N/A'), wrap_style),
+                                Paragraph(f"{prop.get('size', 0):.4f}", wrap_style),
+                                Paragraph(prop.get('client_name', 'N/A'), wrap_style),
+                                Paragraph(f"KES {paid_amt:,.2f}", wrap_style),
+                                Paragraph(f"KES {balance_amt:,.2f}", wrap_style),
+                            ])
+                            project_total_paid += paid_amt
+
+                        overall_total_paid += project_total_paid
+
+                        t = Table(table_data, repeatRows=1, colWidths=[0.8 * inch, 1.1 * inch, 1.1 * inch, 0.7 * inch, 1.3 * inch, 1 * inch, 1 * inch])
+                        t.setStyle(TableStyle([
+                            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                            ('FONTSIZE', (0, 0), (-1, -1), 8),
+                            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                            ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                        ]))
+                        story.append(t)
+                        story.append(Spacer(1, 6))
+
+                        # Insert per-project total (Total Paid)
+                        story.append(Paragraph(f"<b>Total Paid: KES {project_total_paid:,.2f}</b>", styles['Normal']))
+                        story.append(Spacer(1, 10))
+
+                    # After all projects, add overall total
+                    story.append(Spacer(1, 6))
+                    story.append(Paragraph("<b>========================================</b>", styles['Normal']))
+                    story.append(Spacer(1, 6))
+                    story.append(Paragraph(f"<b>Overall Total Paid: KES {overall_total_paid:,.2f}</b>", styles['Heading3']))
+                    story.append(Spacer(1, 10))
+                else:
+                    story.append(Paragraph("No properties sold in this period.", styles['Normal']))
+
+            # === ONGOING PAYMENTS REPORT ===
+            elif "ONGOING" in report_name.upper() or "ONGOING PAYMENTS" in report_name.upper():
+                if content.get('data'):
+                    sorted_data = sorted(content['data'],
+                                        key=lambda x: (x.get('project_id') or 'Unknown', x.get('project_name') or ''))
+                    for (project_id, project_name), group in groupby(sorted_data,
+                        key=lambda x: (x.get('project_id') or 'Unknown', x.get('project_name') or '')):
+                        project_header = f"Project ID: {project_id}"
+                        if project_name:
+                            project_header += f" — Project Name: {project_name}"
+                        story.append(Paragraph(f"<b>{project_header}</b>", styles['Heading3']))
+                        story.append(Spacer(1, 6))
+
+                        headers = ["Date", "Client", "Title Deed", "Original Price", "Paid", "Balance"]
+                        table_data = [headers]
+                        project_gross, project_net = Decimal('0.0'), Decimal('0.0')
+
+                        for rec in group:
+                            date_value = rec.get('transaction_date')
+                            date_part = date_value.strftime("%Y-%m-%d") if isinstance(date_value, datetime) else (
+                                date_value.split(' ')[0] if isinstance(date_value, str) else "N/A"
+                            )
+                            original_price = Decimal(rec.get('original_price') or 0)
+                            paid = Decimal(rec.get('total_amount_paid') or rec.get('amount_paid') or 0)
+                            balance = Decimal(rec.get('balance') or 0)
+
+                            table_data.append([
+                                Paragraph(date_part, wrap_style),
+                                Paragraph(rec.get('client_name', 'N/A'), wrap_style),
+                                Paragraph(rec.get('title_deed_number', 'N/A'), wrap_style),
+                                Paragraph(f"KES {original_price:,.2f}", wrap_style),
+                                Paragraph(f"KES {paid:,.2f}", wrap_style),
+                                Paragraph(f"KES {balance:,.2f}", wrap_style),
+                            ])
+
+                            project_gross += original_price
+                            project_net += paid
+
+                        t = Table(table_data, repeatRows=1, colWidths=[0.8 * inch, 1.4 * inch, 1.1 * inch, 1 * inch, 1 * inch, 1 * inch])
+                        t.setStyle(TableStyle([
+                            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                            ('FONTSIZE', (0, 0), (-1, -1), 8),
+                            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                            ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                        ]))
+                        story.append(t)
+                        story.append(Spacer(1, 10))
+
+                        # Per-project summary
+                        project_pending = project_gross - project_net
+                        summary_data = [
+                            ["Gross (Project Total):", f"KES {project_gross:,.2f}"],
+                            ["Total Paid:", f"KES {project_net:,.2f}"],
+                            ["Total Pending:", f"KES {project_pending:,.2f}"]
+                        ]
+                        summary_table = Table(summary_data, colWidths=[1.8 * inch, 1.5 * inch])
+                        summary_table.setStyle(TableStyle([
+                            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
+                            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+                            ('BACKGROUND', (0, 0), (-1, -1), colors.whitesmoke),
+                            ('TOPPADDING', (0, 0), (-1, -1), 6),
+                        ]))
+                        story.append(summary_table)
+                        story.append(Spacer(1, 12))
+
+                    # Overall summary across projects
+                    # (compute by summing project_gross/project_net while iterating — you can slightly adapt if you prefer)
+                    # For brevity, the existing "SALES" overall summary style can be mirrored here.
+                else:
+                    story.append(Paragraph("No ongoing payments found in this period.", styles['Normal']))
+
+
+            # === PENDING INSTALMENTS REPORT ===
+            elif "PENDING" in report_name.upper() or "INSTALMENT" in report_name.upper():
+                if content.get('data'):
+                    sorted_data = sorted(content['data'],
+                                         key=lambda x: (x.get('project_id') or 'Unknown', x.get('project_name') or ''))
+                    for (project_id, project_name), group in groupby(sorted_data,
+                        key=lambda x: (x.get('project_id') or 'Unknown', x.get('project_name') or '')):
+                        project_header = f"Project ID: {project_id}"
+                        if project_name:
+                            project_header += f" — Project Name: {project_name}"
+                        story.append(Paragraph(f"<b>{project_header}</b>", styles['Heading3']))
+                        story.append(Spacer(1, 6))
+
+                        headers = ["Date", "Client", "Title Deed", "Original Price", "Paid", "Balance Due"]
+                        table_data = [headers]
+
+                        for inst in group:
+                            date_value = inst.get('transaction_date')
+                            date_part = date_value.strftime("%Y-%m-%d") if isinstance(date_value, datetime) else (
+                                date_value.split(' ')[0] if isinstance(date_value, str) else "N/A"
+                            )
+                            table_data.append([
+                                Paragraph(date_part, wrap_style),
+                                Paragraph(inst.get('client_name', 'N/A'), wrap_style),
+                                Paragraph(inst.get('title_deed_number', 'N/A'), wrap_style),
+                                Paragraph(f"KES {inst.get('original_price', 0):,.2f}", wrap_style),
+                                Paragraph(f"KES {inst.get('total_amount_paid', 0):,.2f}", wrap_style),
+                                Paragraph(f"KES {inst.get('balance', 0):,.2f}", wrap_style),
+                            ])
+
+                        t = Table(table_data, repeatRows=1, colWidths=[0.8 * inch, 1.4 * inch, 1.1 * inch, 1 * inch, 1 * inch, 1 * inch])
+                        t.setStyle(TableStyle([
+                            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                            ('FONTSIZE', (0, 0), (-1, -1), 8),
+                            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                            ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                        ]))
+                        story.append(t)
+                        story.append(Spacer(1, 10))
+                else:
+                    story.append(Paragraph("No pending instalments found in this period.", styles['Normal']))
+
+            # --- Build PDF ---
             doc.build(story)
+            print(f"[DEBUG] PDF successfully generated: {file_path}")
             return file_path
+
         except Exception as e:
             print(f"PDF generation failed: {e}")
             return None
-    
+
     def _show_pdf_preview(self, pdf_path, canvas):
         """Displays the full PDF content on a canvas."""
         canvas.delete("all")
@@ -6148,6 +6753,8 @@ class SalesReportsForm(tk.Toplevel):
             report_data = self.db_manager.get_detailed_sales_transactions_for_date_range(start_date_str, end_date_str)
         elif "Sold Properties" in report_title:
             report_data = self.db_manager.get_sold_properties_for_date_range_detailed(start_date_str, end_date_str)
+        elif "Ongoing Payments" in report_title:
+            report_data = self.db_manager.get_active_ongoing_payments_for_date_range(start_date_str, end_date_str)
         elif "Pending Instalments" in report_title:
             report_data = self.db_manager.get_pending_instalments_for_date_range(start_date_str, end_date_str)
         
@@ -6223,12 +6830,12 @@ class SalesReportsForm(tk.Toplevel):
         if not _REPORTLAB_AVAILABLE:
             messagebox.showerror("PDF Error", "ReportLab library is not installed.")
             return
-        
+
         canvas.delete("all")
         canvas.create_text(canvas.winfo_width() / 2, canvas.winfo_height() / 2, text="Generating report, please wait...", justify=tk.CENTER)
         self.update_idletasks()
-        
-        # FIX: Use the direct reference instead of the unreliable master chain
+
+        # Direct reference to export button
         export_btn = self.sold_properties_export_btn
 
         report_data, report_title, _, (start_date_str, end_date_str) = self._get_active_tab_data("Sold Properties Report", report_type)
@@ -6241,9 +6848,104 @@ class SalesReportsForm(tk.Toplevel):
             return
 
         try:
+            # create temp pdf and render it to preview (pdf contains totals now)
             self._temp_report_path = os.path.join(tempfile.gettempdir(), f"temp_{report_title.replace(' ', '_')}_{os.getpid()}.pdf")
             pdf_path = self._generate_pdf_report(report_title, {'data': report_data}, report_type, start_date_str, end_date_str, self._temp_report_path)
-            
+
+            if pdf_path and os.path.exists(pdf_path):
+                # primary flow: preview the PDF (will include per-project + overall totals)
+                self._show_pdf_preview(pdf_path, canvas)
+                export_btn.config(state=tk.NORMAL)
+                return
+            else:
+                # fallback: if PDF couldn't be generated for preview, draw a textual preview with totals
+                canvas.delete("all")
+                x = 10
+                y = 10
+                line_height = 16
+                canvas.create_text(canvas.winfo_width() / 2, canvas.winfo_height() / 2, text="PDF preview not available. Showing textual preview.", justify=tk.CENTER)
+                self.update_idletasks()
+
+                # Build grouped presentation and compute totals
+                from itertools import groupby
+                sorted_data = sorted(report_data, key=lambda x: (x.get('project_id') or 'Unknown', x.get('project_name') or ''))
+                overall_total_paid = Decimal('0.0')
+
+                for (project_id, project_name), group in groupby(sorted_data, key=lambda x: (x.get('project_id') or 'Unknown', x.get('project_name') or '')):
+                    proj_header = f"Project ID: {project_id}"
+                    if project_name:
+                        proj_header += f" — Project Name: {project_name}"
+
+                    canvas.create_text(x + 5, y, anchor='nw', text=proj_header, font=('Helvetica', 10, 'bold'))
+                    y += line_height + 4
+
+                    project_total_paid = Decimal('0.0')
+                    # group is iterator -> make list
+                    project_items = list(group)
+                    for prop in project_items:
+                        date_value = prop.get('date_sold')
+                        date_part = date_value.strftime("%Y-%m-%d") if isinstance(date_value, datetime) else (
+                            date_value.split(' ')[0] if isinstance(date_value, str) else "N/A"
+                        )
+                        paid_amt = Decimal(prop.get('total_amount_paid') or 0)
+                        canvas.create_text(x + 10, y, anchor='nw',
+                                        text=f"{date_part} | {prop.get('title_deed_number','N/A')} | {prop.get('client_name','N/A')} | KES {paid_amt:,.2f}",
+                                        font=('Helvetica', 9))
+                        y += line_height
+                        project_total_paid += paid_amt
+
+                    # per-project total
+                    canvas.create_text(x + 10, y + 4, anchor='nw', text=f"Total Paid: KES {project_total_paid:,.2f}", font=('Helvetica', 10, 'bold'))
+                    y += line_height + 12
+                    overall_total_paid += project_total_paid
+
+                    # add a separator line if space allows
+                    canvas.create_line(x + 5, y, canvas.winfo_width() - 10, y)
+                    y += 8
+
+                    # if y exceeds canvas, increase scrollregion
+                    canvas.config(scrollregion=(0, 0, 0, max(y + 20, canvas.winfo_height())))
+
+                # overall total
+                canvas.create_text(x + 5, y + 6, anchor='nw', text="========================================", font=('Helvetica', 10))
+                y += line_height
+                canvas.create_text(x + 5, y + 6, anchor='nw', text=f"Overall Total Paid: KES {overall_total_paid:,.2f}", font=('Helvetica', 11, 'bold'))
+                canvas.config(scrollregion=(0, 0, 0, y + 40))
+                export_btn.config(state=tk.NORMAL)
+                return
+
+        except Exception as e:
+            messagebox.showerror("Report Generation Error", f"An error occurred: {e}")
+            canvas.delete("all")
+            canvas.create_text(canvas.winfo_width() / 2, canvas.winfo_height() / 2, text=f"Error: {e}", fill="red", justify=tk.CENTER)
+            export_btn.config(state=tk.DISABLED)
+
+    def _generate_ongoing_payments_report(self, report_type):
+        """Generates ongoing payments report preview and enables the export button."""
+        canvas = self.ongoing_payments_canvas
+        if not _REPORTLAB_AVAILABLE:
+            messagebox.showerror("PDF Error", "ReportLab library is not installed.")
+            return
+
+        canvas.delete("all")
+        canvas.create_text(canvas.winfo_width() / 2, canvas.winfo_height() / 2, text="Generating report, please wait...", justify=tk.CENTER)
+        self.update_idletasks()
+
+        export_btn = self.ongoing_payments_export_btn
+
+        report_data, report_title, _, (start_date_str, end_date_str) = self._get_active_tab_data("Ongoing Payments Report", report_type)
+
+        if not report_data:
+            messagebox.showinfo("No Data", "No ongoing payments data found for the selected period.")
+            canvas.delete("all")
+            canvas.create_text(canvas.winfo_width() / 2, canvas.winfo_height() / 2, text="No data to preview.", justify=tk.CENTER)
+            export_btn.config(state=tk.DISABLED)
+            return
+
+        try:
+            self._temp_report_path = os.path.join(tempfile.gettempdir(), f"temp_{report_title.replace(' ', '_')}_{os.getpid()}.pdf")
+            pdf_path = self._generate_pdf_report(report_title, {'data': report_data}, report_type, start_date_str, end_date_str, self._temp_report_path)
+
             if pdf_path:
                 self._show_pdf_preview(pdf_path, canvas)
                 export_btn.config(state=tk.NORMAL)
@@ -6255,6 +6957,7 @@ class SalesReportsForm(tk.Toplevel):
             canvas.delete("all")
             canvas.create_text(canvas.winfo_width() / 2, canvas.winfo_height() / 2, text=f"Error: {e}", fill="red", justify=tk.CENTER)
             export_btn.config(state=tk.DISABLED)
+
 
     def _generate_pending_instalments_report(self, report_type):
         """Generates pending instalments report preview and enables the export button."""

@@ -12,8 +12,9 @@ import io
 from pdf2image import convert_from_bytes
 import fitz
 import io
+import webbrowser
 from io import BytesIO
-from reportlab.lib.pagesizes import letter
+from reportlab.lib.pagesizes import letter, A4
 from reportlab.pdfgen import canvas
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate,Image as RLImage, Paragraph, Spacer, Table, TableStyle
@@ -537,7 +538,7 @@ class AddClientAndFileForm(FormBase):
         # Email address
         new_email_label_frame = ttk.Frame(self.new_client_frame)
         new_email_label_frame.pack(fill="x")
-        ttk.Label(new_email_label_frame, text="Email Address:").pack(side="left", fill="x", expand=True)
+        ttk.Label(new_email_label_frame, text="ID Number:").pack(side="left", fill="x", expand=True)
         self.email_entry = ttk.Entry(self.new_client_frame)
         self.email_entry.pack(fill="x", pady=(0, 10))
         ToolTip(self.email_entry, "Select a Survey Client From the Client Dropdown To Prefill Their Email .")
@@ -571,7 +572,7 @@ class AddClientAndFileForm(FormBase):
         self.client_tree = ttk.Treeview(self.existing_client_frame, columns=columns, show="headings", height=10)
         self.client_tree.heading("client_name", text="Client Name")
         self.client_tree.heading("telephone", text="Telephone")
-        self.client_tree.heading("email", text="Email")
+        self.client_tree.heading("email", text="ID Number")
         self.client_tree.column("client_name", width=150, anchor=tk.W)
         self.client_tree.column("telephone", width=120, anchor=tk.W)
         self.client_tree.column("email", width=180, anchor=tk.W)
@@ -731,8 +732,8 @@ class AddClientAndFileForm(FormBase):
                 messagebox.showerror("Validation Error", "Telephone number must be numeric.")
                 return
 
-            if "@" not in email or "." not in email:
-                messagebox.showerror("Validation Error", "Please enter a valid email address.")
+            if not email.isdigit():
+                messagebox.showerror("Validation Error", "Please enter a valid ID Number.")
                 return
 
             client_id = self.db_manager.add_service_client(name, telephone_number, email, brought_by, self.user_id)
@@ -1839,10 +1840,10 @@ class ManagePaymentsView(FormBase):
 
 class PaymentHistoryView(FormBase):
     """
-    A form to display the history of micro-payments for a specific service job.
+    A form to display and export all statements and full payment history for a specific service job.
     """
     def __init__(self, master, db_manager, payment_id, parent_icon_loader=None):
-        super().__init__(master, 600, 400, "Payment History", "history.png", parent_icon_loader)
+        super().__init__(master, 600, 550, "Payment History", "history.png", parent_icon_loader)
         self.db_manager = db_manager
         self.payment_id = payment_id
         self.parent_icon_loader = parent_icon_loader
@@ -1850,78 +1851,196 @@ class PaymentHistoryView(FormBase):
         self._fetch_and_display_history()
 
     def _create_widgets(self):
-        main_frame = ttk.Frame(self, padding="10")
+        main_frame = ttk.Frame(self, padding=10)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
         ttk.Label(main_frame, text="PAYMENT HISTORY", font=('Helvetica', 14, 'bold')).pack(pady=10)
 
-        # Treeview to display history
-        columns = ("Payment Amount", "Payment Mode",  "Payment Type", "Payment Date")
-        self.history_tree = ttk.Treeview(main_frame, columns=columns, show="headings")
-        
+        # Treeview + scrollbar
+        tree_frame = ttk.Frame(main_frame)
+        tree_frame.pack(fill=tk.BOTH, expand=True)
+
+        columns = ("Payment Amount", "Payment Type", "Payment Reason", "Payment Date")
+        self.history_tree = ttk.Treeview(tree_frame, columns=columns, show="headings")
         for col in columns:
-            self.history_tree.heading(col, text=col.replace('_', ' ').title())
+            self.history_tree.heading(col, text=col)
+            self.history_tree.column(col, anchor=tk.CENTER, width=140)
+        self.history_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # Hide the history_id column
-        
-        self.history_tree.column("Payment Amount", width=150, anchor=tk.CENTER)
-        self.history_tree.column("Payment Mode", width=100, anchor=tk.CENTER)
-        self.history_tree.column("Payment Type", width=100, anchor=tk.CENTER)
-        self.history_tree.column("Payment Date", width=180, anchor=tk.CENTER)
-        
-        self.history_tree.pack(fill=tk.BOTH, expand=True, pady=10)
+        scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.history_tree.yview)
+        self.history_tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # Scrollbar
-        tree_scrollbar = ttk.Scrollbar(main_frame, orient=tk.VERTICAL, command=self.history_tree.yview)
-        self.history_tree.configure(yscrollcommand=tree_scrollbar.set)
-        tree_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        ttk.Separator(main_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
 
-        # Close Button
-        if self.parent_icon_loader:
-            self._close_icon = self.parent_icon_loader("cancel.png", size=(20, 20))
-        close_btn = ttk.Button(self, text="Close", command=self.destroy,
-                               image=self._close_icon, compound=tk.LEFT)
-        close_btn.pack(pady=5)
+        # --- Bottom Button ---
+        bottom_frame = ttk.Frame(main_frame)
+        bottom_frame.pack(fill=tk.X, pady=10)
+
+        statements_btn = ttk.Button(
+            bottom_frame,
+            text="📄  Statements",
+            command=self._generate_full_statements_pdf
+        )
+        statements_btn.pack(side=tk.RIGHT, padx=10, pady=5)
 
     def _fetch_and_display_history(self):
-        """Fetches and displays payment history from the database."""
+        """Fetches and displays payment history for the selected payment_id."""
         try:
-            # Clear existing items
             for item in self.history_tree.get_children():
                 self.history_tree.delete(item)
 
             history_records = self.db_manager.get_payment_history_by_payment_id(self.payment_id)
+            if not history_records:
+                self.history_tree.insert("", tk.END, values=("No records found", "", "", ""))
+                return
 
-            # Fix: Check if history_records is a list of dictionaries before proceeding
-            if history_records and isinstance(history_records[0], dict):
-                for record in history_records:
-                    # Access values using dictionary keys instead of a for-loop
-                    display_values = (
-                        f"{record.get('payment_amount', 0.0):,.2f}", # Format as currency
-                        record.get('payment_type', '').upper(),
-                        str(record.get('payment_reason', '')).upper(),
-                        str(record.get('payment_date', '')).upper()
-                    )
-                    self.history_tree.insert("", tk.END, values=display_values)
-            else:
-                # Fallback for old tuple-based return type
-                for record in history_records:
-                    processed_values = []
-                    for i, value in enumerate(record):
-                        if i == 0:
-                            processed_values.append(str(value))
-                        elif i == 1:
-                            processed_values.append(f"{float(value):,.2f}")
-                        elif isinstance(value, str):
-                            processed_values.append(value.upper())
-                        elif value is not None:
-                            processed_values.append(str(value).upper())
-                        else:
-                            processed_values.append("")
-                    self.history_tree.insert("", tk.END, values=processed_values)
+            for record in history_records:
+                display_values = (
+                    f"{record.get('payment_amount', 0.0):,.2f}",
+                    str(record.get('payment_type', '')).upper(),
+                    str(record.get('payment_reason', '')).upper(),
+                    str(record.get('payment_date', '')).upper()
+                )
+                self.history_tree.insert("", tk.END, values=display_values)
 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load payment history: {e}")
+
+    def _generate_full_statements_pdf(self):
+        """Generates a full consolidated statement (with header, logo, and user save prompt)."""
+        try:
+            payments = self.db_manager.get_all_statements_by_job(self.payment_id)
+            if not payments:
+                messagebox.showinfo("No Records", "No payments found for this job.")
+                return
+
+            client_name = payments[0]["client_name"]
+
+            # === Prompt User for Save Location ===
+            default_filename = f"Full_Payment_History_{client_name.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+            filepath = filedialog.asksaveasfilename(
+                title="Save Payment Statement As",
+                defaultextension=".pdf",
+                initialfile=default_filename,
+                filetypes=[("PDF files", "*.pdf")]
+            )
+
+            if not filepath:  # user cancelled
+                return
+
+            # === Build PDF ===
+            doc = SimpleDocTemplate(filepath, pagesize=A4)
+            styles = getSampleStyleSheet()
+            elements = []
+
+            # --- Company Header with Logo ---
+            logo_path = os.path.join(ICONS_DIR, "survey.png")
+
+            if os.path.exists(logo_path):
+                logo = RLImage(logo_path)
+                logo._restrictSize(1.2 * inch, 1.2 * inch)
+            else:
+                logo = Paragraph("", styles["Normal"])
+
+            header_data = [
+                [
+                    logo,
+                    Paragraph("<b>NDIRITU MATHENGE & ASSOCIATES</b><br/>"
+                              "Surveyors • Valuers • Real Estate Consultants"),
+                    Paragraph(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), styles["Normal"])
+                ]
+            ]
+            header = Table(header_data, colWidths=[80, 300, 120])
+            header.setStyle(TableStyle([
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("ALIGN", (1, 0), (1, 0), "CENTER"),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+            ]))
+            elements.append(header)
+            elements.append(Spacer(1, 0.3 * inch))
+
+            # --- Client and Job Details ---
+            elements.append(Paragraph(f"<b>Client:</b> {client_name} ({payments[0]['telephone_number']})", styles['Normal']))
+            elements.append(Paragraph(f"<b>Title:</b> {payments[0]['title_name']} — {payments[0]['title_number']}", styles['Normal']))
+            elements.append(Spacer(1, 0.3 * inch))
+            elements.append(Paragraph("<b>PAYMENT SUMMARY</b>", styles['Heading2']))
+
+            # --- Summary Table ---
+            summary_table_data = [["Payment ID", "Total Fee", "Amount Paid", "Balance", "Last Payment Date"]]
+            grand_total_paid = 0
+            for p in payments:
+                grand_total_paid += float(p["amount"] or 0)
+                summary_table_data.append([
+                    p["payment_id"],
+                    f"{p['fee']:,.2f}",
+                    f"{p['amount']:,.2f}",
+                    f"{p['balance']:,.2f}",
+                    str(p["last_payment_date"] or "").upper()
+                ])
+            summary_table_data.append(["", "", "TOTAL PAID:", f"{grand_total_paid:,.2f}", ""])
+
+            summary_table = Table(summary_table_data, colWidths=[80, 100, 100, 100, 120])
+            summary_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ]))
+            elements.append(summary_table)
+            elements.append(Spacer(1, 0.4 * inch))
+
+            # --- Detailed History for Each Payment ---
+            for i, p in enumerate(payments, start=1):
+                payment_id = p["payment_id"]
+                elements.append(Paragraph(f"<b>Payment #{i} — ID: {payment_id}</b>", styles['Heading3']))
+                elements.append(Paragraph(f"<b>Fee:</b> {p['fee']:,.2f} | "
+                                          f"<b>Paid:</b> {p['amount']:,.2f} | "
+                                          f"<b>Balance:</b> {p['balance']:,.2f}", styles['Normal']))
+                elements.append(Spacer(1, 0.2 * inch))
+
+                history_records = self.db_manager.get_payment_history_by_payment_id(payment_id)
+                if not history_records:
+                    elements.append(Paragraph("No detailed payment history available.", styles['Normal']))
+                else:
+                    table_data = [["#", "Amount", "Type", "Reason", "Date"]]
+                    total_paid = 0
+                    for j, record in enumerate(history_records, start=1):
+                        total_paid += float(record.get("payment_amount", 0.0))
+                        table_data.append([
+                            j,
+                            f"{record.get('payment_amount', 0.0):,.2f}",
+                            str(record.get('payment_type', '')).upper(),
+                            str(record.get('payment_reason', '')).upper(),
+                            str(record.get('payment_date', '')).upper()
+                        ])
+                    table_data.append(["", "", "", "Subtotal:", f"{total_paid:,.2f}"])
+
+                    table = Table(table_data, colWidths=[30, 100, 100, 150, 120])
+                    table.setStyle(TableStyle([
+                        ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+                        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ]))
+                    elements.append(table)
+
+                if i < len(payments):
+                    elements.append(PageBreak())
+
+            elements.append(Spacer(1, 0.4 * inch))
+            elements.append(Paragraph(
+                f"<b>Generated on:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                styles['Normal']
+            ))
+
+            # --- Build and Open PDF ---
+            doc.build(elements)
+            webbrowser.open_new(filepath)
+            messagebox.showinfo("Success", f"Statement successfully saved at:\n{filepath}")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to generate payment statement:\n{e}")
 
 
 
@@ -2014,24 +2133,33 @@ class JobReportsView(FormBase):
         ttk.Button(main_frame, text="Save PDF Report", image=self._generate_report_icon,
                    compound=tk.LEFT, command=self._save_report).pack(pady=5)
 
-        # --- Report Preview Area ---
+        # --- Report Preview Area (PDF Only, Scrollable) ---
         report_preview_frame = ttk.LabelFrame(main_frame, text="Report Preview", padding="10")
         report_preview_frame.pack(fill="both", expand=True, pady=10)
-        report_preview_frame.grid_columnconfigure(0, weight=1)
-        report_preview_frame.grid_rowconfigure(0, weight=1)
 
-        # Text preview
-        self.report_text_widget = tk.Text(report_preview_frame, wrap=tk.WORD, height=8, font=('Helvetica', 9))
-        self.report_text_widget.grid(row=0, column=0, sticky="nsew")
+        # Create a canvas for scrollable PDF preview
+        canvas = tk.Canvas(report_preview_frame)
+        scrollbar = ttk.Scrollbar(report_preview_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
 
-        report_scroll_y = ttk.Scrollbar(report_preview_frame, orient="vertical",
-                                        command=self.report_text_widget.yview)
-        report_scroll_y.grid(row=0, column=1, sticky="ns")
-        self.report_text_widget.config(yscrollcommand=report_scroll_y.set)
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(
+                scrollregion=canvas.bbox("all")
+            )
+        )
 
-        # Image preview
-        self.image_preview_label = ttk.Label(report_preview_frame)
-        self.image_preview_label.grid(row=1, column=0, columnspan=2, pady=10)
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Only PDF image preview inside scrollable frame
+        self.image_preview_label = ttk.Label(scrollable_frame)
+        self.image_preview_label.pack(fill="both", expand=True, pady=10)
+
+
 
     def _toggle_date_entries(self):
         report_type = self.report_type_var.get()
@@ -2067,7 +2195,7 @@ class JobReportsView(FormBase):
         except ValueError:
             current_date_obj = datetime.now()
 
-        DatePicker(self, current_date_obj, lambda d: target_var.set(d),
+        DateEntry(self, current_date_obj, lambda d: target_var.set(d),
                    parent_icon_loader=self.parent_icon_loader_ref,
                    window_icon_name="calendar_icon.png")
 
@@ -2092,9 +2220,6 @@ class JobReportsView(FormBase):
             return False
 
     def _generate_report(self):
-        self.report_text_widget.delete("1.0", tk.END)
-        self.report_text_widget.insert("1.0", "Generating preview...")
-
         start_date, end_date = self._get_report_dates()
         if not start_date:
             return
@@ -2115,8 +2240,7 @@ class JobReportsView(FormBase):
             self._last_preview_pdf = pdf_bytes
             self._show_pdf_preview(pdf_bytes, report_name, start_date, end_date, len(jobs))
         else:
-            self.report_text_widget.delete("1.0", tk.END)
-            self.report_text_widget.insert("1.0", "Error: Could not generate PDF preview.")
+            messagebox.showerror("Error", "Could not generate PDF preview.")
 
     def _generate_pdf_preview_bytes(self, report_name, content, report_type, start_date, end_date):
         if not _REPORTLAB_AVAILABLE:
@@ -2221,37 +2345,51 @@ class JobReportsView(FormBase):
             return None
 
     def _show_pdf_preview(self, pdf_bytes, report_name, start_date, end_date, job_count):
-        """Show text + first page image of the generated PDF using PyMuPDF (fitz)."""
-        # --- Text summary ---
-        preview_text = f"Preview for: {report_name}\n"
-        preview_text += f"Period: {start_date} → {end_date}\n"
-        preview_text += f"Jobs found: {job_count}\n"
-        preview_text += f"PDF size: {len(pdf_bytes) / 1024:.1f} KB\n\n"
-        preview_text += "Click 'Save PDF Report' to export."
+        """Render all pages of a generated PDF and display them stacked vertically."""
 
-        self.report_text_widget.delete("1.0", tk.END)
-        self.report_text_widget.insert("1.0", preview_text)
+        # Clear any previous preview images
+        for widget in self.image_preview_label.master.winfo_children():
+            widget.destroy()
 
-        # --- Image preview ---
         try:
-            # Open PDF from bytes
             pdf_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
 
-            if pdf_doc.page_count > 0:
-                page = pdf_doc[0]  # first page
-                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # scale=2 for better quality
+            if pdf_doc.page_count == 0:
+                ttk.Label(
+                    self.image_preview_label.master,
+                    text="⚠ PDF has no pages to preview."
+                ).pack(pady=10)
+                return
+
+            self._pdf_preview_imgs = []  # Keep references to prevent garbage collection
+
+            for page_num in range(pdf_doc.page_count):
+                page = pdf_doc[page_num]
+                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # High-resolution render
                 img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
 
-                img.thumbnail((500, 500))  # resize for preview
-                self._pdf_preview_img = ImageTk.PhotoImage(img)
-                self.image_preview_label.config(image=self._pdf_preview_img, text="")
-            else:
-                self.image_preview_label.config(text="⚠ PDF has no pages to preview.")
+                # Resize large pages to fit window width
+                img.thumbnail((750, 950))
+                tk_img = ImageTk.PhotoImage(img)
+                self._pdf_preview_imgs.append(tk_img)
+
+                # Display each page image
+                label = ttk.Label(self.image_preview_label.master, image=tk_img)
+                label.pack(pady=8)
+
+            # Optional label showing basic info under all pages
+            ttk.Label(
+                self.image_preview_label.master,
+                text=f"{report_name}\nDate Range: {start_date} to {end_date} — {job_count} Jobs",
+                font=("Helvetica", 9, "italic"),
+                foreground="gray"
+            ).pack(pady=10)
 
         except Exception as e:
-            self.image_preview_label.config(
-                text=f"⚠ PDF preview unavailable (PyMuPDF error).\n\nError: {e}"
-            )
+            ttk.Label(
+                self.image_preview_label.master,
+                text=f"⚠ PDF preview unavailable.\n\nError: {e}"
+            ).pack(pady=10)
 
 
 
