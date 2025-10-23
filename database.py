@@ -270,6 +270,7 @@ class DatabaseManager:
                 visit_id INT PRIMARY KEY AUTO_INCREMENT,
                 client_id INT NOT NULL,
                 purpose VARCHAR(255),
+                reason VARCHAR(255),
                 brought_by VARCHAR(255),
                 added_by_user_id INT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -282,9 +283,9 @@ class DatabaseManager:
                     property_id INT NOT NULL,
                     client_id INT NOT NULL,
                     payment_mode VARCHAR(255) NOT NULL,
-                    total_amount_paid FLOAT NOT NULL,
-                    discount FLOAT DEFAULT 0.0,
-                    balance FLOAT DEFAULT 0.0,
+                    total_amount_paid DECIMAL(15, 2) NOT NULL,
+                    discount DECIMAL(15, 2) DEFAULT 0.0,
+                    balance DECIMAL(15, 2) DEFAULT 0.0,
                     brought_by VARCHAR(255),
                     transaction_date DATETIME NOT NULL,
                     receipt_path TEXT,
@@ -352,8 +353,8 @@ class DatabaseManager:
                 plan_instance_id INT PRIMARY KEY AUTO_INCREMENT,
                 transaction_id INT NOT NULL,
                 payment_plan_id INT NOT NULL,
-                total_balance FLOAT NOT NULL,
-                monthly_installment_amount FLOAT NOT NULL,
+                total_balance DECIMAL(15, 2) NOT NULL,
+                monthly_installment_amount DECIMAL(15, 4) NOT NULL,
                 start_date DATE NOT NULL,
                 FOREIGN KEY (transaction_id) REFERENCES transactions(transaction_id),
                 FOREIGN KEY (payment_plan_id) REFERENCES payment_plans(plan_id)
@@ -364,9 +365,9 @@ class DatabaseManager:
                 installment_id INT PRIMARY KEY AUTO_INCREMENT,
                 plan_instance_id INT NOT NULL,
                 due_date DATE NOT NULL,
-                due_amount FLOAT NOT NULL,
+                due_amount DECIMAL(15, 2) NOT NULL,
                 paid_date DATETIME,
-                paid_amount FLOAT,
+                paid_amount DECIMAL(15, 2),
                 payment_status VARCHAR(50) NOT NULL DEFAULT 'Scheduled',
                 FOREIGN KEY (plan_instance_id) REFERENCES installment_plans(plan_instance_id)
                 )
@@ -376,7 +377,7 @@ class DatabaseManager:
                     history_id INT PRIMARY KEY AUTO_INCREMENT,
                     transaction_id INT NOT NULL,
                     installment_id INT NULL,
-                    payment_amount FLOAT NOT NULL,
+                    payment_amount DECIMAL(15, 2) NOT NULL,
                     payment_mode VARCHAR(255),
                     payment_reason VARCHAR(255),
                     payment_date DATETIME NOT NULL,
@@ -773,19 +774,27 @@ class DatabaseManager:
         result_row = self._execute_query(query, fetch_one=True)
         return result_row['COUNT(*)'] if result_row else 0
 
-    def get_all_properties_paginated(self, limit=None, offset=None, search_query=None, min_size=None, max_size=None, status=None):
+    def get_all_properties_paginated(
+        self,
+        limit=None,
+        offset=None,
+        search_query=None,
+        min_size=None,
+        max_size=None,
+        status=None,
+        project_name=None  # 👈 Added parameter
+    ):
         """
-        Fetches properties with optional search, size filters, status, and pagination,
-        including the username of the user who added the property.
+        Fetches properties with optional search, size filters, status, project filter, and pagination.
+        Includes the username of the user who added the property and the project name.
         Returns properties ordered by property_id DESC (newest first).
-
-        Returns: A list of dictionaries, each representing a property, including 'added_by_username'.
         """
         query = """
         SELECT
             p.property_id,
             p.project_no,
             p.project_id,
+            pr.name AS project_name,
             p.property_type,
             p.title_deed_number,
             p.location,
@@ -801,7 +810,8 @@ class DatabaseManager:
             u.username AS added_by_username
         FROM
             properties p
-            
+        LEFT JOIN
+            projects pr ON p.project_id = pr.project_id
         LEFT JOIN
             users u ON p.added_by_user_id = u.user_id
         WHERE 1=1
@@ -811,28 +821,28 @@ class DatabaseManager:
         # 🔎 Multi-field search filter
         if search_query:
             if search_query.isdigit():
-            # If numeric, check exact project_id match OR fuzzy search on others
                 query += """
                     AND (
                         p.project_id = %s OR
                         p.location LIKE %s OR
                         p.title_deed_number LIKE %s OR
-                        p.project_no LIKE %s
+                        p.project_no LIKE %s OR
+                        pr.name LIKE %s
                     )
                 """
-                params.append(int(search_query))  # exact project_id match
-                params.extend([f"%{search_query}%"] * 3)
+                params.append(int(search_query))
+                params.extend([f"%{search_query}%"] * 4)
             else:
-                # Regular multi-field LIKE search
                 query += """
                     AND (
                         p.location LIKE %s OR
                         p.title_deed_number LIKE %s OR
                         CAST(p.project_id AS CHAR) LIKE %s OR
-                        p.project_no LIKE %s
+                        p.project_no LIKE %s OR
+                        pr.name LIKE %s
                     )
                 """
-                params.extend([f"%{search_query}%"] * 4)
+                params.extend([f"%{search_query}%"] * 5)
 
         # 📏 Size filters
         if min_size is not None:
@@ -848,6 +858,14 @@ class DatabaseManager:
             query += " AND p.status = %s"
             params.append(status)
 
+        # 🏗️ Project filter (NEW)
+        if project_name:
+            query += " AND pr.name = %s"
+            params.append(project_name)
+
+        # 🧭 Sort by newest first
+        query += " ORDER BY p.property_id DESC"
+
         # 📄 Pagination
         if limit is not None:
             query += " LIMIT %s"
@@ -858,7 +876,6 @@ class DatabaseManager:
             params.append(offset)
 
         return self._execute_query(query, tuple(params), fetch_all=True)
-
 
     def add_buyer(self, name, contact, added_by_user_id=None):
         query = "INSERT INTO buyers (name, contact, added_by_user_id) VALUES (%s, %s, %s)"
@@ -1122,8 +1139,20 @@ class DatabaseManager:
         return self._execute_query(query, params, fetch_one=True)
 
 
-    def get_transactions_with_details(self, status=None, start_date=None, end_date=None, payment_mode=None, client_name_search=None, property_search=None, client_contact_search=None):
-        """ Retrieves transactions with details from linked properties and clients, allowing for various filtering options, including client contact info. """
+    def get_transactions_with_details(
+        self,
+        status=None,
+        start_date=None,
+        end_date=None,
+        payment_mode=None,
+        client_name_search=None,
+        property_search=None,
+        client_contact_search=None
+    ):
+        """
+        Retrieves transactions with full details from linked properties, clients, and projects.
+        Supports filters for status, date range, payment mode, client name, contact, and property search.
+        """
         query = """
         SELECT
             t.transaction_id,
@@ -1136,6 +1165,9 @@ class DatabaseManager:
             c.name AS client_name,
             c.telephone_number AS client_contact_info,
             p.property_id,
+            p.project_id,
+            p.project_no AS project_no,        -- ✅ from properties table
+            pr.name AS project_name,           -- ✅ from projects table
             p.title_deed_number,
             p.location,
             p.size,
@@ -1147,34 +1179,56 @@ class DatabaseManager:
             clients c ON t.client_id = c.client_id
         JOIN
             properties p ON t.property_id = p.property_id
+        LEFT JOIN
+            projects pr ON p.project_id = pr.project_id
         WHERE 1=1
         """
         params = []
+
+        # ✅ Status filters
         if status == 'complete':
             query += " AND t.balance = 0"
         elif status == 'pending':
             query += " AND t.balance > 0"
+
+        # ✅ Date filters
         if start_date:
             query += " AND t.transaction_date >= %s"
             params.append(f"{start_date} 00:00:00")
         if end_date:
             query += " AND t.transaction_date <= %s"
             params.append(f"{end_date} 23:59:59")
+
+        # ✅ Payment mode filter
         if payment_mode:
             query += " AND t.payment_mode = %s"
             params.append(payment_mode)
+
+        # ✅ Client name filter
         if client_name_search:
             query += " AND c.name LIKE %s"
             params.append(f"%{client_name_search}%")
+
+        # ✅ Property search filter (title, location, or project_no)
         if property_search:
-            query += " AND (p.title_deed_number LIKE %s OR p.location LIKE %s)"
-            params.append(f"%{property_search}%")
-            params.append(f"%{property_search}%")
+            query += """
+            AND (
+                p.title_deed_number LIKE %s OR
+                p.location LIKE %s OR
+                p.project_no LIKE %s
+            )
+            """
+            params.extend([f"%{property_search}%"] * 3)
+
+        # ✅ Client contact filter
         if client_contact_search:
             query += " AND c.telephone_number LIKE %s"
             params.append(f"%{client_contact_search}%")
-        query += " ORDER BY t.transaction_date DESC"
-        return self._execute_query(query, params, fetch_all=True)
+
+        # ✅ Sorting
+        query += " ORDER BY pr.name ASC, t.transaction_date DESC"
+
+        return self._execute_query(query, tuple(params), fetch_all=True)
     
     def get_transaction_history(self, user_id):
         """
@@ -1225,6 +1279,35 @@ class DatabaseManager:
         history = self._execute_query(query, params=(transaction_id,), fetch_all=True)
         return history
 
+    def get_transaction_details_full(self, transaction_id):
+        """
+        Returns full transaction details joined with client, property, and project info,
+        including financial data required for payment statement and balance computation.
+        """
+        query = """
+        SELECT 
+            t.transaction_id,
+            t.payment_mode,
+            t.transaction_date,
+            t.total_amount_paid,
+            t.balance,
+            t.discount,
+            c.name AS client_name,
+            c.telephone_number AS client_contact,
+            p.property_id,
+            p.title_deed_number,
+            p.location,
+            p.price AS total_price,  -- property full sale price
+            pr.project_id,
+            pr.name AS project_name
+        FROM transactions t
+        JOIN clients c ON t.client_id = c.client_id
+        JOIN properties p ON t.property_id = p.property_id
+        LEFT JOIN projects pr ON p.project_id = pr.project_id
+        WHERE t.transaction_id = %s
+        """
+        return self._execute_query(query, (transaction_id,), fetch_one=True)
+
     ## NEW METHODS FOR SOLD PROPERTIES UI
     def get_total_sold_properties_count(self, start_date=None, end_date=None):
         """ Returns the total count of properties with 'Sold' status, optionally filtered by transaction date. """
@@ -1240,10 +1323,16 @@ class DatabaseManager:
         return result_row['COUNT(*)'] if result_row else 0
 
     def get_sold_properties_paginated(self, limit, offset, start_date=None, end_date=None):
-        """ Retrieves sold properties along with their transaction and client details, supporting pagination and date filtering. """
+        """
+        Retrieves sold properties along with their transaction, client, and project details.
+        Supports pagination and date filtering.
+        """
         query = """
         SELECT
             p.property_id,
+            p.project_id,
+            p.project_no AS project_no,        -- project_no comes from properties table (p)
+            pr.name AS project_name,           -- project name from projects table (pr)
             p.title_deed_number,
             p.location,
             p.size,
@@ -1253,7 +1342,7 @@ class DatabaseManager:
             t.total_amount_paid,
             t.discount,
             t.balance,
-            c.name AS name,
+            c.name AS client_name,
             c.telephone_number AS client_contact_info
         FROM
             properties p
@@ -1261,21 +1350,29 @@ class DatabaseManager:
             transactions t ON p.property_id = t.property_id
         JOIN
             clients c ON t.client_id = c.client_id
-        WHERE p.status = 'Sold'
+        LEFT JOIN
+            projects pr ON p.project_id = pr.project_id
+        WHERE
+            p.status = 'Sold'
         """
+
         params = []
+
+        # Optional date filters
         if start_date:
             query += " AND t.transaction_date >= %s"
             params.append(f"{start_date} 00:00:00")
         if end_date:
             query += " AND t.transaction_date <= %s"
             params.append(f"{end_date} 23:59:59")
+
         query += """
-        ORDER BY t.transaction_date DESC, p.title_deed_number ASC
+        ORDER BY pr.name ASC, t.transaction_date DESC, p.title_deed_number ASC
         LIMIT %s OFFSET %s
         """
         params.extend([limit, offset])
-        return self._execute_query(query, params, fetch_all=True)
+
+        return self._execute_query(query, tuple(params), fetch_all=True)
 
     def count_available_properties(self):
         """Returns the count of properties with 'Available' status."""
@@ -1391,6 +1488,54 @@ class DatabaseManager:
         """ Retrieves payment history entries for a specific service payment. """
         query = "SELECT * FROM service_payments_history WHERE payment_id = %s ORDER BY payment_date ASC"
         return self._execute_query(query, (payment_id,), fetch_all=True)
+    
+    def get_payment_statement_details(self, payment_id):
+        """
+        Retrieves client, job, and payment summary details for a specific payment ID.
+        Returns a dictionary containing all necessary information for statement generation.
+        """
+        query = """
+            SELECT 
+                sc.name AS client_name,
+                sc.telephone_number,
+                sj.title_name,
+                sj.title_number,
+                sp.fee,
+                sp.amount,
+                sp.balance
+            FROM service_payments sp
+            JOIN service_jobs sj ON sp.job_id = sj.job_id
+            JOIN client_files cf ON sj.file_id = cf.file_id
+            JOIN service_clients sc ON cf.client_id = sc.client_id
+            WHERE sp.payment_id = %s
+        """
+        return self._execute_query(query, (payment_id,), fetch_one=True)
+
+    def get_all_statements_by_job(self, payment_id):
+        query = """
+            SELECT 
+                sp.payment_id,
+                sj.title_name,
+                sj.title_number,
+                sc.name AS client_name,
+                sc.telephone_number,
+                sp.amount,
+                sp.fee,
+                sp.balance,
+                MAX(h.payment_date) AS last_payment_date
+            FROM service_payments sp
+            JOIN service_jobs sj ON sp.job_id = sj.job_id
+            JOIN client_files cf ON sj.file_id = cf.file_id
+            JOIN service_clients sc ON cf.client_id = sc.client_id
+            LEFT JOIN service_payments_history h ON sp.payment_id = h.payment_id
+            WHERE sj.job_id = (
+                SELECT job_id FROM service_payments WHERE payment_id = %s
+            )
+            GROUP BY sp.payment_id, sj.title_name, sj.title_number, sc.name, sc.telephone_number, sp.amount, sp.fee, sp.balance
+            ORDER BY last_payment_date ASC
+        """
+        return self._execute_query(query, (payment_id,), fetch_all=True)
+
 
     def add_service_dispatch_record(self, job_id, reason_for_dispatch, collected_by, collector_phone, sign):
         """ Adds a new dispatch record for a completed job. """
@@ -1952,12 +2097,40 @@ class DatabaseManager:
     def get_service_client_by_id(self, client_id):
         query = 'SELECT * FROM service_clients WHERE client_id = %s'
         return self._execute_query(query, (client_id,), fetch_one=True)
+
     def get_all_service_clients(self):
         query = 'SELECT client_id, name, telephone_number, email FROM service_clients ORDER BY name'
         clients = self._execute_query(query, fetch_all=True)
         return clients
         
-
+    def get_dispatchable_jobs(self):
+        """
+        Retrieves all service jobs that are 'Completed', have a zero balance,
+        and have NOT been dispatched yet.
+        """
+        query = """
+        SELECT
+            sj.job_id,
+            sj.timestamp AS date,
+            sj.job_description AS task_type,
+            sj.title_name,
+            sj.title_number,
+            cf.file_name,
+            sc.name AS client_name,
+            sj.status
+        FROM service_jobs sj
+        INNER JOIN client_files cf ON sj.file_id = cf.file_id
+        INNER JOIN service_clients sc ON cf.client_id = sc.client_id
+        INNER JOIN service_payments sp ON sj.job_id = sp.job_id
+        LEFT JOIN service_dispatch sd ON sj.job_id = sd.job_id
+        WHERE
+            sj.status = 'Completed' AND
+            sp.balance = 0.0 AND
+            sd.job_id IS NULL
+        ORDER BY sj.timestamp DESC
+        """
+        # Assuming self._execute_query handles fetching and returning a list of dictionaries
+        return self._execute_query(query, fetch_all=True)
     
     def get_survey_job_status_counts(self):
         query = "SELECT status, COUNT(*) AS count FROM service_jobs GROUP BY status"
@@ -2149,8 +2322,8 @@ class DatabaseManager:
     
     def add_daily_client(self, client_id, purpose, brought_by, user_id):
         """Adds a new daily client entry for an existing client."""
-        query = "INSERT INTO daily_clients (client_id, purpose, brought_by, added_by_user_id) VALUES (%s, %s, %s, %s)"
-        params = (client_id, purpose, brought_by, user_id)
+        query = "INSERT INTO daily_clients (client_id, purpose,  brought_by, added_by_user_id) VALUES (%s, %s,  %s, %s)"
+        params = (client_id, purpose,  brought_by, user_id)
         
         visit_id = self._execute_query(query, params)
         if visit_id:
@@ -2264,43 +2437,58 @@ class DatabaseManager:
 
     def get_detailed_sales_transactions_for_date_range(self, start_date, end_date):
         """
-        Retrieves detailed sales transactions for the accounting-style report.
+        Retrieves detailed sales transactions for the accounting-style report,
+        grouped by project_id.
         """
         try:
-            # Convert string dates to datetime objects
             start_datetime_obj = datetime.strptime(start_date, '%Y-%m-%d')
             end_datetime_obj = datetime.strptime(end_date, '%Y-%m-%d')
-            
-            # Use datetime.combine() to set the end time to the end of the day
             end_datetime_full = datetime.combine(end_datetime_obj, datetime.max.time())
-            
+
             query = """
                 SELECT 
+                    p.project_id AS project_id,
+                    pr.name AS project_name,
                     p.title_deed_number AS title_deed_number,
                     p.price AS actual_price,
                     t.total_amount_paid AS amount_paid,
-                    t.balance AS balance
+                    t.balance AS balance,
+                    p.property_type AS property_type
                 FROM 
                     transactions t
                 JOIN 
                     properties p ON t.property_id = p.property_id
+                JOIN
+                    projects pr ON p.project_id = pr.project_id
                 WHERE 
-                    t.transaction_date BETWEEN %s AND %s
-                ORDER BY t.transaction_date ASC
+                    DATE(t.transaction_date) BETWEEN %s AND %s
+                ORDER BY 
+                    p.project_id ASC, t.transaction_date ASC
             """
-            
-            results_rows = self._execute_query(query, (start_datetime_obj, end_datetime_full), fetch_all=True)
-            
-            # Use a list comprehension to add the hardcoded 'property_type'
-            return [dict(row) | {'property_type': 'Land'} for row in results_rows] if results_rows else []
+
+            result_rows = self._execute_query(query, (start_datetime_obj, end_datetime_full), fetch_all=True)
+
+            if not result_rows:
+                print(f"[DEBUG] No sales records found between {start_date} and {end_date}.")
+                return []
+
+            normalized_results = [{k.lower(): v for k, v in dict(row).items()} for row in result_rows]
+            print(f"[DEBUG] Retrieved {len(normalized_results)} sales transaction(s). Sample:", normalized_results[0])
+
+            return normalized_results
+
         except Exception as e:
-            print(f"Error in get_detailed_sales_transactions_for_date_range: {e}")
+            print(f"[ERROR] get_detailed_sales_transactions_for_date_range failed: {e}")
             return []
+
+
+
 
 
     def get_sold_properties_for_date_range_detailed(self, start_date, end_date):
         """
-        Retrieves detailed information about properties sold within a specified date range.
+        Retrieves detailed information about properties sold within a specified date range,
+        grouped by project_id — ONLY fully cleared (balance = 0).
         """
         try:
             start_datetime_obj = datetime.strptime(start_date, '%Y-%m-%d')
@@ -2309,6 +2497,8 @@ class DatabaseManager:
 
             query = """
                 SELECT 
+                    p.project_id AS project_id,
+                    pr.name AS project_name,
                     p.title_deed_number, 
                     p.location, 
                     p.size, 
@@ -2322,21 +2512,78 @@ class DatabaseManager:
                     properties p ON t.property_id = p.property_id
                 JOIN 
                     clients c ON t.client_id = c.client_id
+                JOIN
+                    projects pr ON p.project_id = pr.project_id
                 WHERE 
-                    p.status = 'Sold' 
+                    p.status = 'Sold'
+                    AND t.balance = 0      -- ✅ ONLY FULLY CLEARED SALES
                     AND t.transaction_date BETWEEN %s AND %s
-                ORDER BY t.transaction_date ASC
+                ORDER BY 
+                    p.project_id ASC, t.transaction_date ASC
             """
-            results_rows = self._execute_query(query, (start_datetime_obj, end_datetime_full), fetch_all=True)
-            return [dict(row) for row in results_rows] if results_rows else []
+
+            result_rows = self._execute_query(query, (start_datetime_obj, end_datetime_full), fetch_all=True)
+            return [dict(row) for row in result_rows] if result_rows else []
+
         except Exception as e:
-            print(f"Error in get_sold_properties_for_date_range_detailed: {e}")
+            print(f"[ERROR] get_sold_properties_for_date_range_detailed failed: {e}")
             return []
+
+    def get_active_ongoing_payments_for_date_range(self, start_date, end_date):
+        """
+        Retrieves transactions where the client has already paid something (total_amount_paid > 0)
+        but still has a balance (balance > 0) — i.e., active ongoing payments — within the given date range.
+        Returns a list of dict rows grouped by project (caller will group if needed).
+        """
+        try:
+            start_datetime_obj = datetime.strptime(start_date, '%Y-%m-%d')
+            end_datetime_obj = datetime.strptime(end_date, '%Y-%m-%d')
+            end_datetime_full = datetime.combine(end_datetime_obj, datetime.max.time())
+
+            query = """
+                SELECT
+                    p.project_id AS project_id,
+                    pr.name AS project_name,
+                    t.transaction_id,
+                    t.transaction_date,
+                    t.total_amount_paid,
+                    t.discount,
+                    t.balance,
+                    p.title_deed_number,
+                    p.price AS original_price,
+                    c.name AS client_name,
+                    c.telephone_number AS client_contact_info,
+                    t.payment_mode
+                FROM
+                    transactions t
+                JOIN
+                    properties p ON t.property_id = p.property_id
+                JOIN
+                    clients c ON t.client_id = c.client_id
+                LEFT JOIN
+                    projects pr ON p.project_id = pr.project_id
+                WHERE
+                    t.balance > 0
+                    AND t.total_amount_paid > 0
+                    AND t.payment_mode = 'installments'
+                    AND t.transaction_date BETWEEN %s AND %s
+                ORDER BY
+                    p.project_id ASC, t.transaction_date ASC
+            """
+
+            result_rows = self._execute_query(query, (start_datetime_obj, end_datetime_full), fetch_all=True)
+            # Return list of dicts (cursor already uses dictionary=True)
+            return [dict(row) for row in result_rows] if result_rows else []
+
+        except Exception as e:
+            print(f"[ERROR] get_active_ongoing_payments_for_date_range failed: {e}")
+            return []
+
         
     def get_pending_instalments_for_date_range(self, start_date, end_date):
         """
-        Retrieves information about transactions with a balance due within a specified date range.
-        The date range applies to the transaction_date.
+        Retrieves transactions with a balance due within the given date range,
+        grouped by project_id.
         """
         try:
             start_datetime_obj = datetime.strptime(start_date, '%Y-%m-%d')
@@ -2345,6 +2592,8 @@ class DatabaseManager:
 
             query = """
                 SELECT 
+                    p.project_id AS project_id,
+                    pr.name AS project_name,
                     t.transaction_id,
                     t.transaction_date,
                     t.total_amount_paid,
@@ -2360,16 +2609,21 @@ class DatabaseManager:
                     properties p ON t.property_id = p.property_id
                 JOIN 
                     clients c ON t.client_id = c.client_id
+                JOIN
+                    projects pr ON p.project_id = pr.project_id
                 WHERE 
                     t.balance > 0 
                     AND t.transaction_date BETWEEN %s AND %s
                     AND t.payment_mode = 'installments'
-                ORDER BY t.transaction_date ASC
+                ORDER BY 
+                    p.project_id ASC, t.transaction_date ASC
             """
-            results_rows = self._execute_query(query, (start_datetime_obj, end_datetime_full), fetch_all=True)
-            return [dict(row) for row in results_rows] if results_rows else []
+
+            result_rows = self._execute_query(query, (start_datetime_obj, end_datetime_full), fetch_all=True)
+            return [dict(row) for row in result_rows] if result_rows else []
+
         except Exception as e:
-            print(f"Error in get_pending_instalments_for_date_range: {e}")
+            print(f"[ERROR] get_pending_instalments_for_date_range failed: {e}")
             return []
         
     def get_service_sales_summary(self, period="daily", start_date=None, end_date=None):
@@ -2840,6 +3094,28 @@ class DatabaseManager:
                 'balance': result['balance'] if result['balance'] is not None else 0.0
             }
         return None
+
+    def get_daily_client_visits(self, target_date=None):
+        """
+        Retrieves all client visits for the specified date (default: today).
+        """
+        from datetime import datetime
+        if target_date is None:
+            target_date = datetime.now().date()
+
+        query = """
+            SELECT 
+                dc.visit_id,
+                c.name AS client_name,
+                c.telephone_number,
+                dc.purpose,
+                dc.timestamp
+            FROM daily_clients dc
+            JOIN clients c ON dc.client_id = c.client_id
+            WHERE DATE(dc.timestamp) = %s
+            ORDER BY dc.timestamp ASC
+        """
+        return self._execute_query(query, (target_date,), fetch_all=True)
 
     def process_refund_and_reset(self, title_deed):
         """
