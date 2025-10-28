@@ -154,7 +154,7 @@ class SignupForm(tk.Toplevel):
 
         # Role Label and Combobox
         ttk.Label(main_frame, text="Role:").grid(row=3, column=0, sticky="w", pady=5)
-        self.role_combobox = ttk.Combobox(main_frame, values=["user", "admin", "accountant", "property_manager", "sales_agent"], state="readonly", width=27)
+        self.role_combobox = ttk.Combobox(main_frame, values=["user", "admin", "accountant", "property_manager", "surveyor","Super Admin"], state="readonly", width=27)
         self.role_combobox.grid(row=3, column=1, sticky="ew", pady=5)
         self.role_combobox.set("user")
 

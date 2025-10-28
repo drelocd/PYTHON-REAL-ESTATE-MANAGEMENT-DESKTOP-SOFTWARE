@@ -6,6 +6,7 @@ import shutil
 from datetime import datetime, timedelta
 from PIL import Image, ImageTk
 import re
+from collections import defaultdict
 import webbrowser
 from pdf2image import convert_from_bytes
 import fitz
@@ -1239,7 +1240,7 @@ class SellPropertyLandingForm(tk.Toplevel):
         # Sell Block button
         sell_block_btn = ttk.Button(
             button_frame,
-            text="Sell Block",
+            text="Sell Plot",
             image=self._sell_block_icon,
             compound=tk.LEFT,
             command=self._open_sell_block_form
@@ -1535,7 +1536,7 @@ class InstallmentPaymentWindow(tk.Toplevel):
             return
 
         deposit_percent = Decimal(str(selected_plan.get('deposit_percentage', 0)))
-        required_deposit = property_price * (deposit_percent / Decimal('100'))
+        required_deposit = property_price * (Decimal(deposit_percent) / Decimal(100))
         self._required_deposit_var.set(f"{required_deposit:,.2f}")
         
         principal = property_price
@@ -3812,6 +3813,7 @@ class RecordSinglePaymentForm(tk.Toplevel):
                 self.destroy()
 
     def record_payment_action(self):
+        """Record a payment (deposit, installment, or balance) and log it in history for statement accuracy."""
         payment_amount_str = self.entry_payment_amount.get().strip()
         if not payment_amount_str:
             messagebox.showerror("Input Error", "Payment amount is required.")
@@ -3822,16 +3824,17 @@ class RecordSinglePaymentForm(tk.Toplevel):
             if payment_amount <= Decimal('0'):
                 messagebox.showerror("Invalid Amount", "Payment amount must be positive.")
                 return
-        except ValueError:
+        except (ValueError, InvalidOperation):
             messagebox.showerror("Invalid Input", "Please enter a valid number for the payment amount.")
             return
-        
+
         if not self.transaction_info:
             messagebox.showerror("Error", "Transaction information could not be retrieved.")
             return
 
         current_balance = Decimal(str(self.transaction_info.get('balance', 0.0)))
-        
+        total_amount_paid = Decimal(str(self.transaction_info.get('total_amount_paid', 0.0)))
+
         if payment_amount > current_balance:
             messagebox.showerror(
                 "Payment Error",
@@ -3839,88 +3842,71 @@ class RecordSinglePaymentForm(tk.Toplevel):
             )
             return
 
-        payment_mode = self.transaction_info.get('payment_mode', '').lower().strip()
-        
-        # Check if the payment is for an installment plan
+        payment_mode = (self.transaction_info.get('payment_mode') or '').lower().strip()
+        payment_date = datetime.now()
+
+        # --- If payment mode is installments ---
         if payment_mode == "installments":
             remaining_payment_amount = payment_amount
-            
             while remaining_payment_amount > Decimal('0'):
-                # Get the oldest outstanding installment using your existing method
-                # This method should return the installment ID, due amount, and total paid for that specific installment
                 oldest_installment = self.db_manager.get_oldest_outstanding_installment(self.job_id_to_pay)
-                
                 if not oldest_installment:
-                    # No more installments, apply remaining to the transaction balance
-                    # This handles cases where total payment exceeds installment sum due to interest or late fees
+                    # No more installments — record remainder as balance payment
                     self.db_manager.add_transaction_history(
                         transaction_id=self.job_id_to_pay,
                         installment_id=None,
                         payment_amount=remaining_payment_amount,
-                        payment_mode=self.transaction_info.get('payment_mode'),
+                        payment_mode=payment_mode,
                         payment_reason="Balance Overpayment",
-                        payment_date=datetime.now()
+                        payment_date=payment_date
                     )
                     remaining_payment_amount = Decimal('0')
                     break
-                    
+
                 installment_id = oldest_installment['installment_id']
-
-                try:
-                    due_amount = Decimal(str(oldest_installment['due_amount']))
-                    total_paid_for_installment = Decimal(str(oldest_installment['total_paid_for_installment']))
-                except InvalidOperation:
-                    messagebox.showerror("Error", "Invalid installment data from database.")
-                    return
-                
-
+                due_amount = Decimal(str(oldest_installment['due_amount']))
+                total_paid_for_installment = Decimal(str(oldest_installment['total_paid_for_installment']))
                 remaining_on_installment = due_amount - total_paid_for_installment
 
-                # Calculate how much to apply to the current installment
                 amount_to_apply = min(remaining_payment_amount, remaining_on_installment)
-                
-                # Determine payment reason
-                if amount_to_apply == remaining_on_installment:
-                    payment_reason = "Installment Paid"
-                else:
-                    payment_reason = "Partial Installment Paid"
+                payment_reason = "Installment Paid" if amount_to_apply == remaining_on_installment else "Partial Installment Paid"
 
-                # Add a payment history record for this portion of the payment
-                history_success = self.db_manager.add_transaction_history(
+                success = self.db_manager.add_transaction_history(
                     transaction_id=self.job_id_to_pay,
                     installment_id=installment_id,
                     payment_amount=amount_to_apply,
-                    payment_mode=self.transaction_info.get('payment_mode'),
+                    payment_mode=payment_mode,
                     payment_reason=payment_reason,
-                    payment_date=datetime.now()
+                    payment_date=payment_date
                 )
 
-                if not history_success:
-                    messagebox.showerror("Error", "Payment recorded, but failed to log history. Please check manually.")
+                if not success:
+                    messagebox.showerror("Error", "Payment recorded, but failed to log history.")
                     return
 
                 remaining_payment_amount -= amount_to_apply
-                
-        else: # If not an installment plan (e.g., full payment, or another mode)
-            history_success = self.db_manager.add_transaction_history(
+
+        else:
+            # --- For deposits or non-installment balance payments ---
+            reason = "Initial Deposit" if total_amount_paid == 0 else "Balance Payment"
+            success = self.db_manager.add_transaction_history(
                 transaction_id=self.job_id_to_pay,
                 installment_id=None,
                 payment_amount=payment_amount,
                 payment_mode=self.transaction_info.get('payment_mode'),
-                payment_reason="Balance Payment",
-                payment_date=datetime.now()
+                payment_reason=reason,
+                payment_date=payment_date
             )
-            if not history_success:
-                messagebox.showerror("Error", "Payment recorded, but failed to log history. Please check manually.")
+            if not success:
+                messagebox.showerror("Error", "Payment recorded, but failed to log history.")
                 return
 
-        # Update the main transactions table with the total payment amount
-        
-        new_amount_paid = Decimal(str(self.transaction_info.get('total_amount_paid', 0.0))) + payment_amount
+        # --- Update main transactions table ---
+        new_amount_paid = total_amount_paid + payment_amount
         new_balance = current_balance - payment_amount
 
         success = self.db_manager.update_transaction(
-            self.job_id_to_pay, 
+            self.job_id_to_pay,
             total_amount_paid=new_amount_paid,
             balance=new_balance
         )
@@ -4220,6 +4206,7 @@ class TrackPaymentsForm(tk.Toplevel):
         )
         self.track_installments_btn.pack(side="left", padx=5)
         ToolTip(self.track_installments_btn, "Click to View Installment Details.")
+
 
 
         self.prev_button = ttk.Button(pagination_frame, text="Previous", image=self._prev_icon, compound=tk.LEFT, command=self._go_previous_page)
@@ -4744,80 +4731,159 @@ class PaymentHistoryForm(tk.Toplevel, CustomTitleBarMixin):
             return Decimal(default)
 
     def _load_payment_history(self):
-        """Loads and displays payment history with running balances (shown as negatives)."""
-        history_data = self.db_manager.get_payment_history_for_transaction(self.transaction_id)
-        details = self.db_manager.get_transaction_details_full(self.transaction_id)
+        """Loads and displays all payments (deposit + subsequent payments) with accurate running balance."""
+        try:
+            # --- Fetch transaction + history ---
+            details = self.db_manager.get_transaction_details_full(self.transaction_id)
+            history_data = self.db_manager.get_payment_history_for_transaction(self.transaction_id)
 
-        for iid in self.history_tree.get_children():
-            self.history_tree.delete(iid)
+            # Clear previous entries
+            for iid in self.history_tree.get_children():
+                self.history_tree.delete(iid)
 
-        if not details:
-            self.history_tree.insert("", "end", values=("Transaction not found.", "", "", "", ""), tags=("no_data",))
-            self.history_tree.tag_configure("no_data", foreground="gray")
-            return
+            if not details:
+                self.history_tree.insert("", "end", values=("Transaction not found.", "", "", "", ""), tags=("no_data",))
+                self.history_tree.tag_configure("no_data", foreground="gray")
+                return
 
-        history_data = history_data or []
-        history_data.sort(key=lambda x: x.get("payment_date") or datetime.min)
+            # --- Convert to safe Decimals ---
+            total_price = self._safe_decimal(details.get("total_price") or details.get("price") or 0)
+            discount = self._safe_decimal(details.get("discount") or 0)
+            total_paid_tx = self._safe_decimal(details.get("total_amount_paid") or 0)
+            net_price = total_price - discount
 
-        total_price = self._safe_decimal(details.get("total_price") or details.get("price") or 0)
-        total_amount_paid_on_tx = self._safe_decimal(details.get("total_amount_paid", 0))
-        discount = self._safe_decimal(details.get("discount", 0))
+            # --- Sort by date (oldest first) ---
+            history_data = history_data or []
+            history_data.sort(key=lambda x: x.get("payment_date") or datetime.min)
 
-        # Total from payment history
-        history_sum = sum(self._safe_decimal(r.get("payment_amount", 0)) for r in history_data)
+            # --- Compute total recorded payments ---
+            total_from_history = sum(self._safe_decimal(r.get("payment_amount", 0)) for r in history_data)
 
-        # Handle possible initial/down payment missing from history
-        missing_from_history = Decimal("0.00")
-        if total_amount_paid_on_tx > history_sum:
-            missing_from_history = total_amount_paid_on_tx - history_sum
+            # --- Check if there was a deposit recorded outside the history table ---
+            missing_deposit = total_paid_tx - total_from_history if total_paid_tx > total_from_history else Decimal("0.00")
 
-        running_balance = total_price - missing_from_history - discount
+            # --- Start with full balance (net price) ---
+            running_balance = net_price
 
-        if not history_data and missing_from_history > 0:
-            self.history_tree.insert("", "end", values=(
-                "",
-                f"{missing_from_history:,.2f}",
-                f"{(running_balance - missing_from_history):,.2f}",
-                details.get("payment_mode", ""),
-                "Initial Payment"
-            ))
-            return
+            # --- Insert synthetic deposit if missing ---
+            if missing_deposit > 0:
+                running_balance -= missing_deposit
+                self.history_tree.insert("", "end", values=(
+                    "—",
+                    f"{missing_deposit:,.2f}",
+                    f"{running_balance:,.2f}",
+                    details.get("payment_mode", "") or "Cash",
+                    "Initial Deposit"
+                ))
 
-        if missing_from_history > 0:
-            self.history_tree.insert("", "end", values=(
-                "",
-                f"{missing_from_history:,.2f}",
-                f"{(running_balance):,.2f}",
-                details.get("payment_mode", ""),
-                "Initial Payment (from transactions.total_amount_paid)"
-            ))
+            # --- Insert each recorded payment ---
+            for row in history_data:
+                payment_amount = self._safe_decimal(row.get("payment_amount", 0))
+                running_balance -= payment_amount
 
-        for row_data in history_data:
-            payment_amount = self._safe_decimal(row_data.get("payment_amount", 0))
-            running_balance -= payment_amount
-            payment_date = row_data.get("payment_date")
-            date_str = payment_date.strftime("%Y-%m-%d %H:%M:%S") if isinstance(payment_date, datetime) else str(payment_date)
-            self.history_tree.insert("", "end", values=(
-                date_str,
-                f"{payment_amount:,.2f}",
-                f"{running_balance:,.2f}",  # show negative
-                row_data.get("payment_mode", ""),
-                (row_data.get("payment_reason") or "").upper()
-            ))
+                payment_date = row.get("payment_date")
+                date_str = ""
+                if isinstance(payment_date, datetime):
+                    date_str = payment_date.strftime("%Y-%m-%d %H:%M:%S")
+                elif payment_date:
+                    date_str = str(payment_date)
+
+                self.history_tree.insert("", "end", values=(
+                    date_str or "—",
+                    f"{payment_amount:,.2f}",
+                    f"{running_balance:,.2f}",
+                    row.get("payment_mode", "") or "—",
+                    (row.get("payment_reason") or "Payment").title()
+                ))
+
+            # --- If there are no payments at all ---
+            if missing_deposit == 0 and not history_data:
+                self.history_tree.insert("", "end", values=(
+                    "—", "0.00", f"{running_balance:,.2f}", "—", "No Payments Recorded"
+                ), tags=("no_data",))
+                self.history_tree.tag_configure("no_data", foreground="gray")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load payment history:\n{e}", parent=self)
+
 
     # ----------------------------------------------------------------------
+    
 
+    def _aggregate_history_data(self,history_data):
+        """
+        Aggregates payment records that share the same date and time into a single record.
+        Sums the payment amounts and merges unique modes/reasons into strings.
+        """
+        
+        aggregated = defaultdict(lambda:{
+
+            "payment_date":None,
+            "payment_amount": Decimal("0.00"),
+            "payment_mode": set(),  # Use a set for unique modes
+            "payment_reason": set(), # Use a set for unique reasons
+        })
+
+        for record in history_data:
+            payment_date = record.get("payment_date")
+
+            if isinstance(payment_date, datetime):
+                key = payment_date
+            else:
+                key = (record.get("payment_date"), record.get("payment_mode"), record.get("payment_amount"))
+
+            agg_rec = aggregated[key]
+
+            if agg_rec["payment_date"] is None:
+                agg_rec["payment_date"] = payment_date
+
+            try:
+                amt = Decimal(str(record.get("payment_amount", 0)))
+            except:
+                amt = Decimal("0.00") # Handle bad amount data
+            agg_rec["payment_amount"] += amt
+
+            mode = record.get("payment_mode")
+            if mode:
+                agg_rec["payment_mode"].add(mode)
+            
+            reason = record.get("payment_reason")
+            if reason:
+                agg_rec["payment_reason"].add(reason)
+
+        final_list = []
+        for rec in aggregated.values():
+            rec["payment_mode"] = " / ".join(sorted(list(rec["payment_mode"])))
+            rec["payment_reason"] = " / ".join(sorted(list(rec["payment_reason"])))
+            final_list.append(rec)
+
+        final_list.sort(key=lambda x: x.get("payment_date") or datetime.min)
+
+        return final_list        
+    
     def _generate_statements_pdf(self):
-        """Generates a detailed payment statement (PDF) with logo header, wrapped text, and negative balances."""
+        """Generates a detailed payment statement (PDF) with full payment breakdown and running balances."""
         try:
+            # --- 1. Fetch transaction + history ---
             details = self.db_manager.get_transaction_details_full(self.transaction_id)
             if not details:
                 messagebox.showerror("Error", "Transaction details not found.")
                 return
 
             history_data = self.db_manager.get_payment_history_for_transaction(self.transaction_id) or []
-            history_data.sort(key=lambda x: x.get("payment_date") or datetime.min)
 
+            # Normalize and sort by date
+            for r in history_data:
+                if isinstance(r.get("payment_date"), str):
+                    try:
+                        r["payment_date"] = datetime.fromisoformat(r["payment_date"])
+                    except Exception:
+                        pass
+
+            history_data = self._aggregate_history_data(history_data)
+
+
+            # --- 2. Ask where to save ---
             default_name = f"Payment_Statement_{self.transaction_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
             file_path = filedialog.asksaveasfilename(
                 title="Save Payment Statement As",
@@ -4828,11 +4894,9 @@ class PaymentHistoryForm(tk.Toplevel, CustomTitleBarMixin):
             if not file_path:
                 return
 
-            # --- PDF setup ---
+            # --- 3. PDF setup ---
             doc = SimpleDocTemplate(file_path, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
             styles = getSampleStyleSheet()
-            elements = []
-
             wrap_style = ParagraphStyle(
                 name="WrapStyle",
                 parent=styles["Normal"],
@@ -4840,130 +4904,123 @@ class PaymentHistoryForm(tk.Toplevel, CustomTitleBarMixin):
                 leading=11,
                 wordWrap="CJK",
             )
+            elements = []
 
-            # --- Logo + Header ---
+            # --- 4. Header with logo ---
             logo_path = os.path.join(ICONS_DIR, "NEWCITY.png")
             if os.path.exists(logo_path):
                 logo = RLImage(logo_path)
-                logo._restrictSize(1.2 * inch, 1.2 * inch)
+                logo._restrictSize(1.0 * inch, 1.0 * inch)
             else:
                 logo = Paragraph("<b>NEW CITY REAL ESTATE</b>", styles["Normal"])
 
             header_table = Table(
                 [[logo,
-                  Paragraph("<b>NEW CITY REAL ESTATE</b>", styles["Title"]),
-                  Paragraph(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), styles["Normal"])
-                  ]],
-                colWidths=[90, 300, 100],
+                Paragraph("<b>NEW CITY REAL ESTATE</b>", styles["Title"]),
+                Paragraph(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), styles["Normal"])]],
+                colWidths=[80, 300, 120],
             )
             header_table.setStyle(TableStyle([
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                 ("ALIGN", (2, 0), (2, 0), "RIGHT"),
             ]))
             elements.append(header_table)
-            elements.append(Spacer(1, 10))
+            elements.append(Spacer(1, 15))
 
-            # --- Statement Header ---
-            elements.append(Paragraph("<b>Payment Statement</b>", styles["Title"]))
+            # --- 5. Transaction summary ---
+            elements.append(Paragraph("<b>PAYMENT STATEMENT</b>", styles["Title"]))
             elements.append(Spacer(1, 8))
             elements.append(Paragraph(f"<b>Transaction ID:</b> {self.transaction_id}", styles["Normal"]))
-            elements.append(Paragraph(f"<b>Client Name:</b> {details.get('client_name','')}", styles["Normal"]))
-            elements.append(Paragraph(f"<b>Contact:</b> {details.get('client_contact','')}", styles["Normal"]))
-            if details.get("project_name"):
-                elements.append(Paragraph(f"<b>Project:</b> {details['project_name']} (ID: {details.get('project_id')})", styles["Normal"]))
+            elements.append(Paragraph(f"<b>Client Name:</b> {details.get('client_name', 'N/A')}", styles["Normal"]))
+            elements.append(Paragraph(f"<b>Contact:</b> {details.get('client_contact', 'N/A')}", styles["Normal"]))
             elements.append(Paragraph(f"<b>Property:</b> {details.get('title_deed_number','')} — {details.get('location','')}", styles["Normal"]))
-            elements.append(Paragraph(f"<b>Date of Transaction:</b> {details.get('transaction_date')}", styles["Normal"]))
-            elements.append(Spacer(1, 12))
+            if details.get("project_name"):
+                elements.append(Paragraph(f"<b>Project:</b> {details['project_name']} (PLOT NO: {details.get('project_id')})", styles["Normal"]))
+            elements.append(Spacer(1, 10))
 
-            # --- Payment Table ---
+            # --- 6. Payment table with running balance ---
             table_data = [[
                 Paragraph("<b>Date</b>", wrap_style),
-                Paragraph("<b>Amount (KES)</b>", wrap_style),
-                Paragraph("<b>Balance (KES)</b>", wrap_style),
                 Paragraph("<b>Payment Mode</b>", wrap_style),
-                Paragraph("<b>Payment Reason</b>", wrap_style)
+                Paragraph("<b>Payment Reason</b>", wrap_style),
+                Paragraph("<b>Amount Paid (KES)</b>", wrap_style),
+                Paragraph("<b>Running Balance (KES)</b>", wrap_style),
             ]]
 
-            total_amount = Decimal("0.00")
-            total_price = self._safe_decimal(details.get("total_price") or details.get("price") or 0)
-            total_amount_paid_on_tx = self._safe_decimal(details.get("total_amount_paid", 0))
-            discount = self._safe_decimal(details.get("discount", 0))
+            total_paid = Decimal("0.00")
+            total_price = Decimal(str(details.get("price") or details.get("total_price") or 0))
+            discount = Decimal(str(details.get("discount") or 0))
+            net_price = total_price - discount
+            running_balance = net_price
 
-            history_sum = sum(self._safe_decimal(r.get("payment_amount", 0)) for r in history_data)
-            missing_from_history = Decimal("0.00")
-            if total_amount_paid_on_tx > history_sum:
-                missing_from_history = total_amount_paid_on_tx - history_sum
+            # Loop through all payments (oldest first)
+            for rec in history_data:
+                amt = Decimal(str(rec.get("payment_amount", 0)))
+                total_paid += amt
+                running_balance -= amt
 
-            running_balance = total_price - missing_from_history - discount
-
-            # --- Optional initial payment row ---
-            if missing_from_history > 0:
-                table_data.append([
-                    "",
-                    f"{float(missing_from_history):,.2f}",
-                    f"{-float(running_balance - missing_from_history):,.2f}",
-                    Paragraph(details.get("payment_mode", ""), wrap_style),
-                    Paragraph("Initial Payment (from transactions.total_amount_paid)", wrap_style)
-                ])
-
-            # --- Loop payments with wrapping ---
-            for row in history_data:
-                amount = self._safe_decimal(row.get("payment_amount", 0))
-                total_amount += amount
-                running_balance -= amount
-                date_str = row.get("payment_date").strftime("%Y-%m-%d %H:%M:%S") if isinstance(row.get("payment_date"), datetime) else str(row.get("payment_date"))
-
-                payment_mode_para = Paragraph(row.get("payment_mode", ""), wrap_style)
-                payment_reason_para = Paragraph((row.get("payment_reason") or "").upper(), wrap_style)
+                date_str = rec.get("payment_date")
+                if isinstance(date_str, datetime):
+                    date_str = date_str.strftime("%Y-%m-%d %H:%M:%S")
 
                 table_data.append([
-                    date_str,
-                    f"{float(amount):,.2f}",
-                    f"{float(running_balance):,.2f}",  # negative balance
-                    payment_mode_para,
-                    payment_reason_para
+                    date_str or "—",
+                    rec.get("payment_mode", ""),
+                    rec.get("payment_reason", ""),
+                    f"{float(amt):,.2f}",
+                    f"{float(running_balance):,.2f}",
                 ])
 
-            # --- Style table ---
-            table = Table(table_data, colWidths=[100, 85, 85, 100, 190])
+            # --- 7. Table styling ---
+            table = Table(table_data, colWidths=[120, 100, 160, 100, 100])
             table.setStyle(TableStyle([
                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2E86C1")),
                 ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
-                ("ALIGN", (1, 1), (2, -1), "RIGHT"),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("ALIGN", (3, 1), (4, -1), "RIGHT"),
                 ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.whitesmoke, colors.lightgrey]),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.whitesmoke, colors.lightgrey]),
             ]))
             elements.append(table)
             elements.append(Spacer(1, 15))
 
-            # --- Summary ---
-            pending_balance = running_balance
+            # --- 8. Totals / Summary section ---
+            balance = running_balance
             summary_data = [
-                ["", "", "Total Amount Paid (history):", f"{float(total_amount):,.2f} KES"],
-                ["", "", "Outstanding Balance (Negative = Owed):", f"{float(pending_balance):,.2f} KES"],
+                ["", "Total Property Price:", f"{float(total_price):,.2f} KES"],
+                ["", "Discounts Applied:", f"{float(discount):,.2f} KES"],
+                ["", "Net Payable:", f"{float(net_price):,.2f} KES"],
+                ["", "Total Amount Paid:", f"{float(total_paid):,.2f} KES"],
+                ["", "Outstanding Balance:", f"{float(balance):,.2f} KES"],
             ]
-            summary_table = Table(summary_data, colWidths=[120, 90, 150, 150])
+
+            summary_table = Table(summary_data, colWidths=[100, 200, 150])
             summary_table.setStyle(TableStyle([
-                ("ALIGN", (2, 0), (3, -1), "RIGHT"),
-                ("FONTNAME", (2, 0), (3, -1), "Helvetica-Bold"),
-                ("FONTSIZE", (2, 0), (3, -1), 10),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+                ("FONTNAME", (1, 0), (-1, -1), "Helvetica-Bold"),
+                ("FONTSIZE", (1, 0), (-1, -1), 10),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
             ]))
             elements.append(summary_table)
-            elements.append(Spacer(1, 20))
+            elements.append(Spacer(1, 25))
 
-            elements.append(Paragraph("<i>This is a system-generated statement. No signature required.</i>", styles["Normal"]))
+            elements.append(Paragraph(
+                "<i>This is a system-generated statement showing all payments made to date.</i>",
+                styles["Normal"]
+            ))
 
+            # --- 9. Build and open ---
             doc.build(elements)
-
-            open_now = messagebox.askyesno("Statement Generated", "Statement saved successfully.\n\nWould you like to open it now?")
+            open_now = messagebox.askyesno(
+                "Statement Generated",
+                f"Statement saved successfully as:\n\n{os.path.basename(file_path)}\n\nWould you like to open it now?"
+            )
             if open_now:
                 webbrowser.open_new(file_path)
 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to generate statement:\n{e}")
+    
 
 
 
@@ -5401,6 +5458,7 @@ class ViewAllPropertiesForm(tk.Toplevel):
         # Configure Treeview tags for highlighting after treeview is created
         self.properties_tree.tag_configure('available_prop', background='lightgreen', foreground='darkgreen', font=('Arial', 9, 'bold'))
         self.properties_tree.tag_configure('sold_prop', background='lightcoral', foreground='darkred', font=('Arial', 9, 'bold'))
+        self.properties_tree.tag_configure('unavailable_prop', background='lightgray', foreground='black', font=('Arial', 9, 'bold'))
         self.properties_tree.tag_configure('no_data', foreground='gray', font=('Arial', 9, 'italic'))
 
         self._apply_filters() # Initial load of data
@@ -5536,7 +5594,7 @@ class ViewAllPropertiesForm(tk.Toplevel):
         self.max_size_entry.grid(row=0, column=5, padx=5, pady=2, sticky="ew")
 
         ttk.Label(filter_search_frame, text="Status:").grid(row=1, column=0, padx=5, pady=2, sticky="w")
-        self.status_filter_combobox = ttk.Combobox(filter_search_frame, values=["All", "Available", "Sold"], state="readonly", width=15)
+        self.status_filter_combobox = ttk.Combobox(filter_search_frame, values=["All", "Available", "Sold", "Unavailable"], state="readonly", width=15)
         self.status_filter_combobox.set("All")
         self.status_filter_combobox.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
 
@@ -5616,6 +5674,10 @@ class ViewAllPropertiesForm(tk.Toplevel):
 
         self.properties_tree.pack(fill="both", expand=True, pady=10)
         ToolTip(self.properties_tree, "Click Select a Property .")
+
+        # Totals label (shows totals for the filtered dataset)
+        self.total_label = ttk.Label(main_frame, text="Total Properties (Filtered): 0")
+        self.total_label.pack(fill="x", pady=(0, 5))
 
         tree_scrollbar_y = ttk.Scrollbar(main_frame, orient="vertical", command=self.properties_tree.yview)
         tree_scrollbar_y.pack(side="right", fill="y")
@@ -5736,6 +5798,8 @@ class ViewAllPropertiesForm(tk.Toplevel):
             db_status = "Available"
         elif status_filter == "Sold":
             db_status = "Sold"
+        elif status_filter == "Unavailable":
+            db_status = "unvailable"   # match DB exactly
         # If "All", db_status remains None, fetching all properties
 
         # Fetch all matching properties based on filters, then paginate locally
@@ -5760,6 +5824,8 @@ class ViewAllPropertiesForm(tk.Toplevel):
             self.total_pages = 1
 
         self._load_page(1) # Load the first page of filtered data
+
+        self._update_total_label()
 
     def _clear_filters(self):
         """Clears all search and filter fields and reloads properties."""
@@ -5807,6 +5873,10 @@ class ViewAllPropertiesForm(tk.Toplevel):
                 tags = ('available_prop',)
             elif prop['status'].lower() == 'sold':
                 tags = ('sold_prop',)
+            elif prop['status'].lower() in ('unavailable', 'unvailable'):
+                tags = ('unavailable_prop',)
+
+
 
             # Determine image indicator
             image_indicator = ""
@@ -5828,6 +5898,15 @@ class ViewAllPropertiesForm(tk.Toplevel):
                 prop.get('added_by_username', 'N/A').upper(),
                 prop['owner'].upper(),
             ), iid=prop['property_id'], tags=tags)
+
+    def _update_total_label(self):
+        """Updates the Total Properties (Filtered) label based on the current filtered dataset."""
+        try:
+            count = len(self.all_properties_data) if self.all_properties_data is not None else 0
+        except Exception:
+            count = 0
+        self.total_label.config(text=f"Total Properties (Filtered): {count}")
+
 
     def _sort_treeview_by_column(self, col, reverse):
         """Sorts the Treeview rows by the specified column."""
@@ -6446,19 +6525,23 @@ class SalesReportsForm(tk.Toplevel):
                     story.append(Paragraph(f"<b>{project_header}</b>", styles['Heading3']))
                     story.append(Spacer(1, 6))
 
-                    table_data = [["Item", "Title Deed", "Actual Price", "Amount Paid", "Balance"]]
+                    table_data = [["Client", "Title Deed", "Actual Price", "Amount Paid", "Balance", "Status"]]
                     project_gross, project_net = Decimal('0.0'), Decimal('0.0')
 
                     for item in group:
                         actual_price = Decimal(item.get('actual_price') or 0)
                         amount_paid = Decimal(item.get('amount_paid') or 0)
                         balance = Decimal(item.get('balance') or 0)
+                        client_name = item.get('client_name', 'N/A')
+                        status = item.get('status', 'N/A')
+
                         table_data.append([
-                            Paragraph(item.get('property_type', 'N/A'), wrap_style),
+                            Paragraph(client_name, wrap_style),
                             Paragraph(item.get('title_deed_number', 'N/A'), wrap_style),
                             Paragraph(f"KES {actual_price:,.2f}", wrap_style),
                             Paragraph(f"KES {amount_paid:,.2f}", wrap_style),
                             Paragraph(f"KES {balance:,.2f}", wrap_style),
+                            Paragraph(status.title(), wrap_style),
                         ])
                         project_gross += actual_price
                         project_net += amount_paid
@@ -6467,7 +6550,7 @@ class SalesReportsForm(tk.Toplevel):
                     overall_net += project_net
                     project_pending = project_gross - project_net
 
-                    table = Table(table_data, repeatRows=1, colWidths=[1.0 * inch, 1.2 * inch, 1.1 * inch, 1.1 * inch, 1.1 * inch])
+                    table = Table(table_data, repeatRows=1, colWidths=[1.3 * inch, 1.2 * inch, 1.0 * inch, 1.0 * inch, 1.0 * inch, 1.0 * inch])
                     table.setStyle(TableStyle([
                         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
                         ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
@@ -6481,10 +6564,12 @@ class SalesReportsForm(tk.Toplevel):
                     story.append(Spacer(1, 6))
 
                     # Per-project summary
+                    project_total_properties = len(table_data) - 1
                     summary_data = [
-                        ["Gross Sales:", f"KES {project_gross:,.2f}"],
-                        ["Net Sales:", f"KES {project_net:,.2f}"],
-                        ["Pending:", f"KES {project_pending:,.2f}"]
+                    ["Total Properties:", f"{project_total_properties}"],
+                    ["Gross Sales:", f"KES {project_gross:,.2f}"],
+                    ["Net Sales:", f"KES {project_net:,.2f}"],
+                    ["Pending:", f"KES {project_pending:,.2f}"]
                     ]
                     summary_table = Table(summary_data, colWidths=[1.5 * inch, 1.5 * inch])
                     summary_table.setStyle(TableStyle([
@@ -6570,8 +6655,26 @@ class SalesReportsForm(tk.Toplevel):
                         story.append(Spacer(1, 6))
 
                         # Insert per-project total (Total Paid)
-                        story.append(Paragraph(f"<b>Total Paid: KES {project_total_paid:,.2f}</b>", styles['Normal']))
+                        # Per-project summary (stacked)
+                        project_total_properties = len(table_data) - 1
+                        project_total_pending = sum(Decimal(item.get('balance') or 0) for item in project_items)
+
+                        summary_data = [
+                            ["Total Properties:", f"{project_total_properties}"],
+                            ["Total Paid:", f"KES {project_total_paid:,.2f}"],
+                            ["Total Pending:", f"KES {project_total_pending:,.2f}"]
+                        ]
+
+                        summary_table = Table(summary_data, colWidths=[1.8 * inch, 1.5 * inch])
+                        summary_table.setStyle(TableStyle([
+                            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
+                            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+                            ('BACKGROUND', (0, 0), (-1, -1), colors.whitesmoke),
+                            ('TOPPADDING', (0, 0), (-1, -1), 6),
+                        ]))
+                        story.append(summary_table)
                         story.append(Spacer(1, 10))
+
 
                     # After all projects, add overall total
                     story.append(Spacer(1, 6))
@@ -6633,10 +6736,12 @@ class SalesReportsForm(tk.Toplevel):
 
                         # Per-project summary
                         project_pending = project_gross - project_net
+                        project_total_properties = len(table_data) - 1
                         summary_data = [
-                            ["Gross (Project Total):", f"KES {project_gross:,.2f}"],
-                            ["Total Paid:", f"KES {project_net:,.2f}"],
-                            ["Total Pending:", f"KES {project_pending:,.2f}"]
+                        ["Total Properties:", f"{project_total_properties}"],
+                        ["Gross Sales:", f"KES {project_gross:,.2f}"],
+                        ["Net Sales:", f"KES {project_net:,.2f}"],
+                        ["Pending:", f"KES {project_pending:,.2f}"]
                         ]
                         summary_table = Table(summary_data, colWidths=[1.8 * inch, 1.5 * inch])
                         summary_table.setStyle(TableStyle([

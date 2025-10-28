@@ -232,139 +232,116 @@ class FormBase(tk.Toplevel):
 
 
 
+# Updated AddNewTaskForm with surveyors as dict mapping username to id
 class AddNewTaskForm(FormBase):
     """
     A form for adding a new task (job) to a specific client file.
     """
     def __init__(self, master, db_manager, client_data, user_id, refresh_callback, parent_icon_loader=None):
-        # The icon_name 'add_task.png' is passed to the FormBase constructor
         super().__init__(master, 450, 380, "Add New Task", "add_task.png", parent_icon_loader)
         self.db_manager = db_manager
         self.client_data = client_data
         self.user_id = user_id
         self.refresh_callback = refresh_callback
         self.parent_icon_loader = parent_icon_loader
-        # Keep a reference to the button icon to prevent garbage collection
         self.button_icon = None
+        # store mapping of username -> user_id
+        self._surveyor_map = {}
         self._create_widgets()
 
     def _create_widgets(self):
-        """Creates the widgets for the new task form."""
         main_frame = ttk.Frame(self, padding="15")
         main_frame.pack(fill="both", expand=True)
-
         ttk.Label(main_frame, text="Client:").grid(row=0, column=0, sticky="w", pady=5)
         ttk.Label(main_frame, text=self.client_data['name'], font=('Helvetica', 10, 'bold')).grid(row=0, column=1, sticky="w", pady=5)
-        
         ttk.Label(main_frame, text="File:").grid(row=1, column=0, sticky="w", pady=5)
         ttk.Label(main_frame, text=self.client_data['file_name'], font=('Helvetica', 10, 'bold')).grid(row=1, column=1, sticky="w", pady=5)
-
         ttk.Label(main_frame, text="Brought By:").grid(row=2, column=0, sticky="w", pady=5)
         ttk.Label(main_frame, text=self.client_data['brought_by'], font=('Helvetica', 10, 'bold')).grid(row=2, column=1, sticky="w", pady=5)
-        
         ttk.Separator(main_frame, orient="horizontal").grid(row=3, column=0, columnspan=2, sticky="ew", pady=10)
-
-        # New Widget: Task Type Combobox
         ttk.Label(main_frame, text="Task Type:").grid(row=4, column=0, sticky="w", pady=5)
-        self.task_type_combobox = ttk.Combobox(main_frame, values=['Subdivision', 'Transfer', 'Topographical Survey', 'Engineering Survey'], state='readonly')
+        self.task_type_combobox = ttk.Combobox(main_frame, values=['Subdivision','Transfer','Topographical Survey','Engineering Survey'], state='readonly')
         self.task_type_combobox.grid(row=4, column=1, sticky="ew", pady=5)
-        self.task_type_combobox.current(0)  # Set default value
-
+        self.task_type_combobox.current(0)
         ttk.Label(main_frame, text="Job Description:").grid(row=5, column=0, sticky="w", pady=5)
         self.job_description_entry = ttk.Entry(main_frame)
         self.job_description_entry.grid(row=5, column=1, sticky="ew", pady=5)
-
         ttk.Label(main_frame, text="Title Name:").grid(row=6, column=0, sticky="w", pady=5)
         self.title_name_entry = ttk.Entry(main_frame)
         self.title_name_entry.grid(row=6, column=1, sticky="ew", pady=5)
-        
         ttk.Label(main_frame, text="Title Number:").grid(row=7, column=0, sticky="w", pady=5)
         self.title_number_entry = ttk.Entry(main_frame)
         self.title_number_entry.grid(row=7, column=1, sticky="ew", pady=5)
 
-        ttk.Label(main_frame, text="Price:").grid(row=8, column=0, sticky="w", pady=5)
-        self.price_entry = ttk.Entry(main_frame)
-        self.price_entry.grid(row=8, column=1, sticky="ew", pady=5)
+        ttk.Label(main_frame, text="Assigned to:").grid(row=8, column=0, sticky="w", pady=5)
+        self.assigned_to_entry = ttk.Combobox(main_frame, state="readonly")
+        self.assigned_to_entry.grid(row=8, column=1, sticky="ew", pady=5)
+        try:
+            surveyors = self.db_manager.get_all_surveyors()  # returns list of dicts
+            print("DEBUG — get_all_surveyors() returned:", surveyors)
 
+            usernames = []
+            for row in surveyors:
+                uid = row["user_id"]
+                uname = row["username"]
+                self._surveyor_map[uname] = uid  # store correct ID mapping
+                usernames.append(uname)
+
+            print("DEBUG — Parsed usernames list:", usernames)
+            self.assigned_to_entry["values"] = usernames
+
+        except Exception as e:
+            print(f"Error loading surveyors: {e}")
+
+
+
+
+        ttk.Label(main_frame, text="Price:").grid(row=9, column=0, sticky="w", pady=5)
+        self.price_entry = ttk.Entry(main_frame)
+        self.price_entry.grid(row=9, column=1, sticky="ew", pady=5)
         if self.parent_icon_loader:
-            self.button_icon = self.parent_icon_loader("add_task.png", size=(20, 20))
-        
-        # We need to make sure the reference is explicitly held
+            self.button_icon = self.parent_icon_loader("add_task.png", size=(20,20))
         self.button_icon_ref = self.button_icon
-        
-        ttk.Button(main_frame, text="Submit Task", image=self.button_icon, compound=tk.LEFT, command=self._submit_task).grid(row=9, column=0, columnspan=2, pady=15)
-        
+        ttk.Button(main_frame, text="Submit Task", image=self.button_icon, compound=tk.LEFT, command=self._submit_task).grid(row=10, column=0, columnspan=2, pady=15)
         main_frame.grid_columnconfigure(1, weight=1)
 
     def _submit_task(self):
-        """Validates and submits the new task to the database."""
+        # unchanged logic except get selected surveyor id
         task_type = self.task_type_combobox.get()
         job_description = self.job_description_entry.get().strip()
         title_name = self.title_name_entry.get().strip()
         title_number = self.title_number_entry.get().strip()
         price_str = self.price_entry.get().strip()
         amountpaid_str = '0.0'
-
         if not all([task_type, job_description, title_name, title_number, price_str]):
-            messagebox.showerror("Input Error", "All fields are required.")
-            return
-
+            messagebox.showerror("Input Error", "All fields are required."); return
         try:
             price_val = float(price_str)
-            if price_val < 0:
-                messagebox.showerror("Input Error", "Price must be a positive number.") 
-                return
+            if price_val < 0: messagebox.showerror("Input Error","Price must be positive"); return
         except ValueError:
-            messagebox.showerror("Input Error", "Price must be a valid number.")
-            return
-        
-        # This part of your original code has a logical error, it re-validates price_val,
-        # but I'm keeping the structure to match your original.
+            messagebox.showerror("Input Error","Price must be a valid number"); return
         try:
             amountpaid_val = float(amountpaid_str)
-            if amountpaid_val < 0:
-                messagebox.showerror("Input Error", "Amount paid must be a positive number.") 
-                return
+            if amountpaid_val < 0: messagebox.showerror("Input Error","Amount paid must be positive"); return
         except ValueError:
-            messagebox.showerror("Input Error", "Amount paid must be a valid number.")
-            return
-
-        added_by = self.db_manager.get_username_by_id(self.user_id)
-        if not added_by:
-            added_by = "Unknown User"
-
+            messagebox.showerror("Input Error","Amount paid must be a valid number"); return
+        added_by = self.db_manager.get_username_by_id(self.user_id) or "Unknown User"
         balance_val = price_val - amountpaid_val
-        
-        success = self.db_manager.add_job(
-            file_id=self.client_data['file_id'],
-            job_description=job_description,
-            title_name=title_name,
-            title_number=title_number,
-            fee=price_val,
-            added_by=added_by,
-            brought_by=self.client_data['brought_by'],
-            task_type=task_type  # Pass the new task_type parameter
-        )
-        
+        # get selected surveyor id if needed later
+        selected_user = self.assigned_to_entry.get()
+        assigned_user_id = self._surveyor_map.get(selected_user)
+        success = self.db_manager.add_job(file_id=self.client_data['file_id'], job_description=job_description,
+            title_name=title_name, title_number=title_number, fee=price_val, added_by=added_by,
+            brought_by=self.client_data['brought_by'], task_type=task_type, assigned_to=assigned_user_id)
         if success:
-            print(f"Job added successfully with ID: {success}", file=sys.stderr)
-            payment_success = self.db_manager.add_payment(
-                job_id=success,
-                fee=price_val,
-                amount=amountpaid_val,
-                balance=balance_val
-            )
-
+            payment_success = self.db_manager.add_payment(job_id=success, fee=price_val, amount=amountpaid_val, balance=balance_val)
             if payment_success:
                 messagebox.showinfo("Success", "New task and payments added successfully")
-                self.refresh_callback()
-                self.destroy()
+                self.refresh_callback(); self.destroy()
             else:
-                messagebox.showerror("Error", "Task added, but failed to record the initial payment.")
-                self.refresh_callback()
-                self.destroy()
+                messagebox.showerror("Error", "Task added, but failed to record initial payment.")
+                self.refresh_callback(); self.destroy()
         else:
-            print(f"Failed to add job. Result was: {success}", file=sys.stderr)
             messagebox.showerror("Error", "Failed to add new task.")
 
 
@@ -980,7 +957,7 @@ class TrackJobsView(FormBase):
         table_frame.pack(fill="both", expand=True)
 
         # Updated columns
-        columns = ("date", "task_type", "title_name", "title_number", "file_name", "client_name", "status")
+        columns = ("date", "task_type", "title_name", "title_number", "file_name", "client_name", "status", "assigned_to")
         self.jobs_tree = ttk.Treeview(table_frame, columns=columns, show="headings")
         ToolTip(self.jobs_tree, "Select a Job to Update its Status .")
         
@@ -991,6 +968,9 @@ class TrackJobsView(FormBase):
         self.jobs_tree.heading("file_name", text="File Name")
         self.jobs_tree.heading("client_name", text="Client Name")
         self.jobs_tree.heading("status", text="Status")
+        self.jobs_tree.heading("assigned_to", text="Assigned To")
+
+
         
         self.jobs_tree.column("date", width=120, anchor=tk.W)
         self.jobs_tree.column("task_type", width=150, anchor=tk.W)
@@ -999,6 +979,8 @@ class TrackJobsView(FormBase):
         self.jobs_tree.column("file_name", width=100, anchor=tk.W)
         self.jobs_tree.column("client_name", width=150, anchor=tk.W)
         self.jobs_tree.column("status", width=200, anchor=tk.W)
+        self.jobs_tree.column("assigned_to", width=200, anchor=tk.W)
+
         
         scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.jobs_tree.yview)
         self.jobs_tree.configure(yscrollcommand=scrollbar.set)
@@ -1060,7 +1042,8 @@ class TrackJobsView(FormBase):
                 job['title_number'].upper(),
                 job['file_name'].upper(),
                 job['client_name'].upper(),
-                job['status'].upper()
+                job['status'].upper(),
+                job['assigned_username']
             )
             # We store the job_id in the item's `iid` so we can easily retrieve it later.
             self.jobs_tree.insert("", tk.END, iid=job['job_id'], values=values)
@@ -1104,9 +1087,9 @@ class TrackJobsView(FormBase):
             item_values = self.jobs_tree.item(selected_item[0], 'values')
             
             if item_values:
-                status = item_values[-1] # Status is the last element
+                status = item_values[6] # Status is the last element
 
-                if status.lower() not in ('completed', 'cancelled'):
+                if status.lower() not in ('completed', 'cancelled', 'dispatched'):
                     self.update_status_btn['state'] = 'normal'
                 else:
                     self.update_status_btn['state'] = 'disabled'
