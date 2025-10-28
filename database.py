@@ -417,6 +417,7 @@ class DatabaseManager:
                     status VARCHAR(255) NOT NULL DEFAULT 'Ongoing',
                     added_by VARCHAR(255) NOT NULL,
                     brought_by VARCHAR(255) DEFAULT 'self',
+                    assigned_to VARCHAR(255) NOT NULL,
                     task_type  VARCHAR(255) NOT NULL,
                     timestamp DATETIME NOT NULL,
                     FOREIGN KEY (file_id) REFERENCES client_files(file_id)
@@ -489,6 +490,20 @@ class DatabaseManager:
                     collector_phone VARCHAR(50),
                     sign LONGBLOB,
                     FOREIGN KEY (property_id) REFERENCES properties(property_id)
+                )
+                ''',
+                '''
+                CREATE TABLE IF NOT EXISTS title_movements (
+                    movement_id INT PRIMARY KEY AUTO_INCREMENT,
+                    property_id INT NOT NULL,
+                    movement_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    movement_stage ENUM('Lawyer', 'Office', 'Dispatch') NOT NULL,
+                    status VARCHAR(100) DEFAULT 'Pending',
+                    lawyer_name VARCHAR(255),
+                    remarks TEXT,
+                    handled_by_user_id INT,
+                    FOREIGN KEY (property_id) REFERENCES properties(property_id),
+                    FOREIGN KEY (handled_by_user_id) REFERENCES users(user_id)
                 )
                 '''
             ]
@@ -575,6 +590,21 @@ class DatabaseManager:
         except Exception as e:
             print(f"Error fetching all users: {e}")
             return []
+        
+    def get_all_surveyors(self):
+        """Retrieves only surveyors (handles BOTH uppercase & lowercase)."""
+        try:
+            return self._execute_query(
+                "SELECT user_id, username FROM users WHERE LOWER(role) = 'surveyor'",
+                fetch_all=True
+            )
+        except Exception as e:
+            print(f"Error fetching surveyors: {e}")
+            return []
+
+
+
+
 
     def update_user(self, user_id, new_username=None, new_password=None, new_role=None):
         """Updates an existing user's details."""
@@ -1082,40 +1112,65 @@ class DatabaseManager:
         return result_row['SUM(balance)'] if result_row and result_row['SUM(balance)'] is not None else 0.0
 
     def update_transaction(self, transaction_id, **kwargs):
-        """ Updates details of an existing transaction. """
-        set_clauses = []
-        params = []
-        allowed_columns = ['property_id', 'client_id', 'payment_mode', 'total_amount_paid', 'discount', 'balance', 'transaction_date', 'receipt_path', 'added_by_user_id']
-        for key, value in kwargs.items():
-            if key in allowed_columns:
-                set_clauses.append(f"{key} = %s")
-                params.append(value)
-            else:
-                print(f"Warning: Attempted to update disallowed column: {key}")
-        
-        if not set_clauses:
-            print("No valid columns provided for transaction update.")
+        """
+        Updates details of an existing transaction safely.
+        Returns True if successful, False otherwise.
+        """
+        try:
+            allowed_columns = [
+                'property_id', 'client_id', 'payment_mode',
+                'total_amount_paid', 'discount', 'balance',
+                'transaction_date', 'receipt_path', 'added_by_user_id'
+            ]
+            set_clauses = []
+            params = []
+
+            for key, value in kwargs.items():
+                if key in allowed_columns:
+                    set_clauses.append(f"{key} = %s")
+                    params.append(value)
+                else:
+                    print(f"[WARN] Attempted to update disallowed column: {key}")
+
+            if not set_clauses:
+                print("[WARN] No valid columns provided for transaction update.")
+                return False
+
+            params.append(transaction_id)
+            query = f"""
+                UPDATE transactions
+                SET {', '.join(set_clauses)}
+                WHERE transaction_id = %s
+            """
+
+            result = self._execute_query(query, params)
+            return bool(result)
+
+        except Exception as e:
+            print(f"[ERROR] Failed to update transaction {transaction_id}: {e}", file=sys.stderr)
             return False
 
-        params.append(transaction_id)
-        query = f"UPDATE transactions SET {', '.join(set_clauses)} WHERE transaction_id = %s"
-        return self._execute_query(query, params)
-    
-    def add_transaction_history(self, transaction_id,installment_id, payment_amount, payment_mode, payment_reason, payment_date):
+
+    def add_transaction_history(self, transaction_id, installment_id, payment_amount, payment_mode, payment_reason, payment_date):
         """
-        Records a single payment into the transactions_history table.
+        Records a single payment in the transactions_history table.
+        Supports both deposit and installment payments.
+        Returns True if successful, False otherwise.
         """
         try:
             query = """
-                INSERT INTO transactions_history (transaction_id, installment_id, payment_amount, payment_mode, payment_reason, payment_date)
-                VALUES (%s, %s,%s, %s, %s, %s)
+                INSERT INTO transactions_history 
+                    (transaction_id, installment_id, payment_amount, payment_mode, payment_reason, payment_date)
+                VALUES (%s, %s, %s, %s, %s, %s)
             """
-            params = (transaction_id,installment_id, payment_amount, payment_mode, payment_reason, payment_date)
-            
-            return  self._execute_query(query, params)
+            params = (transaction_id, installment_id, payment_amount, payment_mode, payment_reason, payment_date)
+            result = self._execute_query(query, params)
+            return bool(result)
+
         except Exception as e:
-            print(f"Error recording payment history for transaction {transaction_id}: {e}", file=sys.stderr)
+            print(f"[ERROR] Failed to record payment history for transaction {transaction_id}: {e}", file=sys.stderr)
             return False
+
 
 
     def get_oldest_outstanding_installment(self, transaction_id):
@@ -1836,7 +1891,8 @@ class DatabaseManager:
                 sc.name AS client_name,
                 sc.telephone_number AS telephone_number,
                 sp.amount AS amount_paid,
-                sp.balance AS balance
+                sp.balance AS balance,
+                u.username AS assigned_username   -- ✅ NEW: readable username
             FROM
                 service_jobs sj
             JOIN
@@ -1845,10 +1901,13 @@ class DatabaseManager:
                 service_clients sc ON cf.client_id = sc.client_id
             LEFT JOIN
                 service_payments sp ON sj.job_id = sp.job_id
+            LEFT JOIN
+                users u ON sj.assigned_to = u.user_id   -- ✅ This links it
             ORDER BY
                 sj.timestamp DESC
         """
         return self._execute_query(query, fetch_all=True)
+
     
     def get_file_by_id(self, file_id):
         query = "SELECT * FROM client_files WHERE file_id = %s"
@@ -2030,13 +2089,13 @@ class DatabaseManager:
 
 
     
-    def add_job(self, file_id, job_description, title_name, title_number, fee, added_by, brought_by,task_type):
+    def add_job(self, file_id, job_description, title_name, title_number, fee, added_by, brought_by,task_type,assigned_to):
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         query = '''
-            INSERT INTO service_jobs (file_id, job_description, title_name, title_number, fee, added_by, brought_by, task_type,timestamp)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO service_jobs (file_id, job_description, title_name, title_number, fee, added_by, brought_by, task_type,assigned_to,timestamp)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s,%s)
         '''
-        params = (file_id, job_description, title_name, title_number, fee, added_by, brought_by, task_type, timestamp)
+        params = (file_id, job_description, title_name, title_number, fee, added_by, brought_by, task_type, assigned_to,timestamp)
         return self._execute_query(query, params)
 
     def update_job_status(self, job_id, new_status):
@@ -2410,6 +2469,7 @@ class DatabaseManager:
 
             result_row = self._execute_query(query, params, fetch_one=True)
             return result_row[0] if result_row else 0
+    
     def get_total_sales_for_date_range(self, start_date, end_date):
         """
         Retrieves total revenue and total properties sold within a specified date range.
@@ -2438,7 +2498,7 @@ class DatabaseManager:
     def get_detailed_sales_transactions_for_date_range(self, start_date, end_date):
         """
         Retrieves detailed sales transactions for the accounting-style report,
-        grouped by project_id.
+        including completed, ongoing, deposit-paid, and ongoing payments.
         """
         try:
             start_datetime_obj = datetime.strptime(start_date, '%Y-%m-%d')
@@ -2446,25 +2506,35 @@ class DatabaseManager:
             end_datetime_full = datetime.combine(end_datetime_obj, datetime.max.time())
 
             query = """
-                SELECT 
-                    p.project_id AS project_id,
-                    pr.name AS project_name,
-                    p.title_deed_number AS title_deed_number,
-                    p.price AS actual_price,
-                    t.total_amount_paid AS amount_paid,
-                    t.balance AS balance,
-                    p.property_type AS property_type
-                FROM 
-                    transactions t
-                JOIN 
-                    properties p ON t.property_id = p.property_id
-                JOIN
-                    projects pr ON p.project_id = pr.project_id
-                WHERE 
-                    DATE(t.transaction_date) BETWEEN %s AND %s
-                ORDER BY 
-                    p.project_id ASC, t.transaction_date ASC
-            """
+                    SELECT 
+                        p.project_id AS project_id,
+                        pr.name AS project_name,
+                        p.title_deed_number AS title_deed_number,
+                        p.price AS actual_price,
+                        t.total_amount_paid AS amount_paid,
+                        t.balance AS balance,
+                        p.property_type AS property_type,
+                        c.name AS client_name,
+                        t.transaction_date AS transaction_date,
+                        CASE
+                            WHEN t.balance <= 0 THEN 'Completed'
+                            WHEN t.total_amount_paid = 0 THEN 'Unpaid'
+                            WHEN t.total_amount_paid > 0 AND t.balance > 0 THEN 'Ongoing'
+                            ELSE 'Unknown'
+                        END AS status
+                    FROM 
+                        transactions t
+                    JOIN 
+                        properties p ON t.property_id = p.property_id
+                    JOIN 
+                        clients c ON t.client_id = c.client_id
+                    JOIN
+                        projects pr ON p.project_id = pr.project_id
+                    WHERE 
+                        DATE(t.transaction_date) BETWEEN %s AND %s
+                    ORDER BY 
+                        p.project_id ASC, t.transaction_date ASC
+                """
 
             result_rows = self._execute_query(query, (start_datetime_obj, end_datetime_full), fetch_all=True)
 
@@ -2580,6 +2650,7 @@ class DatabaseManager:
             return []
 
         
+    
     def get_pending_instalments_for_date_range(self, start_date, end_date):
         """
         Retrieves transactions with a balance due within the given date range,
@@ -2625,7 +2696,8 @@ class DatabaseManager:
         except Exception as e:
             print(f"[ERROR] get_pending_instalments_for_date_range failed: {e}")
             return []
-        
+
+       
     def get_service_sales_summary(self, period="daily", start_date=None, end_date=None):
         """
         Get total gross and net service sales from service_payments.
@@ -3241,6 +3313,25 @@ class DatabaseManager:
             return processed_data
         
         return []
+
+    def record_title_movement(self, property_id, movement_stage, lawyer_name=None, remarks=None, handled_by_user_id=None):
+        """Logs a new movement entry for a title."""
+        query = """
+            INSERT INTO title_movements (property_id, movement_stage, lawyer_name, remarks, handled_by_user_id)
+            VALUES (%s, %s, %s, %s, %s)
+        """
+        return self._execute_query(query, (property_id, movement_stage, lawyer_name, remarks, handled_by_user_id))
+
+    def get_title_movements(self, property_id):
+        """Retrieves all movement records for a specific property."""
+        query = """
+            SELECT movement_id, movement_date, movement_stage, lawyer_name, remarks, handled_by_user_id
+            FROM title_movements
+            WHERE property_id = %s
+            ORDER BY movement_date ASC
+        """
+        return self._execute_query(query, (property_id,), fetch_all=True)
+
 
 
     def close(self):

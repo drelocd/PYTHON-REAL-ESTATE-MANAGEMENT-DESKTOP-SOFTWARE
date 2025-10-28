@@ -25,7 +25,7 @@ from forms.main_menu_form import MainMenuForm
 from forms.admin_manage_users_form import AdminManageUsersPanel  # Import the admin panel for user management
 # NEW IMPORTS from your file
 from forms.property_forms import AddPropertyForm, SellPropertyLandingForm, TrackPaymentsForm, SoldPropertiesView, \
-    ViewAllPropertiesForm, EditPropertyForm, SalesReportsForm
+    ViewAllPropertiesForm, EditPropertyForm, SalesReportsForm 
 from forms.survey_forms import ClientFileDashboard, AddClientAndFileForm, TrackJobsView, ManagePaymentsView,JobReportsView
 from forms.signup_form import SignupForm
 from forms.dashboard_form import DashboardForm
@@ -81,13 +81,13 @@ if not db_manager.authenticate_user(pm_username, pm_password):
 else:
     print(f"Property Manager user '{pm_username}' already exists.")
 
-# Add 'sales_agent' user if they don't exist
+# Add 'surveyor' user if they don't exist
 sa_username = "sa"
 sa_password = "sa"
 sa_is_agent = "no"  # This is a flag to indicate the user is a sales agent
 if not db_manager.authenticate_user(sa_username, sa_password):
     print(f"'{sa_username}' user not found or password incorrect. Attempting to add...")
-    sa_id = db_manager.add_user(sa_username, sa_password, sa_is_agent, "sales_agent")
+    sa_id = db_manager.add_user(sa_username, sa_password, sa_is_agent, "surveyor")
     if sa_id:
         print(f"Sales Agent user '{sa_username}' added successfully with ID: {sa_id}")
     else:
@@ -213,29 +213,29 @@ class SalesSectionView(ttk.Frame):
                "permission": "Add New Property",
              "tooltip_text" : "Click to add property in terms of blocks and lots and assign them to Projects."},
             {"text": "Sell Property", "icon": "manage_sales.png", "command": self._open_sell_property_form,
-             "roles": ['admin', 'property_manager', 'sales_agent'],
+             "roles": ['admin', 'property_manager', 'surveyor'],
                "permission": "Sell Property",
              "tooltip_text" : "Click to Sell property in terms of blocks and Lots."},
             {"text": "Track Payments", "icon": "track_payments.png", "command": self._open_track_payments_view,
-             "roles": ['admin', 'sales_agent', 'accountant'],
+             "roles": ['admin', 'surveyor', 'accountant'],
                "permission": "Track Payments",
              "tooltip_text" : "Click to Track payment and Manage payments of properties Sold."},
             {"text": "Sold Properties", "icon": "sold_properties.png", "command": self._open_sold_properties_view,
-             "roles": ['admin', 'property_manager', 'sales_agent', 'accountant'],
+             "roles": ['admin', 'property_manager', 'surveyor', 'accountant'],
                "permission": "Sold Property",
              "tooltip_text" : "Click to view Records of Sold Properties."},
             {"text": "View All Properties", "icon": "view_all_properties.png",
-             "command": self._open_view_all_properties, "roles": ['admin', 'property_manager', 'sales_agent'], 
+             "command": self._open_view_all_properties, "roles": ['admin', 'property_manager', 'surveyor'], 
              "permission": "View Property",
              "tooltip_text" : "Click to view and Manage All properties."},
             {"text": "Reports & Receipts", "icon": "reports_receipts.png",
              "command": self._open_sales_reports_receipts_view,
-             "roles": ['admin', 'property_manager', 'sales_agent', 'accountant'], 
+             "roles": ['admin', 'property_manager', 'surveyor', 'accountant'], 
              "permission": "Reports & Receipts",
              "tooltip_text":"Click to generate a PDF report of sales within the specified date range."},
              {"text": "Manage Projects", "icon": "project.png",
              "command": self._open_projects_panel,
-             "roles": ['admin', 'property_manager', 'sales_agent', 'accountant'], 
+             "roles": ['admin', 'property_manager', 'surveyor', 'accountant'], 
              "permission": "Manage Projects",
              "tooltip_text":"Click to Manage and View Projects."},
              {"text": "Dispatch Title Deed", "icon": "dispatch.png",
@@ -247,7 +247,8 @@ class SalesSectionView(ttk.Frame):
              "command": self.open_book_land_form,
              "roles": ['admin', 'property_manager'],
              "permission": "Book Land",
-             "tooltip_text":"Click to book land."}
+             "tooltip_text":"Click to book land."},
+             
             
         ]
 
@@ -364,6 +365,8 @@ class SalesSectionView(ttk.Frame):
             on_close_callback=self.populate_system_overview, 
             parent_icon_loader=self.load_icon_callback
     )
+
+    
 
 
 class SurveySectionView(ttk.Frame):
@@ -794,7 +797,7 @@ class AddClientForm(BaseForm):
         self.tel_entry = ttk.Entry(frame)
         self.tel_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
 
-        ttk.Label(frame, text="ID Number:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
+        ttk.Label(frame, text="ID Number/Passport No:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
         self.email_entry = ttk.Entry(frame)
         self.email_entry.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
 
@@ -842,7 +845,7 @@ class AddClientForm(BaseForm):
 class AddDailyClientForm(BaseForm):
     def __init__(self, parent, db_manager, client_id, client_name, refresh_callback, user_id, icon_loader):
         # FIX: Correct the order of arguments to match BaseForm's constructor
-        super().__init__(parent, 400, 200, "Add Daily Client Details", "client.png", icon_loader)
+        super().__init__(parent, 500, 180, "Add Daily Client Details", "client.png", icon_loader)
         
         self.db_manager = db_manager
         self.client_id = client_id
@@ -870,41 +873,56 @@ class AddDailyClientForm(BaseForm):
         frame = ttk.Frame(self, padding="15")
         frame.pack(fill="both", expand=True)
 
-        # Display the client's name
-        ttk.Label(frame, text=f"Adding daily visit for: {self.client_name}", 
-                  font=('Helvetica', 12, 'bold')).grid(row=0, column=0, columnspan=2, pady=(0, 10))
-        
-          
+        # --- Header ---
+        ttk.Label(
+            frame,
+            text=f"Adding daily visit for: {self.client_name}",
+            font=('Helvetica', 12, 'bold')
+        ).grid(row=0, column=0, columnspan=2, pady=(0, 10))
 
-        # Make the second column expandable to stretch the entry fields
         frame.columnconfigure(1, weight=1)
 
+        # --- Purpose Dropdown ---
         ttk.Label(frame, text="Purpose:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
-        self.purpose_var = tk.StringVar(self)
-        self.purpose_var.set("N/A")
-        purpose_options = ["Survey", "Land Sales"]
-        self.purpose_menu = ttk.Combobox(frame, textvariable=self.purpose_var, values=purpose_options, state="readonly")
+        self.purpose_var = tk.StringVar(value="N/A")
+        purpose_options = ["Survey", "Land Sales", "Inquiry", "Payment", "Document Pickup"]
+        self.purpose_menu = ttk.Combobox(
+            frame, textvariable=self.purpose_var, values=purpose_options, state="readonly"
+        )
         self.purpose_menu.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
 
-        ttk.Label(frame, text="Brought By:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
-        self.brought_by_var = tk.StringVar(self)
-        self.brought_by_combobox = ttk.Combobox(frame, textvariable=self.brought_by_var, values=["Self"])
-        self.brought_by_combobox.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
 
+        # --- Brought By ---
+        ttk.Label(frame, text="Brought By:").grid(row=3, column=0, padx=5, pady=5, sticky="w")
+        self.brought_by_var = tk.StringVar(value="Self")
+        self.brought_by_combobox = ttk.Combobox(
+            frame, textvariable=self.brought_by_var, values=["Self"]
+        )
+        self.brought_by_combobox.grid(row=3, column=1, padx=5, pady=5, sticky="ew")
+
+        # --- Buttons ---
         button_frame = ttk.Frame(frame)
-        button_frame.grid(row=3, column=0, columnspan=2, pady=10)
-        # Center buttons within their frame
+        button_frame.grid(row=4, column=0, columnspan=2, pady=(10, 0))
         button_frame.columnconfigure(0, weight=1)
         button_frame.columnconfigure(1, weight=1)
 
-        self.save_button = ttk.Button(button_frame, text="Save Daily Visit", compound=tk.LEFT,
-                                     image=self.save_icon, command=self._save_daily_visit)
-        self.save_button.grid(row=0, column=0, padx=5, pady=5, sticky="e")
+        self.save_button = ttk.Button(
+            button_frame,
+            text="Save Daily Visit",
+            compound=tk.LEFT,
+            image=self.save_icon,
+            command=self._save_daily_visit
+        )
+        self.save_button.grid(row=0, column=0, padx=5, sticky="e")
 
-        self.cancel_button = ttk.Button(button_frame, text="Cancel", compound=tk.LEFT,
-                                        image=self.cancel_icon, command=self.destroy)
-        self.cancel_button.grid(row=0, column=1, padx=5, pady=5, sticky="w")
-
+        self.cancel_button = ttk.Button(
+            button_frame,
+            text="Cancel",
+            compound=tk.LEFT,
+            image=self.cancel_icon,
+            command=self.destroy
+        )
+        self.cancel_button.grid(row=0, column=1, padx=5, sticky="w")
     def _save_daily_visit(self):
         purpose = self.purpose_var.get()
         brought_by = self.brought_by_combobox.get().strip()
@@ -918,7 +936,6 @@ class AddDailyClientForm(BaseForm):
                 messagebox.showerror("Error", "Failed to add daily visit details.")
         except Exception as e:
             messagebox.showerror("Database Error", f"An error occurred: {e}")
-
 
 
 
@@ -960,7 +977,7 @@ class UpdateClientForm(BaseForm):
         self.tel_entry = ttk.Entry(frame, width=30)
         self.tel_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
 
-        ttk.Label(frame, text="ID Number:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
+        ttk.Label(frame, text="ID Number/Passport No:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
         self.email_entry = ttk.Entry(frame, width=30)
         self.email_entry.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
 
@@ -993,9 +1010,7 @@ class UpdateClientForm(BaseForm):
                 messagebox.showerror("Validation Error", "Telephone number must be numeric.")
                 return
 
-        if not new_email.isdigit():
-                messagebox.showerror("Validation Error", "Please enter a valid ID Number.")
-                return
+
 
         try:
             current_client = self.db_manager.get_client(client_id)
@@ -1089,7 +1104,7 @@ class ReceptionSectionView(ttk.Frame):
         self.tree = ttk.Treeview(list_frame, columns=("Name", "Telephone No", "Email"), show="headings")
         self.tree.heading("Name", text="CLIENT NAME")
         self.tree.heading("Telephone No", text="TELEPHONE NO")
-        self.tree.heading("Email", text="ID NUMBER")
+        self.tree.heading("Email", text="ID NUMBER/PASSPORT NO")
         self.tree.column("Name", width=150)
         self.tree.column("Telephone No", width=100)
         self.tree.column("Email", width=150)
@@ -1242,6 +1257,79 @@ class ReceptionSectionView(ttk.Frame):
             self.delete_button.config(state="disabled")
 
     
+class DailyOverviewTab(ttk.Frame):
+    """
+    Displays a daily overview of client visits including
+    client name, phone number, purpose, reason, and timestamp.
+    """
+    def __init__(self, master, db_manager):
+        super().__init__(master, padding="10 10 10 10")
+        self.db_manager = db_manager
+        self._create_widgets()
+        self._load_daily_visits()
+
+    def _create_widgets(self):
+        title = ttk.Label(self, text="Daily Client Visit Overview", font=("Segoe UI", 14, "bold"))
+        title.pack(pady=(5, 10))
+
+        # --- Date Selector ---
+        date_frame = ttk.Frame(self)
+        date_frame.pack(fill="x", pady=5)
+
+        ttk.Label(date_frame, text="Select Date:").pack(side="left", padx=(0, 5))
+        self.date_entry = ttk.Entry(date_frame, width=15)
+        self.date_entry.insert(0, datetime.now().strftime("%Y-%m-%d"))
+        self.date_entry.pack(side="left")
+
+        ttk.Button(date_frame, text="Load", command=self._load_daily_visits).pack(side="left", padx=5)
+
+        # --- Treeview for visits ---
+        columns = ("client_name", "telephone_number", "purpose",  "timestamp")
+        self.tree = ttk.Treeview(self, columns=columns, show="headings", height=15)
+
+        self.tree.heading("client_name", text="Client Name")
+        self.tree.heading("telephone_number", text="Telephone")
+        self.tree.heading("purpose", text="Purpose")
+        self.tree.heading("timestamp", text="Date & Time")
+
+        self.tree.column("client_name", width=140)
+        self.tree.column("telephone_number", width=120)
+        self.tree.column("purpose", width=120)
+        self.tree.column("timestamp", width=150)
+
+        scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+
+        self.tree.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+    def _load_daily_visits(self):
+        """Fetch and display daily client visits."""
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+
+        try:
+            selected_date = datetime.strptime(self.date_entry.get(), "%Y-%m-%d").date()
+        except ValueError:
+            messagebox.showerror("Invalid Date", "Please enter a valid date in YYYY-MM-DD format.")
+            return
+
+        visits = self.db_manager.get_daily_client_visits(selected_date)
+        if not visits:
+            messagebox.showinfo("No Records", f"No client visits recorded for {selected_date}.")
+            return
+
+        for visit in visits:
+            self.tree.insert(
+                "",
+                "end",
+                values=(
+                    visit["client_name"],
+                    visit["telephone_number"],
+                    visit["purpose"],
+                    visit["timestamp"].strftime("%Y-%m-%d %H:%M:%S"),
+                ),
+            )
 
 
 
@@ -1710,6 +1798,8 @@ class RealEstateApp(tk.Tk):
             selected_tab_widget.populate_system_overview()
         elif isinstance(selected_tab_widget, SurveySectionView):
             selected_tab_widget.populate_survey_overview()
+        elif isinstance(selected_tab_widget, DailyOverviewTab):  # ✅ NEW condition
+            selected_tab_widget._load_daily_visits()
 
     def _set_window_icon(self):
         ico_path = os.path.join(ICONS_DIR, "home.ico")
@@ -1872,7 +1962,7 @@ class RealEstateApp(tk.Tk):
         sales_menu.add_command(label="Sell Property",
                                command=lambda: self._go_to_sales_tab_and_action("sell_property"),
                                state='normal' if self.user_type in ['admin', 'property_manager',
-                                                                    'sales_agent'] else 'disabled')
+                                                                    'surveyor'] else 'disabled')
         sales_menu.add_command(label="Transfer Property",  # NEW MENU ITEM
                                command=lambda: self._go_to_sales_tab_and_action("transfer_property"),
                                state='normal' if self.user_type in ['admin', 'property_manager'] else 'disabled')
@@ -1880,14 +1970,14 @@ class RealEstateApp(tk.Tk):
         sales_menu.add_command(label="View All Properties",
                                command=lambda: self._go_to_sales_tab_and_action("view_all"),
                                state='normal' if self.user_type in ['admin', 'property_manager',
-                                                                    'sales_agent'] else 'disabled')  # Sales Agent might view properties, but filtered
+                                                                    'surveyor'] else 'disabled')  # Sales Agent might view properties, but filtered
         sales_menu.add_command(label="Track Payments",
                                command=lambda: self.sales_section._open_track_payments_view(),
-                               state='normal' if self.user_type in ['admin', 'sales_agent',
+                               state='normal' if self.user_type in ['admin', 'surveyor',
                                                                     'accountant'] else 'disabled')
         sales_menu.add_command(label="Sold Properties Records",
                                command=lambda: self.sales_section._open_sold_properties_view(),
-                               state='normal' if self.user_type in ['admin', 'property_manager', 'sales_agent',
+                               state='normal' if self.user_type in ['admin', 'property_manager', 'surveyor',
                                                                     'accountant'] else 'disabled')
 
         surveys_menu = tk.Menu(menubar, tearoff=0)
@@ -1911,11 +2001,11 @@ class RealEstateApp(tk.Tk):
         menubar.add_cascade(label="Reports", menu=reports_menu)
         reports_menu.add_command(label="Daily/Monthly Sales Report",
                                  command=lambda: self.sales_section.generate_report_type("Daily/Monthly Sales"),
-                                 state='normal' if self.user_type in ['admin', 'property_manager', 'sales_agent',
+                                 state='normal' if self.user_type in ['admin',
                                                                       'accountant'] else 'disabled')
         reports_menu.add_command(label="Sold Properties Report",
                                  command=lambda: self.sales_section.generate_report_type("Sold Properties"),
-                                 state='normal' if self.user_type in ['admin', 'property_manager', 'sales_agent',
+                                 state='normal' if self.user_type in ['admin',
                                                                       'accountant'] else 'disabled')
         reports_menu.add_command(label="Pending Instalments Report",
                                  command=lambda: self.sales_section.generate_report_type("Pending Instalments"),
@@ -2002,6 +2092,7 @@ class RealEstateApp(tk.Tk):
         show_reception_tab = user_permissions.get("show_reception_tab", False)
         show_land_tab = user_permissions.get("show_land_tab", False)
         show_survey_tab = user_permissions.get("show_survey_tab", False)
+        show_daily_overview_tab = user_permissions.get("show_daily_overview_tab", False)
         
         # --- Reception Tab ---
         if show_reception_tab:
@@ -2045,6 +2136,17 @@ class RealEstateApp(tk.Tk):
         else:
             self.survey_section = None
             print("Survey Services tab hidden for this user.")
+
+        # --- Daily Overview Tab ---
+        if show_daily_overview_tab:
+            self.daily_overview_section = DailyOverviewTab(
+                self.notebook,
+                self.db_manager
+            )
+            self.notebook.add(self.daily_overview_section, text="   Daily Overview   ")
+        else:
+            self.daily_overview_section = None
+            print("Daily Overview tab hidden for this user.")
 
 
 
