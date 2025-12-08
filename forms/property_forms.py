@@ -6165,7 +6165,123 @@ class ViewAllPropertiesForm(tk.Toplevel):
         if self.callback_on_close:
             self.callback_on_close()
 
+class TrackTitleMovementForm(tk.Toplevel):
+    """Form to track title movements between Office, Lawyer, and Dispatch stages."""
+    def __init__(self, master, db_manager, property_id, parent_icon_loader=None):
+        super().__init__(master)
+        self.db_manager = db_manager
+        self.property_id = property_id
+        self.parent_icon_loader = parent_icon_loader
 
+        self.title("Track Title Movement")
+        self.geometry("750x480")
+        self.resizable(False, False)
+        self.grab_set()
+        self.transient(master)
+
+        # --- Title label ---
+        ttk.Label(self, text="Title Movement Tracking", font=("Helvetica", 13, "bold")).pack(pady=10)
+
+        # --- Stage options ---
+        self.stage_options = [
+            "Office → Lawyer",
+            "Lawyer → Office",
+            "Dispatch (Lawyer)",
+            "Dispatch (Office)"
+        ]
+
+        # --- Movement history table ---
+        columns = ("Date", "Stage", "Lawyer", "Remarks")
+        self.tree = ttk.Treeview(self, columns=columns, show="headings", height=10)
+        for col in columns:
+            self.tree.heading(col, text=col)
+            self.tree.column(col, width=160, anchor="center")
+        self.tree.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Apply color tags for different movement stages
+        self.tree.tag_configure("office_to_lawyer", background="#d9f2ff")  # Light Blue
+        self.tree.tag_configure("lawyer_to_office", background="#e8ffe8")  # Light Green
+        self.tree.tag_configure("dispatch_lawyer", background="#fff3cd")   # Light Yellow
+        self.tree.tag_configure("dispatch_office", background="#ffe6e6")   # Light Red
+
+        # --- Input Section ---
+        form_frame = ttk.Frame(self)
+        form_frame.pack(fill="x", padx=10, pady=5)
+
+        ttk.Label(form_frame, text="Stage:").grid(row=0, column=0, padx=5, pady=3, sticky="e")
+        self.stage_var = tk.StringVar()
+        self.stage_combobox = ttk.Combobox(form_frame, textvariable=self.stage_var, values=self.stage_options, state="readonly", width=25)
+        self.stage_combobox.grid(row=0, column=1, padx=5, pady=3)
+        self.stage_combobox.set("Office → Lawyer")
+
+        ttk.Label(form_frame, text="Lawyer:").grid(row=0, column=2, padx=5, pady=3, sticky="e")
+        self.lawyer_var = tk.StringVar()
+        self.lawyer_entry = ttk.Entry(form_frame, textvariable=self.lawyer_var, width=25)
+        self.lawyer_entry.grid(row=0, column=3, padx=5, pady=3)
+
+        ttk.Label(form_frame, text="Remarks:").grid(row=1, column=0, padx=5, pady=3, sticky="e")
+        self.remarks_entry = ttk.Entry(form_frame, width=70)
+        self.remarks_entry.grid(row=1, column=1, columnspan=3, padx=5, pady=3)
+
+        ttk.Button(self, text="Record Movement", command=self._record_movement).pack(pady=8)
+
+        self._load_movements()
+
+    # --- Load movements from DB ---
+    def _load_movements(self):
+        """Load movement history for this property from the database."""
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+
+        try:
+            movements = self.db_manager.get_title_movements(self.property_id)
+        except Exception as e:
+            messagebox.showerror("Database Error", f"Failed to load movements: {e}")
+            return
+
+        for mv in movements:
+            stage = mv["movement_stage"]
+            tag = self._get_stage_tag(stage)
+            self.tree.insert(
+                "", "end",
+                values=(mv["movement_date"], stage, mv["lawyer_name"], mv["remarks"]),
+                tags=(tag,)
+            )
+
+    # --- Determine color tag for TreeView rows ---
+    def _get_stage_tag(self, stage):
+        if "Office → Lawyer" in stage:
+            return "office_to_lawyer"
+        elif "Lawyer → Office" in stage:
+            return "lawyer_to_office"
+        elif "Dispatch (Lawyer)" in stage:
+            return "dispatch_lawyer"
+        elif "Dispatch (Office)" in stage:
+            return "dispatch_office"
+        return ""
+
+    # --- Record new movement in DB ---
+    def _record_movement(self):
+        stage = self.stage_var.get().strip()
+        lawyer = self.lawyer_var.get().strip()
+        remarks = self.remarks_entry.get().strip()
+
+        if not stage:
+            messagebox.showwarning("Missing Input", "Please select a movement stage.")
+            return
+
+        try:
+            success = self.db_manager.record_title_movement(self.property_id, stage, lawyer, remarks)
+            if success:
+                messagebox.showinfo("Success", f"Recorded stage: {stage}")
+                self._load_movements()
+                self.stage_combobox.set("Office → Lawyer")
+                self.lawyer_var.set("")
+                self.remarks_entry.delete(0, tk.END)
+            else:
+                messagebox.showerror("Error", "Failed to save movement record.")
+        except Exception as e:
+            messagebox.showerror("Database Error", f"Could not record movement: {e}")
 
 class SalesReportsForm(tk.Toplevel):
     def __init__(self, master, db_manager, parent_icon_loader=None, window_icon_name="reports.png"):
@@ -6763,10 +6879,21 @@ class SalesReportsForm(tk.Toplevel):
             # === PENDING INSTALMENTS REPORT ===
             elif "PENDING" in report_name.upper() or "INSTALMENT" in report_name.upper():
                 if content.get('data'):
-                    sorted_data = sorted(content['data'],
-                                         key=lambda x: (x.get('project_id') or 'Unknown', x.get('project_name') or ''))
-                    for (project_id, project_name), group in groupby(sorted_data,
-                        key=lambda x: (x.get('project_id') or 'Unknown', x.get('project_name') or '')):
+                    sorted_data = sorted(
+                        content['data'],
+                        key=lambda x: (x.get('project_id') or 'Unknown',
+                                    x.get('project_name') or '')
+                    )
+
+                    overall_gross = Decimal('0.0')
+                    overall_net = Decimal('0.0')
+
+                    for (project_id, project_name), group in groupby(
+                        sorted_data,
+                        key=lambda x: (x.get('project_id') or 'Unknown',
+                                    x.get('project_name') or '')
+                    ):
+                        # Project Header
                         project_header = f"Project ID: {project_id}"
                         if project_name:
                             project_header += f" — Project Name: {project_name}"
@@ -6776,21 +6903,40 @@ class SalesReportsForm(tk.Toplevel):
                         headers = ["Date", "Client", "Title Deed", "Original Price", "Paid", "Balance Due"]
                         table_data = [headers]
 
-                        for inst in group:
+                        project_gross = Decimal('0.0')
+                        project_net = Decimal('0.0')
+
+                        items = list(group)
+
+                        for inst in items:
                             date_value = inst.get('transaction_date')
                             date_part = date_value.strftime("%Y-%m-%d") if isinstance(date_value, datetime) else (
                                 date_value.split(' ')[0] if isinstance(date_value, str) else "N/A"
                             )
+
+                            original_price = Decimal(inst.get('original_price') or 0)
+                            paid = Decimal(inst.get('total_amount_paid') or 0)
+                            balance = Decimal(inst.get('balance') or 0)
+
+                            project_gross += original_price
+                            project_net += paid
+
                             table_data.append([
                                 Paragraph(date_part, wrap_style),
                                 Paragraph(inst.get('client_name', 'N/A'), wrap_style),
                                 Paragraph(inst.get('title_deed_number', 'N/A'), wrap_style),
-                                Paragraph(f"KES {inst.get('original_price', 0):,.2f}", wrap_style),
-                                Paragraph(f"KES {inst.get('total_amount_paid', 0):,.2f}", wrap_style),
-                                Paragraph(f"KES {inst.get('balance', 0):,.2f}", wrap_style),
+                                Paragraph(f"KES {original_price:,.2f}", wrap_style),
+                                Paragraph(f"KES {paid:,.2f}", wrap_style),
+                                Paragraph(f"KES {balance:,.2f}", wrap_style),
                             ])
 
-                        t = Table(table_data, repeatRows=1, colWidths=[0.8 * inch, 1.4 * inch, 1.1 * inch, 1 * inch, 1 * inch, 1 * inch])
+                        # Append table
+                        t = Table(
+                            table_data,
+                            repeatRows=1,
+                            colWidths=[0.8 * inch, 1.4 * inch, 1.1 * inch,
+                                    1 * inch, 1 * inch, 1 * inch]
+                        )
                         t.setStyle(TableStyle([
                             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
                             ('FONTSIZE', (0, 0), (-1, -1), 8),
@@ -6799,9 +6945,48 @@ class SalesReportsForm(tk.Toplevel):
                             ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
                         ]))
                         story.append(t)
-                        story.append(Spacer(1, 10))
+                        story.append(Spacer(1, 8))
+
+                        # Per-project totals
+                        project_pending = project_gross - project_net
+                        summary_data = [
+                            ["Total Properties:", f"{len(items)}"],
+                            ["Gross:", f"KES {project_gross:,.2f}"],
+                            ["Paid:", f"KES {project_net:,.2f}"],
+                            ["Pending:", f"KES {project_pending:,.2f}"]
+                        ]
+                        summary_table = Table(summary_data, colWidths=[1.8 * inch, 1.5 * inch])
+                        summary_table.setStyle(TableStyle([
+                            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
+                            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+                            ('BACKGROUND', (0, 0), (-1, -1), colors.whitesmoke),
+                            ('TOPPADDING', (0, 0), (-1, -1), 6),
+                        ]))
+                        story.append(summary_table)
+                        story.append(Spacer(1, 12))
+
+                        overall_gross += project_gross
+                        overall_net += project_net
+
+                    # FINAL OVERALL SUMMARY
+                    story.append(Paragraph("<b>Overall Summary</b>", styles['Heading3']))
+                    total_pending = overall_gross - overall_net
+                    final_sum = [
+                        ["Total Gross:", f"KES {overall_gross:,.2f}"],
+                        ["Total Paid:", f"KES {overall_net:,.2f}"],
+                        ["Total Pending:", f"KES {total_pending:,.2f}"]
+                    ]
+                    overall_table = Table(final_sum, colWidths=[1.8 * inch, 1.5 * inch])
+                    overall_table.setStyle(TableStyle([
+                        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
+                        ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+                        ('BACKGROUND', (0, 0), (-1, -1), colors.beige),
+                        ('TOPPADDING', (0, 0), (-1, -1), 6),
+                    ]))
+                    story.append(overall_table)
                 else:
                     story.append(Paragraph("No pending instalments found in this period.", styles['Normal']))
+
 
             # --- Build PDF ---
             doc.build(story)

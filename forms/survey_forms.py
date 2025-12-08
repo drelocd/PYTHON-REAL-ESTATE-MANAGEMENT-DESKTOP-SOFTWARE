@@ -950,17 +950,35 @@ class TrackJobsView(FormBase):
         self.search_entry.pack(side="left", fill="x", expand=True)
         self.search_entry.bind("<KeyRelease>", self._filter_jobs)
         ToolTip(search_frame, "Search For Jobs using Title Number, File Name or Client Name.")
-        
+
+                # --- Compact Filter by Assigned To ---
+        filter_frame = ttk.Frame(self, padding=(10, 5))
+        filter_frame.pack(fill="x")
+
+        ttk.Label(filter_frame, text="Assigned To:", font=("SegoeUI", 9, "bold")).pack(side="left", padx=(0, 5))
+
+        self.assigned_to_filter = ttk.Combobox(filter_frame, state="readonly", width=25)
+        self.assigned_to_filter.pack(side="left", padx=(0, 5))
+
+        self.filter_btn = ttk.Button(filter_frame, text="Filter", command=self._filter_by_assigned_to, width=8)
+        self.filter_btn.pack(side="left", padx=(0, 3))
+
+        self.clear_filter_btn = ttk.Button(filter_frame, text="Clear", command=self._clear_assigned_filter, width=8)
+        self.clear_filter_btn.pack(side="left")
+
+        ToolTip(self.assigned_to_filter, "Select a user to filter jobs assigned to them.")
+     
         
         # Frame for the table
         table_frame = ttk.Frame(self, padding="10")
         table_frame.pack(fill="both", expand=True)
 
         # Updated columns
-        columns = ("date", "task_type", "title_name", "title_number", "file_name", "client_name", "status", "assigned_to")
+        columns = ("no", "date", "task_type", "title_name", "title_number", "file_name", "client_name", "status", "assigned_to")
         self.jobs_tree = ttk.Treeview(table_frame, columns=columns, show="headings")
         ToolTip(self.jobs_tree, "Select a Job to Update its Status .")
         
+        self.jobs_tree.heading("no", text="No.")
         self.jobs_tree.heading("date", text="Date")
         self.jobs_tree.heading("task_type", text="Type")
         self.jobs_tree.heading("title_name", text="Title Name")
@@ -971,7 +989,7 @@ class TrackJobsView(FormBase):
         self.jobs_tree.heading("assigned_to", text="Assigned To")
 
 
-        
+        self.jobs_tree.column("no", width=50, anchor=tk.CENTER)
         self.jobs_tree.column("date", width=120, anchor=tk.W)
         self.jobs_tree.column("task_type", width=150, anchor=tk.W)
         self.jobs_tree.column("title_name", width=120, anchor=tk.W)
@@ -1024,6 +1042,23 @@ class TrackJobsView(FormBase):
         )
         self.update_status_btn.pack(side="right")
         ToolTip(self.update_status_btn, "Click to Change the Status of the Selected Job.")
+
+                # --- Export to PDF Button ---
+        if self.parent_icon_loader:
+            self.export_icon = self.parent_icon_loader("export_pdf.png", size=(20, 20))
+        else:
+            self.export_icon = None
+
+        self.export_pdf_btn = ttk.Button(
+            button_frame,
+            text="Export to PDF",
+            image=self.export_icon,
+            compound=tk.LEFT,
+            command=self._export_jobs_to_pdf
+        )
+        self.export_pdf_btn.pack(side="right", padx=(10, 0))
+        ToolTip(self.export_pdf_btn, "Click to export the current job list to a PDF report.")
+
         
     
     def _populate_jobs_table(self):
@@ -1033,9 +1068,10 @@ class TrackJobsView(FormBase):
         
         self.all_jobs_data = self.db_manager.get_all_jobs()
         
-        for job in self.all_jobs_data:
+        for idx, job in enumerate(self.all_jobs_data, start=1):
             # Display all relevant data, converted to uppercase for consistency
             values = (
+                idx,  # numbering
                 job['timestamp'],
                 job['task_type'].upper(),
                 job['title_name'].upper(),
@@ -1047,37 +1083,84 @@ class TrackJobsView(FormBase):
             )
             # We store the job_id in the item's `iid` so we can easily retrieve it later.
             self.jobs_tree.insert("", tk.END, iid=job['job_id'], values=values)
+
+        # ✅ Update the dropdown list after populating jobs
+        self._update_assigned_to_filter_list()
+
+
+    def _update_assigned_to_filter_list(self):
+        """Updates the dropdown list with all unique 'Assigned To' names."""
+        assigned_users = sorted({job['assigned_username'] for job in self.all_jobs_data if job['assigned_username']})
+        self.assigned_to_filter['values'] = assigned_users
+
+    def _filter_by_assigned_to(self):
+        """Filters jobs by selected 'Assigned To' user."""
+        selected_user = self.assigned_to_filter.get().strip()
+        if not selected_user:
+            messagebox.showinfo("Filter", "Please select a user to filter by.")
+            return
+
+        filtered_data = [job for job in self.all_jobs_data if job['assigned_username'] == selected_user]
+
+        # Clear the table first
+        for item in self.jobs_tree.get_children():
+            self.jobs_tree.delete(item)
+
+        # Insert numbered rows
+        for idx, job in enumerate(filtered_data, start=1):
+            values = (
+                idx,
+                job['timestamp'],
+                job['task_type'].upper(),
+                job['title_name'].upper(),
+                job['title_number'].upper(),
+                job['file_name'].upper(),
+                job['client_name'].upper(),
+                job['status'].upper(),
+                job['assigned_username']
+            )
+            self.jobs_tree.insert("", tk.END, iid=job['job_id'], values=values)
+
+    def _clear_assigned_filter(self):
+        """Clears the Assigned To filter and restores all jobs."""
+        self.assigned_to_filter.set("")
+        self._populate_jobs_table()
+
             
     def _filter_jobs(self, event=None):
         """Filters the jobs table based on the search entry text."""
         search_text = self.search_entry.get().strip().lower()
-        
-        # Clear existing items
+
         for item in self.jobs_tree.get_children():
             self.jobs_tree.delete(item)
-            
+
         if not search_text:
             self._populate_jobs_table()
             return
-            
-        for job in self.all_jobs_data:
-            # Search across multiple fields
-            if (search_text in str(job.get('title_number', '')).lower() or
+
+        filtered_data = [
+            job for job in self.all_jobs_data
+            if (
+                search_text in str(job.get('title_number', '')).lower() or
                 search_text in str(job.get('client_name', '')).lower() or
                 search_text in str(job.get('file_name', '')).lower() or
-                search_text in str(job.get('title_name', '')).lower()):
-                
-                # Re-insert the filtered job
-                values = (
-                    job['timestamp'],
-                    job['job_description'].upper(),
-                    job['title_name'].upper(),
-                    job['title_number'].upper(),
-                    job['file_name'].upper(),
-                    job['client_name'].upper(),
-                    job['status'].upper()
-                )
-                self.jobs_tree.insert("", tk.END, iid=job['job_id'], values=values)
+                search_text in str(job.get('title_name', '')).lower()
+            )
+        ]
+
+        for idx, job in enumerate(filtered_data, start=1):
+            values = (
+                idx,
+                job['timestamp'],
+                job['task_type'].upper(),
+                job['title_name'].upper(),
+                job['title_number'].upper(),
+                job['file_name'].upper(),
+                job['client_name'].upper(),
+                job['status'].upper(),
+                job['assigned_username']
+            )
+            self.jobs_tree.insert("", tk.END, iid=job['job_id'], values=values)
     
     def _update_status_button_state(self, event=None):
         """Enables/disables the update button based on row selection and status."""
@@ -1087,7 +1170,7 @@ class TrackJobsView(FormBase):
             item_values = self.jobs_tree.item(selected_item[0], 'values')
             
             if item_values:
-                status = item_values[6] # Status is the last element
+                status = item_values[7] # Status is the last element
 
                 if status.lower() not in ('completed', 'cancelled', 'dispatched'):
                     self.update_status_btn['state'] = 'normal'
@@ -1097,6 +1180,113 @@ class TrackJobsView(FormBase):
                 self.update_status_btn['state'] = 'disabled'
         else:
             self.update_status_btn['state'] = 'disabled'
+
+    def _export_jobs_to_pdf(self):
+        """Exports all (or filtered) jobs to a PDF report with header and user-selected save location."""
+        from reportlab.lib.pagesizes import A4, landscape
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+        from reportlab.lib import colors
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from tkinter import filedialog
+        import os
+        from datetime import datetime
+
+        if not self.jobs_tree.get_children():
+            messagebox.showinfo("Export", "No job data available to export.")
+            return
+
+        # --- Ask user where to save PDF ---
+        default_name = f"Jobs_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        save_path = filedialog.asksaveasfilename(
+            title="Save PDF Report",
+            defaultextension=".pdf",
+            initialfile=default_name,
+            filetypes=[("PDF Files", "*.pdf")]
+        )
+
+        if not save_path:
+            return  # user cancelled
+
+        # --- Prepare document ---
+        doc = SimpleDocTemplate(
+            save_path,
+            pagesize=landscape(A4),
+            rightMargin=25, leftMargin=25, topMargin=60, bottomMargin=25
+        )
+        elements = []
+        styles = getSampleStyleSheet()
+
+        # --- Company Header ---
+        logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icons", "survey.png")
+        if os.path.exists(logo_path):
+            logo = Image(logo_path, width=55, height=55)
+        else:
+            logo = ""
+
+        company_name = Paragraph("<b>NDIRITU MATHENGE AND ASSOCIATES</b>", ParagraphStyle("CompanyName", fontSize=16, alignment=1))
+        company_tagline = Paragraph("Property & Land Survey Experts", ParagraphStyle("Tagline", fontSize=10, alignment=1, textColor=colors.gray))
+        report_title = Paragraph("<b>TRACK JOBS REPORT</b>", ParagraphStyle("ReportTitle", fontSize=13, alignment=1))
+        report_date = Paragraph(datetime.now().strftime("%B %d, %Y %H:%M"), ParagraphStyle("ReportDate", fontSize=9, alignment=1, textColor=colors.gray))
+
+        header_table = Table([[logo, company_name]], colWidths=[60, 650])
+        header_table.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN", (1, 0), (1, 0), "CENTER"),
+        ]))
+
+        elements += [header_table, company_tagline, report_title, report_date, Spacer(1, 18)]
+
+        # --- Prepare Data ---
+        headers = ["No.", "Date", "Type", "Title Name", "Title No", "File Name", "Client", "Status", "Assigned To"]
+        data = [headers]
+
+        # Add table rows
+        for idx, item in enumerate(self.jobs_tree.get_children(), start=1):
+            row = list(self.jobs_tree.item(item, "values"))
+            if not row or not isinstance(row[0], (int, str)):
+                row.insert(0, str(idx))
+            # Wrap long text values
+            wrapped = [
+                Paragraph(str(col), ParagraphStyle("Wrap", fontSize=8, leading=9))
+                for col in row
+            ]
+            data.append(wrapped)
+
+        # --- Dynamic Column Widths ---
+        page_width = landscape(A4)[0] - 50  # 50 for margins
+        num_cols = len(headers)
+        # Custom width ratios (you can tweak these if needed)
+        width_ratios = [0.5, 1, 1, 1, 1, 1, 1.2, 1, 1]
+        total_ratio = sum(width_ratios)
+        col_widths = [(page_width * (r / total_ratio)) for r in width_ratios]
+
+        # --- Table Styling ---
+        table = Table(data, repeatRows=1, colWidths=col_widths)
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#004080")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 1), (-1, -1), 8),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.whitesmoke, colors.lightgrey]),
+        ]))
+
+        elements.append(table)
+
+        # --- Summary ---
+        total_jobs = len(self.jobs_tree.get_children())
+        summary = Paragraph(f"<b>Total Jobs:</b> {total_jobs}", ParagraphStyle("Summary", fontSize=9, alignment=2))
+        elements += [Spacer(1, 10), summary]
+
+        # --- Build PDF ---
+        try:
+            doc.build(elements)
+            messagebox.showinfo("Success", f"Report exported successfully:\n{save_path}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to export PDF:\n{e}")
+
 
     def _open_cancelled_jobs_window(self):
         """Opens a new window to view all cancelled jobs."""
