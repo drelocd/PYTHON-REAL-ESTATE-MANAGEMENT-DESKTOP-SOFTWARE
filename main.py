@@ -366,7 +366,19 @@ class SalesSectionView(ttk.Frame):
             parent_icon_loader=self.load_icon_callback
     )
 
-    
+    """
+    def open_title_movement(self):
+        #Opens the view for tracking property sale payments.
+        # Corrected the order of user_id and populate_system_overview
+        TrackTitleMovementForm(
+            self.master,
+            self.db_manager,
+            self.user_id,
+            self.populate_system_overview,
+            parent_icon_loader=self.load_icon_callback,
+            window_icon_name="title_movement.png"
+        )
+        """
 
 
 class SurveySectionView(ttk.Frame):
@@ -923,6 +935,7 @@ class AddDailyClientForm(BaseForm):
             command=self.destroy
         )
         self.cancel_button.grid(row=0, column=1, padx=5, sticky="w")
+        
     def _save_daily_visit(self):
         purpose = self.purpose_var.get()
         brought_by = self.brought_by_combobox.get().strip()

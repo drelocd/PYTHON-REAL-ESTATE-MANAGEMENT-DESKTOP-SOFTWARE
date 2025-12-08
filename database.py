@@ -4,6 +4,7 @@ from datetime import datetime
 from tkinter import messagebox
 import bcrypt
 import sys
+from decimal import Decimal
 
 
 # Define the path for the database file
@@ -463,7 +464,7 @@ class DatabaseManager:
                     cancellation_id INT PRIMARY KEY AUTO_INCREMENT,
                     job_id INT NOT NULL,
                     reason TEXT NOT NULL,
-                    refund_amount FLOAT NOT NULL,
+                    refund_amount DECIMAL NOT NULL,
                     cancelled_by INT NOT NULL,
                     cancellation_date DATETIME NOT NULL,
                     FOREIGN KEY (job_id) REFERENCES service_jobs(job_id),
@@ -1991,32 +1992,52 @@ class DatabaseManager:
 
 
     def cancel_job_with_refund(self, job_id, amount_paid, refund_amount, reason, user_id, payment_reason, payment_type):
+        """
+        Cancels a service job, issues a refund, updates related tables, and logs the transaction atomically.
+        """
         try:
+            # Step 1: Get original fee
             query_fee = "SELECT fee FROM service_jobs WHERE job_id = %s"
             result = self._execute_query(query_fee, params=(job_id,), fetch_one=True)
+
             if not result:
                 print(f"Error: Job ID {job_id} not found.", file=sys.stderr)
                 return False
-            original_fee = result['fee']
-            new_amount_paid = amount_paid - refund_amount
-            new_balance = original_fee - new_amount_paid
 
-            # Step 2: Define all queries and their parameters for the transaction
+            # Convert to Decimal for safe arithmetic
+            original_fee = Decimal(result['fee'])
+            amount_paid = Decimal(amount_paid)
+            refund_amount = Decimal(refund_amount)
+
+            # Step 2: Compute new totals safely
+            new_amount_paid = max(amount_paid - refund_amount, Decimal("0.00"))
+            new_balance = max(original_fee - new_amount_paid, Decimal("0.00"))
+
+            # Step 3: Prepare SQL transaction steps
             queries_and_params = [
-                ("UPDATE service_payments SET amount = %s, balance = %s WHERE job_id = %s",
-                 (new_amount_paid, new_balance, job_id)),
-
-                ("UPDATE service_jobs SET status = 'Cancelled' WHERE job_id = %s",
-                 (job_id,)),
-
-                ("INSERT INTO cancelled_jobs (job_id, reason, refund_amount, cancelled_by, cancellation_date) VALUES (%s, %s, %s, %s, %s)",
-                 (job_id, reason, refund_amount, user_id, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))),
-
-                ("INSERT INTO service_payments_history (payment_id, payment_amount, payment_type, payment_reason, payment_date) VALUES ((SELECT payment_id FROM service_payments WHERE job_id = %s), %s, %s, %s, %s)",
-                 (job_id, refund_amount, payment_type, payment_reason, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+                (
+                    "UPDATE service_payments SET amount = %s, balance = %s WHERE job_id = %s",
+                    (str(new_amount_paid), str(new_balance), job_id)
+                ),
+                (
+                    "UPDATE service_jobs SET status = 'Cancelled' WHERE job_id = %s",
+                    (job_id,)
+                ),
+                (
+                    "INSERT INTO cancelled_jobs (job_id, reason, refund_amount, cancelled_by, cancellation_date) "
+                    "VALUES (%s, %s, %s, %s, %s)",
+                    (job_id, reason, str(refund_amount), user_id, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+                ),
+                (
+                    "INSERT INTO service_payments_history (payment_id, payment_amount, payment_type, payment_reason, payment_date) "
+                    "VALUES ((SELECT payment_id FROM service_payments WHERE job_id = %s LIMIT 1), %s, %s, %s, %s)",
+                    (job_id, str(refund_amount), payment_type, payment_reason, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+                )
             ]
-            # Step 3: Execute the transaction using your helper method
+
+            # Step 4: Execute all as one transaction
             return self._execute_transaction(*queries_and_params)
+
         except Exception as e:
             print(f"An error occurred in cancel_job_with_refund: {e}", file=sys.stderr)
             return False
@@ -2164,32 +2185,33 @@ class DatabaseManager:
         
     def get_dispatchable_jobs(self):
         """
-        Retrieves all service jobs that are 'Completed', have a zero balance,
-        and have NOT been dispatched yet.
+        Returns all jobs that are either Completed or Cancelled and not yet dispatched.
         """
         query = """
-        SELECT
-            sj.job_id,
-            sj.timestamp AS date,
-            sj.job_description AS task_type,
-            sj.title_name,
-            sj.title_number,
-            cf.file_name,
-            sc.name AS client_name,
-            sj.status
-        FROM service_jobs sj
-        INNER JOIN client_files cf ON sj.file_id = cf.file_id
-        INNER JOIN service_clients sc ON cf.client_id = sc.client_id
-        INNER JOIN service_payments sp ON sj.job_id = sp.job_id
-        LEFT JOIN service_dispatch sd ON sj.job_id = sd.job_id
-        WHERE
-            sj.status = 'Completed' AND
-            sp.balance = 0.0 AND
-            sd.job_id IS NULL
-        ORDER BY sj.timestamp DESC
+            SELECT 
+                sj.job_id,
+                sj.timestamp,
+                sj.job_description,
+                sj.title_name,
+                sj.title_number,
+                sj.task_type,
+                sj.status,
+                cf.file_name,
+                sc.name AS client_name
+            FROM service_jobs sj
+            JOIN client_files cf ON sj.file_id = cf.file_id
+            JOIN service_clients sc ON cf.client_id = sc.client_id
+            LEFT JOIN service_dispatch sd ON sj.job_id = sd.job_id
+            WHERE sj.status IN ('Completed', 'Cancelled')
+            AND sd.job_id IS NULL
+            ORDER BY sj.timestamp DESC
         """
-        # Assuming self._execute_query handles fetching and returning a list of dictionaries
-        return self._execute_query(query, fetch_all=True)
+        try:
+            results = self._execute_query(query, fetch_all=True)
+            return results if results else []
+        except Exception as e:
+            print(f"Database error in get_dispatchable_jobs: {e}")
+            return []
     
     def get_survey_job_status_counts(self):
         query = "SELECT status, COUNT(*) AS count FROM service_jobs GROUP BY status"
